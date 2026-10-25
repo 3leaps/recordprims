@@ -7,7 +7,7 @@ PYTHON ?= python3
 
 .DEFAULT_GOAL := help
 .PHONY: all help check precommit fmt fmt-check lint test test-go test-rust \
-        contract-check contract-oracle deps-check version version-check build clean
+        contract-check contract-oracle deps-check surface-scan pr-final version version-check build clean
 
 all: check
 
@@ -17,6 +17,15 @@ help: ## Show available targets
 check: fmt-check lint test contract-check contract-oracle deps-check version-check ## Everything CI runs on one host
 
 precommit: fmt-check lint ## Fast pre-commit gate
+
+pr-final: check surface-scan ## Before opening or updating a PR: check plus the maintainer surface scan
+	@echo "[ok] pr-final"
+
+# The maintainer's public-surface scan: LIMENSAFE_CATALOG_PATH names a catalog
+# (catalog_id recordprims-release) outside the repository. Unset, it is skipped
+# with a warning; RECORDPRIMS_SURFACE_SCAN_REQUIRED=1 makes it mandatory.
+surface-scan: ## Public-surface scan (tree + proposed commit messages), when LIMENSAFE_CATALOG_PATH is set
+	@PYTHON=$(PYTHON) scripts/surface-scan.sh
 
 fmt: ## Format Go and Rust
 	gofmt -w $$(git ls-files '*.go')
