@@ -43,9 +43,20 @@ runs:
         python --version
         go version
 
+    - name: Install pinned tools
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+      run: |
+        tmp="$(cygpath -u "${RUNNER_TEMP}" 2>/dev/null || echo "${RUNNER_TEMP}")"
+        dest="$(scripts/ci-install-tools.sh "${TARGET}" "${tmp}/ci-tools")"
+        (cygpath -w "${dest}" 2>/dev/null || echo "${dest}") >> "${GITHUB_PATH}"
+
     - name: make check
       shell: bash
-      run: make check PYTHON=python
+      run: |
+        goneat version | grep '^Module: v0\.6\.1$'
+        make check PYTHON=python
 
     - name: Working tree unchanged by the gate
       shell: bash
