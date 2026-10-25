@@ -1,0 +1,6 @@
+# Organization runner labels used by .github/workflows/ci.yml.
+# Lint configuration only; this file does not provision a runner.
+self-hosted-runner:
+  labels:
+    - ubuntu-latest-arm64-s
+    - windows-latest-arm64-s

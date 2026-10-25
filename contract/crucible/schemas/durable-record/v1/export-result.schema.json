@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract:durable-record/v1/export-result.schema.json",
+  "title": "Durable Record Use Eligibility Result",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "const": "allowed"
+        },
+        "closure": {
+          "enum": [
+            "full_content",
+            "references_only"
+          ]
+        },
+        "selection": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pin"
+          },
+          "uniqueItems": true
+        },
+        "omitted": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pin"
+          },
+          "uniqueItems": true
+        },
+        "protection_cut": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "outcome",
+        "closure",
+        "selection",
+        "omitted",
+        "protection_cut"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "const": "refused"
+        },
+        "reason": {
+          "enum": [
+            "protection_unavailable",
+            "protected_use",
+            "target_not_found",
+            "export_selection",
+            "body_closure",
+            "invalid_purpose"
+          ]
+        }
+      },
+      "required": [
+        "outcome",
+        "reason"
+      ]
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stream",
+        "record_id",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    }
+  }
+}

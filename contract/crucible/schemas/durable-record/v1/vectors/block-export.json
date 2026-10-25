@@ -1,0 +1,157 @@
+{
+  "window_ms": 60000,
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "stream_opened",
+      "at": "2026-10-20T00:00:01Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss"
+    },
+    {
+      "v": 1,
+      "seq": 2,
+      "group": 2,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "appended",
+      "at": "2026-10-20T00:00:02Z",
+      "record": {
+        "v": 0,
+        "stream": "records.example",
+        "record_id": "first",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8,
+          "media_type": "text/plain"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7",
+      "idempotency_key": "write-first-1",
+      "body_status": "verified"
+    },
+    {
+      "v": 1,
+      "seq": 3,
+      "group": 3,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "appended",
+      "at": "2026-10-20T00:00:03Z",
+      "record": {
+        "v": 0,
+        "stream": "records.example",
+        "record_id": "second",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8,
+          "media_type": "text/plain"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:eb5d8fab4f6c110407b088f998169120bd4b64380d59654781851db2caee6c8e",
+      "idempotency_key": "write-second-1",
+      "body_status": "verified"
+    }
+  ],
+  "steps": [
+    {
+      "request": {
+        "v": 1,
+        "stream": "records.example",
+        "idempotency_key": "hold-1",
+        "action": "tombstone",
+        "target": {
+          "stream": "records.example",
+          "record_id": "first",
+          "revision": 1,
+          "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7"
+        },
+        "scope": "record",
+        "reason": "source_removed",
+        "evidence": {
+          "ref": "source-observation:example",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "observed_at": "2026-10-20T00:00:03Z",
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        }
+      },
+      "at": "2026-10-20T00:00:04Z"
+    },
+    {
+      "use": {
+        "v": 1,
+        "stream": "records.example",
+        "protection_cut": 4,
+        "current_cut": 4,
+        "protection_state": "verified",
+        "purpose": "export",
+        "selection": [
+          {
+            "stream": "records.example",
+            "record_id": "first",
+            "revision": 1,
+            "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7"
+          },
+          {
+            "stream": "records.example",
+            "record_id": "second",
+            "revision": 1,
+            "digest": "sha256:eb5d8fab4f6c110407b088f998169120bd4b64380d59654781851db2caee6c8e"
+          }
+        ],
+        "inherited_block": false,
+        "closure": "references_only",
+        "bodies": [],
+        "omitted": []
+      }
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "v": 1,
+        "stream": "records.example",
+        "idempotency_key": "hold-1",
+        "outcome": "tombstoned",
+        "seq": 4,
+        "request_digest": "sha256:fad632855953ba37b194a1561414762859150003e8691ad96f119a903b185a0a",
+        "failure_model": "survives_power_loss"
+      },
+      {
+        "outcome": "refused",
+        "reason": "protected_use"
+      }
+    ],
+    "active_holds": [
+      4
+    ],
+    "journal_size": 4
+  }
+}

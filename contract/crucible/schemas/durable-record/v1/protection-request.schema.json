@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract:durable-record/v1/protection-request.schema.json",
+  "title": "Durable Record Protection Request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "stream": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "action": {
+      "enum": [
+        "tombstone",
+        "restore"
+      ]
+    },
+    "target": {
+      "$ref": "#/$defs/pin"
+    },
+    "scope": {
+      "enum": [
+        "record",
+        "revision",
+        "body"
+      ]
+    },
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "digest",
+        "length"
+      ]
+    },
+    "restores": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "reason": {
+      "enum": [
+        "source_removed",
+        "source_corrected",
+        "rights_restricted",
+        "security_hold",
+        "operator_hold",
+        "source_restored",
+        "hold_released"
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "ref",
+        "digest"
+      ]
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    }
+  },
+  "required": [
+    "v",
+    "stream",
+    "idempotency_key",
+    "action",
+    "target",
+    "scope",
+    "reason",
+    "evidence",
+    "observed_at",
+    "provenance"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "scope": {
+            "const": "body"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "body"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "body"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "restore"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "restores"
+        ],
+        "properties": {
+          "reason": {
+            "enum": [
+              "source_restored",
+              "hold_released"
+            ]
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "restores"
+          ]
+        },
+        "properties": {
+          "reason": {
+            "enum": [
+              "source_removed",
+              "source_corrected",
+              "rights_restricted",
+              "security_hold",
+              "operator_hold"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stream",
+        "record_id",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor_kind",
+        "actor"
+      ],
+      "description": "Who produced this revision. Model and tool describe the producer; they do not own the record.",
+      "properties": {
+        "actor_kind": {
+          "enum": [
+            "human",
+            "agent",
+            "process"
+          ]
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "supervisor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "tool": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    }
+  }
+}

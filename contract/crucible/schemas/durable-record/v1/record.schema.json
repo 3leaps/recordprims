@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract:durable-record/v1/record.schema.json",
+  "title": "Durable Record",
+  "description": "Unchanged v0 record wire envelope, admitted by durable-record/v1 so existing revision digests remain exact. The record v field remains 0.",
+  "$ref": "#/$defs/record",
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "revisionPin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "digest"
+      ],
+      "description": "Revision within the enclosing stream and record.",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stream",
+        "record_id",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "bodyRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "length",
+        "media_type"
+      ],
+      "description": "Bytes held outside the record, bound by digest and length. Retrieval hints never appear here.",
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "media_type": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$"
+        },
+        "artifact_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$",
+          "description": "Optional contract: data-artifact/v0 artifact token."
+        },
+        "encryption": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "scheme",
+            "key_ref"
+          ],
+          "properties": {
+            "scheme": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9.-]{0,63}$"
+            },
+            "key_ref": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$",
+              "description": "Opaque token naming the key-custody record. Never key material."
+            }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor_kind",
+        "actor"
+      ],
+      "description": "Who produced this revision. Model and tool describe the producer; they do not own the record.",
+      "properties": {
+        "actor_kind": {
+          "enum": [
+            "human",
+            "agent",
+            "process"
+          ]
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "supervisor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "tool": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "retention",
+        "sensitivity"
+      ],
+      "description": "Retention-lifecycle and sensitivity classifier keys. unknown is a deferred decision, not a default.",
+      "properties": {
+        "retention": {
+          "enum": [
+            "unknown",
+            "transient",
+            "short",
+            "standard",
+            "long",
+            "legal-hold"
+          ]
+        },
+        "sensitivity": {
+          "enum": [
+            "unknown",
+            "0-public",
+            "1-confidential",
+            "2-blinded",
+            "3-proprietary",
+            "4-personal",
+            "5-privileged",
+            "6-eyes-only"
+          ]
+        }
+      }
+    },
+    "link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_id"
+      ],
+      "properties": {
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rel": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,31}$"
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "stream",
+        "record_id",
+        "revision",
+        "payload_contract",
+        "provenance",
+        "classification"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "payload"
+          ],
+          "not": {
+            "required": [
+              "body"
+            ]
+          }
+        },
+        {
+          "required": [
+            "body"
+          ],
+          "not": {
+            "required": [
+              "payload"
+            ]
+          }
+        }
+      ],
+      "if": {
+        "properties": {
+          "revision": {
+            "const": 1
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "supersedes"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "supersedes"
+        ]
+      },
+      "properties": {
+        "v": {
+          "const": 0
+        },
+        "stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "supersedes": {
+          "$ref": "#/$defs/revisionPin",
+          "description": "Required when revision > 1; forbidden at revision 1. Its revision must be exactly one less (semantic rule)."
+        },
+        "payload_contract": {
+          "type": "string",
+          "pattern": "^contract: [a-z0-9][a-z0-9-]*/v[0-9]+$",
+          "description": "Host-less token naming the payload's own contract. Carried, never validated by the store."
+        },
+        "payload": {
+          "description": "Inline I-JSON payload. Opaque to the store."
+        },
+        "body": {
+          "$ref": "#/$defs/bodyRef"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "classification": {
+          "$ref": "#/$defs/classification"
+        },
+        "labels": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$"
+          }
+        },
+        "links": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/link"
+          }
+        }
+      }
+    }
+  }
+}

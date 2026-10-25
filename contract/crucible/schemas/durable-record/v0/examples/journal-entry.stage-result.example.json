@@ -1,0 +1,39 @@
+{
+  "v": 0,
+  "seq": 2,
+  "group": 2,
+  "group_size": 1,
+  "stream": "pipeline-stage-results.example",
+  "type": "appended",
+  "at": "2026-10-12T14:05:00Z",
+  "record": {
+    "v": 0,
+    "stream": "pipeline-stage-results.example",
+    "record_id": "run-17.stage-3.part-0042",
+    "revision": 1,
+    "payload_contract": "contract: example-stage-result/v0",
+    "body": {
+      "digest": "sha256:2702cb31cfab1a5742cbb6aff3ef2050b60152d2c6377830fcc589990b9ec2f5",
+      "length": 23,
+      "media_type": "text/plain",
+      "artifact_id": "artifact:run-17:stage-3:part-0042"
+    },
+    "provenance": {
+      "actor_kind": "process",
+      "actor": "stage-runner"
+    },
+    "classification": {
+      "retention": "short",
+      "sensitivity": "0-public"
+    },
+    "links": [
+      {
+        "record_id": "run-17.stage-2.part-0042",
+        "rel": "input"
+      }
+    ]
+  },
+  "digest": "sha256:ef631487d951bc24886aa035735945734303f71d4b22a11101a6e2d2556b2982",
+  "idempotency_key": "run-17.stage-3.part-0042",
+  "body_status": "verified"
+}

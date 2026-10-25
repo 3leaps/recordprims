@@ -1,0 +1,10 @@
+{
+  "v": 0,
+  "kind": "reconciliation",
+  "stream": "session-handoff.example",
+  "idempotency_key": "handoff-0002:r1",
+  "attempted_at": "2026-10-12T14:30:00Z",
+  "result": "not_found",
+  "window_covers_from": "2026-10-05T14:30:00Z",
+  "window_covers_until": "2026-10-12T14:31:00Z"
+}

@@ -1,0 +1,122 @@
+# recordprims CI
+#
+# Every cell runs the full gate, `make check`, natively:
+#   both implementations build and test (Go cgo-free; Rust at the MSRV),
+#   the vendored durable-record/v1 contract matches contract/PIN.md,
+#   the vendored v1 interpreter passes its vectors (the logical oracle),
+#   and the sibling-prim allow-list holds.
+#
+# check (hosted, every push and PR):
+#   ubuntu-latest   x86_64-unknown-linux-gnu
+#   macos-15        aarch64-apple-darwin
+#   windows-latest  x86_64-pc-windows-msvc
+# check-arm64 (organization larger runners; same-repo only, so fork PRs skip
+# these cells and they cannot be required checks):
+#   ubuntu-latest-arm64-s   aarch64-unknown-linux-gnu
+#   windows-latest-arm64-s  aarch64-pc-windows-msvc
+#
+# Third-party actions are pinned by commit. Custom runner labels are declared
+# in .github/actionlint.yaml.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: 1.88.0
+  GO_VERSION: 1.26.10
+
+jobs:
+  check:
+    name: check (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: make check
+        uses: ./.github/actions/make-check
+        with:
+          target: ${{ matrix.target }}
+          rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
+          go-version: ${{ env.GO_VERSION }}
+
+  check-arm64:
+    name: check (${{ matrix.target }})
+    # Same-repo only: fork PRs cannot use organization larger runners.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest-arm64-s
+            target: aarch64-unknown-linux-gnu
+          - runner: windows-latest-arm64-s
+            target: aarch64-pc-windows-msvc
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: make check
+        uses: ./.github/actions/make-check
+        with:
+          target: ${{ matrix.target }}
+          rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
+          go-version: ${{ env.GO_VERSION }}
+
+  workflow-lint:
+    name: workflow-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint (checksum-pinned)
+        run: |
+          set -euo pipefail
+          name=actionlint_1.7.12_linux_amd64.tar.gz
+          cd "$RUNNER_TEMP"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+            --output "$name" "https://github.com/rhysd/actionlint/releases/download/v1.7.12/$name"
+          want="$(awk -v n="$name" '$2 == n { print $1 }' "$GITHUB_WORKSPACE/config/ci-tools.sha256")"
+          echo "$want  $name" | sha256sum --check
+          tar -xzf "$name" actionlint
+          cd "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/actionlint" -color

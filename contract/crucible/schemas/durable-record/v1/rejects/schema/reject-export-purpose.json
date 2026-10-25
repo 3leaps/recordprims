@@ -1,0 +1,55 @@
+{
+  "schema": "export-request",
+  "baseline": {
+    "v": 1,
+    "stream": "records.example",
+    "protection_cut": 3,
+    "current_cut": 3,
+    "protection_state": "verified",
+    "purpose": "export",
+    "selection": [
+      {
+        "stream": "records.example",
+        "record_id": "first",
+        "revision": 1,
+        "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7"
+      },
+      {
+        "stream": "records.example",
+        "record_id": "second",
+        "revision": 1,
+        "digest": "sha256:eb5d8fab4f6c110407b088f998169120bd4b64380d59654781851db2caee6c8e"
+      }
+    ],
+    "inherited_block": false,
+    "closure": "references_only",
+    "bodies": [],
+    "omitted": []
+  },
+  "reject": {
+    "v": 1,
+    "stream": "records.example",
+    "protection_cut": 3,
+    "current_cut": 3,
+    "protection_state": "verified",
+    "purpose": "audit",
+    "selection": [
+      {
+        "stream": "records.example",
+        "record_id": "first",
+        "revision": 1,
+        "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7"
+      },
+      {
+        "stream": "records.example",
+        "record_id": "second",
+        "revision": 1,
+        "digest": "sha256:eb5d8fab4f6c110407b088f998169120bd4b64380d59654781851db2caee6c8e"
+      }
+    ],
+    "inherited_block": false,
+    "closure": "references_only",
+    "bodies": [],
+    "omitted": []
+  }
+}

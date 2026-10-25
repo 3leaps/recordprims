@@ -1,0 +1,25 @@
+# Rust
+/target
+**/*.rs.bk
+*.pdb
+
+# Local planning and machine guidance (convenience filter only; not a security boundary)
+/.plans/
+/AGENTS.local.md
+
+# Secrets
+/.env
+/.env.*
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+*~

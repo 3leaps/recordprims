@@ -1,0 +1,20 @@
+{
+  "v": 0,
+  "stream": "records.example",
+  "record_id": "first",
+  "revision": 1,
+  "payload_contract": "contract: example/v0",
+  "body": {
+    "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+    "length": 8,
+    "media_type": "text/plain"
+  },
+  "provenance": {
+    "actor_kind": "human",
+    "actor": "operator"
+  },
+  "classification": {
+    "retention": "standard",
+    "sensitivity": "0-public"
+  }
+}

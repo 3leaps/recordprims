@@ -1,0 +1,350 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract:durable-record/v0/write-receipt.schema.json",
+  "title": "Durable Record Write Receipt and Reconciliation Result",
+  "description": "Structural schema companion for contract: durable-record/v0. Either a write receipt or the result of reconciling an indeterminate write by stream, idempotency key and attempt time. unknown is never evidence that a write was not accepted.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/receipt"
+    },
+    {
+      "$ref": "#/$defs/reconciliation"
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stream",
+        "record_id",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "outcome",
+        "stream",
+        "idempotency_key"
+      ],
+      "properties": {
+        "v": {
+          "const": 0
+        },
+        "kind": {
+          "const": "receipt"
+        },
+        "outcome": {
+          "enum": [
+            "appended",
+            "revised",
+            "idempotency_conflict",
+            "revision_conflict",
+            "no_head",
+            "mode_violation",
+            "body_unverified",
+            "retired_record"
+          ]
+        },
+        "stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "pin": {
+          "$ref": "#/$defs/pin"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "failure_model": {
+          "enum": [
+            "survives_power_loss",
+            "survives_process_loss",
+            "none"
+          ]
+        },
+        "body_status": {
+          "enum": [
+            "verified",
+            "unverified"
+          ]
+        },
+        "current": {
+          "$ref": "#/$defs/pin"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "appended",
+                  "revised"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "pin",
+              "seq",
+              "failure_model"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "pin"
+                  ]
+                },
+                {
+                  "required": [
+                    "seq"
+                  ]
+                },
+                {
+                  "required": [
+                    "failure_model"
+                  ]
+                },
+                {
+                  "required": [
+                    "body_status"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "revision_conflict"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "current"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "current"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "stream",
+        "idempotency_key",
+        "attempted_at",
+        "result"
+      ],
+      "properties": {
+        "v": {
+          "const": 0
+        },
+        "kind": {
+          "const": "reconciliation"
+        },
+        "stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "attempted_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "result": {
+          "enum": [
+            "found",
+            "not_found",
+            "unknown"
+          ]
+        },
+        "receipt": {
+          "$ref": "#/$defs/receipt",
+          "description": "For found: the exact original accepted receipt for this stream and key."
+        },
+        "window_covers_from": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Required for not_found: start of the store-clock interval in which every accepted key is retained; at or before the earliest instant the write could have been accepted."
+        },
+        "window_covers_until": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Required for not_found: end of that interval; at or after attempted_at."
+        },
+        "reason": {
+          "enum": [
+            "window_elapsed",
+            "key_evicted",
+            "attempt_before_coverage",
+            "coverage_unprovable",
+            "no_keyed_deduplication"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "result": {
+                "const": "found"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "receipt"
+            ],
+            "properties": {
+              "receipt": {
+                "properties": {
+                  "outcome": {
+                    "enum": [
+                      "appended",
+                      "revised"
+                    ]
+                  }
+                }
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "reason"
+                  ]
+                },
+                {
+                  "required": [
+                    "window_covers_from"
+                  ]
+                },
+                {
+                  "required": [
+                    "window_covers_until"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "result": {
+                "const": "not_found"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "window_covers_from",
+              "window_covers_until"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "receipt"
+                  ]
+                },
+                {
+                  "required": [
+                    "reason"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "result": {
+                "const": "unknown"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "reason"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "receipt"
+                  ]
+                },
+                {
+                  "required": [
+                    "window_covers_from"
+                  ]
+                },
+                {
+                  "required": [
+                    "window_covers_until"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

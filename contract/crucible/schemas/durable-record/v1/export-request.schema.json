@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract:durable-record/v1/export-request.schema.json",
+  "title": "Durable Record Use Eligibility Request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "stream": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "protection_cut": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "current_cut": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "protection_state": {
+      "enum": [
+        "verified",
+        "unavailable"
+      ]
+    },
+    "purpose": {
+      "enum": [
+        "export",
+        "serve",
+        "reuse"
+      ]
+    },
+    "selection": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/pin"
+      },
+      "uniqueItems": true
+    },
+    "inherited_block": {
+      "type": "boolean"
+    },
+    "closure": {
+      "enum": [
+        "full_content",
+        "references_only"
+      ]
+    },
+    "bodies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "$ref": "#/$defs/digest"
+          },
+          "hex": {
+            "type": "string",
+            "pattern": "^(?:[0-9a-f]{2})*$"
+          }
+        },
+        "required": [
+          "digest",
+          "hex"
+        ]
+      }
+    },
+    "omitted": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/pin"
+      },
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "v",
+    "stream",
+    "protection_cut",
+    "current_cut",
+    "protection_state",
+    "purpose",
+    "selection",
+    "inherited_block",
+    "closure",
+    "bodies",
+    "omitted"
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stream",
+        "record_id",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    }
+  }
+}

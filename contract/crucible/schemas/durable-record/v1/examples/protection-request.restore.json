@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "stream": "records.example",
+  "idempotency_key": "restore-1",
+  "action": "restore",
+  "target": {
+    "stream": "records.example",
+    "record_id": "first",
+    "revision": 1,
+    "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7"
+  },
+  "scope": "record",
+  "reason": "source_restored",
+  "evidence": {
+    "ref": "source-observation:example",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "observed_at": "2026-10-20T00:00:03Z",
+  "provenance": {
+    "actor_kind": "human",
+    "actor": "operator"
+  },
+  "restores": 4
+}

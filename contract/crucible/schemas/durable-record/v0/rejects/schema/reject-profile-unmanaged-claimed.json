@@ -1,0 +1,43 @@
+{
+  "capabilities": [
+    "contract: durable-record/v0"
+  ],
+  "origin": "declared",
+  "conformance": "none",
+  "build": {
+    "name": "example-store",
+    "version": "0.1.0",
+    "target": "aarch64-apple-darwin",
+    "native_dependencies": [],
+    "compiled_strata": [
+      "sqlite",
+      "journal-files"
+    ],
+    "compiled_capabilities": [
+      "revisioned",
+      "body_ref",
+      "export_bundle",
+      "key_retirement"
+    ]
+  },
+  "runtime": {
+    "stratum": "journal-files",
+    "failure_model": "survives_power_loss",
+    "commit_strategy": "fsync file and directory before receipt",
+    "history_policy": "append_only",
+    "enabled_capabilities": [
+      "revisioned",
+      "body_ref",
+      "export_bundle"
+    ],
+    "idempotency_window_ms": 604800000,
+    "deletion": {
+      "live_head": "supported",
+      "retained_history": "unsupported",
+      "managed_replicas": "not_applicable",
+      "external_bodies": "unsupported",
+      "decryption": "unsupported",
+      "unmanaged_copies": "removed"
+    }
+  }
+}

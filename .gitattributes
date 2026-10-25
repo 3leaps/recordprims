@@ -1,0 +1,56 @@
+# Enforce consistent line endings across platforms.
+#
+# Why:
+# - Developers on Windows often have `core.autocrlf=true`, which can produce CRLF
+#   in the working tree even when the repository content is LF.
+# - Repo tooling (e.g., goneat formatting checks) expects stable, normalized text.
+#
+# Strategy:
+# - Default all text files to LF in the working tree.
+# - Explicitly keep Windows batch files as CRLF.
+# - Mark common binary artifacts as binary to avoid conversion/diff noise.
+
+# Default: treat as text and use LF in working tree.
+* text=auto eol=lf
+
+# Windows batch scripts should remain CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Common source/config formats: LF.
+*.rs text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.sh text eol=lf
+*.ps1 text eol=lf
+Makefile text eol=lf
+
+# Binary artifacts: never modify or attempt line-ending normalization.
+*.a -text
+*.so -text
+*.dylib -text
+*.dll -text
+*.exe -text
+*.lib -text
+*.pdb -text
+*.obj -text
+*.o -text
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.webp -text
+*.ico -text
+*.zip -text
+*.gz -text
+*.tgz -text
+*.tar -text
+*.7z -text
+*.pdf -text
+*.go text eol=lf
+*.in -text
+*.out -text
