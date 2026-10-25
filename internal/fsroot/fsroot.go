@@ -304,3 +304,36 @@ func (r *Root) SyncDir(name string) error {
 	}
 	return syncDir(r.r, name)
 }
+
+// OpenLockFile opens (creating if needed) the store's lock file through the
+// confined root, refusing symlinks and special files, and verifies it.
+func (r *Root) OpenLockFile(name string, opts Options) (*os.File, error) {
+	if err := validName(name); err != nil {
+		return nil, err
+	}
+	if err := r.checkComponents(name); err != nil {
+		return nil, err
+	}
+	if fi, err := r.r.Lstat(name); err == nil {
+		if fi.Mode()&fs.ModeSymlink != 0 {
+			return nil, ErrSymlink
+		}
+		if !fi.Mode().IsRegular() {
+			return nil, ErrSpecialFile
+		}
+	}
+	f, err := r.r.OpenFile(name, os.O_RDWR|os.O_CREATE|oNoFollow, FileMode)
+	if err != nil {
+		return nil, err
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if err := checkObject(fi, false, opts); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
