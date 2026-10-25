@@ -1,0 +1,63 @@
+# recordprims cargo-deny configuration
+# https://embarkstudios.github.io/cargo-deny/
+#
+# Permissive licenses only; crates.io only; no OpenSSL or native-tls.
+# If a TLS stack ever appears transitively it must be rustls.
+
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
+all-features = true
+
+[advisories]
+ignore = []
+
+[licenses]
+confidence-threshold = 0.93
+unused-allowed-license = "allow"
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "CC0-1.0",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+]
+exceptions = []
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+    { crate = "openssl", reason = "rustls only" },
+    { crate = "openssl-sys", reason = "rustls only" },
+    { crate = "openssl-src", reason = "rustls only" },
+    { crate = "native-tls", reason = "rustls only" },
+    { crate = "hyper-tls", reason = "rustls only" },
+    { crate = "tokio-native-tls", reason = "rustls only" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Pre-release sibling pins (repository-classes rule 1): when the Rust tree adds a private
+# canonprims dependency at an exact commit, add its https URL here in that same change.
+allow-git = []

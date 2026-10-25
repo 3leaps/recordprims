@@ -25,9 +25,14 @@ conformance suite with byte-identical normalised output before 0.1.0.
   deliberately, as described in `contract/PIN.md`.
 - The Go tree stays cgo-free. Dependencies on sibling prims are allow-listed
   in `scripts/deps-check.sh`. No sibling type appears in the public API.
-- A contract or behaviour change lands with both implementations and the
-  shared tests changed in the same PR, once the Rust tree is operating.
-- Run `make check` before proposing a change.
+- While `profile_status: bootstrapping` (`.fulmen/repo.yaml`), Go is the operating
+  tree and the only one graded against `conformance/`; vector expectations are
+  authored as data, never snapshotted from Go. Once `locked`, a contract or
+  behaviour change lands with both implementations and the shared tests changed
+  in the same PR.
+- No sibling prim type in the exported API (`make api-scan`). Wrap siblings;
+  never re-export them.
+- Run `make check` (and `make pr-final` before opening a PR) before proposing a change.
 - Private planning, client material and local notes stay out of this tree.
   `.gitignore` is a convenience filter, not a security boundary.
 

@@ -4,7 +4,11 @@
 #   both implementations build and test (Go cgo-free; Rust at the MSRV),
 #   the vendored durable-record/v1 contract matches contract/PIN.md,
 #   the vendored v1 interpreter passes its vectors (the logical oracle),
-#   and the sibling-prim allow-list holds.
+#   the sibling-prim allow-list and exported-API scan hold,
+#   and cargo-deny passes (licences, sources, bans, advisories).
+#
+# go-standalone (hosted): the Go module builds and tests on its own, copied
+# outside the repository.
 #
 # check (hosted, every push and PR):
 #   ubuntu-latest   x86_64-unknown-linux-gnu
@@ -113,3 +117,25 @@ jobs:
         run: |
           dest="$(scripts/ci-install-tools.sh x86_64-unknown-linux-gnu "${RUNNER_TEMP}/ci-tools" actionlint)"
           "${dest}/actionlint" -color
+
+  go-standalone:
+    # The Go module must stand alone: copied outside the repository with only
+    # its own files, built and tested with GOWORK off and cgo disabled.
+    name: go-standalone
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Go module outside the repository
+        run: scripts/go-standalone.sh

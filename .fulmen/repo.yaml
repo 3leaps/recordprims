@@ -4,6 +4,8 @@
 schema: "contract:taxonomy/v0/repo-declaration.schema.json"
 class: prims
 profile: B              # locked parallel pure-Go and Rust implementations
+profile_status: bootstrapping   # operating tree: Go (named in README)
+leaf: false             # depends on sibling prims (allow-listed in scripts/deps-check.sh)
 category: library
 env_prefix: RECORDPRIMS_
 umbrella_prefix: null
