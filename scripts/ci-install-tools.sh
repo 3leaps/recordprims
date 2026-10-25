@@ -5,8 +5,8 @@
 # Usage: ci-install-tools.sh <target-triple> <dest-dir> [actionlint]
 #
 # Installs goneat (the JSON Schema validator the vendored durable-record/v1
-# interpreter runs). Windows arm64 uses the x86_64 build under emulation; no
-# native arm64 Windows build is published.
+# interpreter runs) and cargo-deny. Windows arm64 uses the x86_64 builds under
+# emulation; no native arm64 Windows build is published.
 set -euo pipefail
 
 target="$1"
@@ -17,11 +17,11 @@ pins="${root}/config/ci-tools.sha256"
 case "${dest}" in /*|[A-Za-z]:*) ;; *) dest="$(pwd)/${dest}" ;; esac
 
 case "${target}" in
-  x86_64-unknown-linux-gnu)   goneat=linux_amd64.tar.gz ;;
-  aarch64-unknown-linux-gnu)  goneat=linux_arm64.tar.gz ;;
-  aarch64-apple-darwin)       goneat=darwin_arm64.tar.gz ;;
-  x86_64-pc-windows-msvc)     goneat=windows_amd64.zip ;;
-  aarch64-pc-windows-msvc)    goneat=windows_amd64.zip ;;
+  x86_64-unknown-linux-gnu)   goneat=linux_amd64.tar.gz;   deny=x86_64-unknown-linux-musl ;;
+  aarch64-unknown-linux-gnu)  goneat=linux_arm64.tar.gz;   deny=aarch64-unknown-linux-musl ;;
+  aarch64-apple-darwin)       goneat=darwin_arm64.tar.gz;  deny=aarch64-apple-darwin ;;
+  x86_64-pc-windows-msvc)     goneat=windows_amd64.zip;    deny=x86_64-pc-windows-msvc ;;
+  aarch64-pc-windows-msvc)    goneat=windows_amd64.zip;    deny=x86_64-pc-windows-msvc ;;
   *) echo "unsupported target ${target}" >&2; exit 2 ;;
 esac
 
@@ -53,6 +53,10 @@ case "${name}" in
   *.zip) unzip -q -o "${name}" ;;
   *) tar -xzf "${name}" goneat ;;
 esac
+
+name="cargo-deny-0.20.2-${deny}.tar.gz"
+fetch "${name}" "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/${name}"
+tar -xzf "${name}" --strip-components=1
 
 if [ "${want_actionlint}" = "actionlint" ]; then
   name="actionlint_1.7.12_linux_amd64.tar.gz"

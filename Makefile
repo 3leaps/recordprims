@@ -7,14 +7,15 @@ PYTHON ?= python3
 
 .DEFAULT_GOAL := help
 .PHONY: all help check precommit fmt fmt-check lint test test-go test-rust \
-        contract-check contract-oracle deps-check surface-scan pr-final version version-check build clean
+        contract-check contract-oracle deps-check api-scan deny go-standalone surface-scan pr-final \
+        bootstrap release-check version version-check build clean
 
 all: check
 
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*## "} /^[a-z][a-z0-9-]*:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-check: fmt-check lint test contract-check contract-oracle deps-check version-check ## Everything CI runs on one host
+check: fmt-check lint test contract-check contract-oracle deps-check api-scan deny version-check ## Everything CI runs on one host
 
 precommit: fmt-check lint ## Fast pre-commit gate
 
@@ -57,6 +58,23 @@ contract-oracle: ## Vendored durable-record/v1 interpreter passes its own vector
 deps-check: ## Sibling-prim allow-list; cgo-free Go tree
 	PYTHON=$(PYTHON) scripts/deps-check.sh
 	@echo "[ok] deps-check"
+
+api-scan: ## No sibling prim type in the exported API (Go and Rust)
+	@scripts/api-scan.sh
+
+deny: ## cargo-deny: licences, bans, sources, advisories
+	cargo deny --locked check
+
+go-standalone: ## The Go module stands alone: copied outside the repo, no skipped tests
+	@scripts/go-standalone.sh
+
+bootstrap: ## Install the pinned CI tools (goneat, cargo-deny) into ./.tools and print the PATH to use
+	@dest="$$(scripts/ci-install-tools.sh "$$(rustc -vV | awk '/^host:/{print $$2}')" .tools)"; \
+	  echo "[ok] bootstrap: add $$dest to PATH"
+
+release-check: ## Release readiness (pre-release: no release machinery yet)
+	@echo "release-check: recordprims is pre-release; release machinery (signing, provenance, publish) lands before the first tag" >&2
+	@exit 1
 
 version: ## Print the version
 	@cat VERSION
