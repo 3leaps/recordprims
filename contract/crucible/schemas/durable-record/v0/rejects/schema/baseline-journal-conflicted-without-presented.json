@@ -1,0 +1,19 @@
+{
+  "v": 0,
+  "seq": 5,
+  "group": 5,
+  "group_size": 1,
+  "stream": "session-handoff.example",
+  "type": "conflicted",
+  "at": "2026-10-12T14:21:00Z",
+  "record_id": "handoff-0001",
+  "reason": "stale supersedes",
+  "presented": {
+    "revision": 1,
+    "digest": "sha256:181df20acfffc3a89ab39148b3544abe4fccac7dc4fedf2adbeda6a4db481bfc"
+  },
+  "current": {
+    "revision": 2,
+    "digest": "sha256:2ece7241c4523e40c2c6d132a99f47c7a3699150582234d5620d7ff1ba18637c"
+  }
+}

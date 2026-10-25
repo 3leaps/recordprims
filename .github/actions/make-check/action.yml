@@ -1,0 +1,68 @@
+name: make check
+description: Install the pinned toolchains, run make check, and require an unchanged tree.
+inputs:
+  target:
+    description: Expected native host triple.
+    required: true
+  rust-toolchain:
+    description: Rust toolchain (the workspace MSRV).
+    required: true
+  go-version:
+    description: Go toolchain (the estate floor).
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      with:
+        python-version: "3.12"
+
+    - name: Install Go
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: false
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # reviewed 2026-08-04 commit
+      with:
+        toolchain: ${{ inputs.rust-toolchain }}
+        components: rustfmt, clippy
+
+    - name: Verify native host and toolchain
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        TOOLCHAIN: ${{ inputs.rust-toolchain }}
+      run: |
+        host=$(rustc -vV | awk '/^host:/{print $2}')
+        test "${host}" = "${TARGET}"
+        rustc --version | grep "^rustc ${TOOLCHAIN} "
+        grep -qx "rust-version = \"${TOOLCHAIN}\"" Cargo.toml
+        python --version
+        go version
+
+    - name: Install pinned tools
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+      run: |
+        tmp="$(cygpath -u "${RUNNER_TEMP}" 2>/dev/null || echo "${RUNNER_TEMP}")"
+        dest="$(scripts/ci-install-tools.sh "${TARGET}" "${tmp}/ci-tools")"
+        (cygpath -w "${dest}" 2>/dev/null || echo "${dest}") >> "${GITHUB_PATH}"
+
+    - name: make check
+      shell: bash
+      env:
+        # Python's default encoding is cp1252 on Windows; keep reads UTF-8 everywhere.
+        PYTHONUTF8: "1"
+      run: |
+        goneat version | grep '^Module: v0\.6\.1$'
+        make check PYTHON=python
+
+    - name: Working tree unchanged by the gate
+      shell: bash
+      run: |
+        git status --porcelain
+        test -z "$(git status --porcelain)"

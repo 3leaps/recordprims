@@ -1,0 +1,21 @@
+{
+  "schema": "protection-receipt",
+  "baseline": {
+    "v": 1,
+    "stream": "records.example",
+    "idempotency_key": "hold-1",
+    "outcome": "tombstoned",
+    "seq": 4,
+    "request_digest": "sha256:fad632855953ba37b194a1561414762859150003e8691ad96f119a903b185a0a",
+    "failure_model": "survives_power_loss"
+  },
+  "reject": {
+    "v": 1,
+    "stream": "records.example",
+    "idempotency_key": "hold-1",
+    "outcome": "tombstoned",
+    "seq": 0,
+    "request_digest": "sha256:fad632855953ba37b194a1561414762859150003e8691ad96f119a903b185a0a",
+    "failure_model": "survives_power_loss"
+  }
+}

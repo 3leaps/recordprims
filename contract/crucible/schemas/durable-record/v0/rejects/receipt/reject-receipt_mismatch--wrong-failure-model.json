@@ -1,0 +1,15 @@
+{
+  "v": 0,
+  "kind": "receipt",
+  "outcome": "revised",
+  "stream": "session-handoff.example",
+  "idempotency_key": "handoff-0001:r2",
+  "pin": {
+    "stream": "session-handoff.example",
+    "record_id": "handoff-0001",
+    "revision": 2,
+    "digest": "sha256:2ece7241c4523e40c2c6d132a99f47c7a3699150582234d5620d7ff1ba18637c"
+  },
+  "seq": 3,
+  "failure_model": "none"
+}

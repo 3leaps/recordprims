@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract:durable-record/v1/stratum-profile.schema.json",
+  "title": "Durable Record Stratum Profile",
+  "description": "Experimental durable-record/v1 companion. Discovery root for contract: durable-record/v1. Immutable build facts and effective runtime facts are distinct. failure_model is a guarantee for the exercised configuration. deletion declares supported operation scope per surface, never outcomes. Copies outside management are outside every claim.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "capabilities",
+    "origin",
+    "conformance",
+    "build",
+    "runtime"
+  ],
+  "properties": {
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "contains": {
+        "const": "contract: durable-record/v1"
+      },
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "origin": {
+      "enum": [
+        "harness",
+        "declared"
+      ],
+      "description": "declared is an unverified claim and is never conformance evidence."
+    },
+    "conformance": {
+      "enum": [
+        "benchmark_only",
+        "none"
+      ],
+      "description": "This experimental v1 bundle defines no deterministic store conformance level."
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "compiled_strata",
+        "compiled_capabilities"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "native_dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "uniqueItems": true
+        },
+        "compiled_strata": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+          }
+        },
+        "compiled_capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "revisioned",
+              "body_ref",
+              "unverified_bodies",
+              "key_retirement",
+              "export_bundle",
+              "tombstoning"
+            ]
+          },
+          "contains": {
+            "const": "tombstoning"
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stratum",
+        "failure_model",
+        "history_policy",
+        "enabled_capabilities",
+        "idempotency_window_ms",
+        "deletion"
+      ],
+      "properties": {
+        "stratum": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "failure_model": {
+          "enum": [
+            "survives_power_loss",
+            "survives_process_loss",
+            "none"
+          ],
+          "description": "The strongest failure an acknowledged write survives, as a guarantee."
+        },
+        "commit_strategy": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "Information only; never upgrades failure_model."
+        },
+        "history_policy": {
+          "const": "append_only",
+          "description": "Chosen at store creation; independent of writer topology. managed_redaction is reserved and not admitted in v1."
+        },
+        "enabled_capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "revisioned",
+              "body_ref",
+              "unverified_bodies",
+              "key_retirement",
+              "export_bundle",
+              "tombstoning"
+            ]
+          },
+          "description": "Must be a subset of build.compiled_capabilities (semantic rule).",
+          "contains": {
+            "const": "tombstoning"
+          }
+        },
+        "clock_skew_bound_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bound assumed between writer and store clocks when answering not_found."
+        },
+        "idempotency_window_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Positive shared content/protection key retention window in milliseconds."
+        },
+        "deletion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "live_head",
+            "retained_history",
+            "managed_replicas",
+            "external_bodies",
+            "decryption",
+            "unmanaged_copies"
+          ],
+          "properties": {
+            "live_head": {
+              "enum": [
+                "supported",
+                "unsupported",
+                "not_applicable"
+              ]
+            },
+            "retained_history": {
+              "enum": [
+                "unsupported",
+                "not_applicable"
+              ],
+              "description": "Byte removal from history is outside v1 tombstoning."
+            },
+            "managed_replicas": {
+              "enum": [
+                "supported",
+                "unsupported",
+                "not_applicable"
+              ]
+            },
+            "external_bodies": {
+              "enum": [
+                "supported",
+                "unsupported",
+                "not_applicable"
+              ]
+            },
+            "decryption": {
+              "enum": [
+                "supported",
+                "unsupported",
+                "not_applicable"
+              ]
+            },
+            "unmanaged_copies": {
+              "const": "outside_claim"
+            },
+            "key_custody_assumptions": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "decryption": {
+                    "const": "supported"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "key_custody_assumptions"
+                ]
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "key_custody_assumptions"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,596 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract:durable-record/v0/journal-entry.schema.json",
+  "title": "Durable Record Journal Entry",
+  "description": "Structural schema companion for contract: durable-record/v0. One line of the append-only NDJSON journal. seq is monotonic per stream and gap-free. group is the seq of the first entry in the same atomic step; a prefix ending at seq N is a consistent cut iff N - group + 1 == group_size for the entry at N. appended and revised carry the full record, so a complete journal is the portable form of the stream. A v0 journal is never rewritten.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "seq",
+    "group",
+    "group_size",
+    "stream",
+    "type",
+    "at"
+  ],
+  "properties": {
+    "v": {
+      "const": 0
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "group": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "seq of the first entry in this entry's atomic group; equals seq for a single-entry step."
+    },
+    "group_size": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of entries in this entry's atomic group. A prefix ending at seq N is a consistent cut iff, for the entry at N, N - group + 1 == group_size."
+    },
+    "stream": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "type": {
+      "enum": [
+        "stream_opened",
+        "appended",
+        "revised",
+        "deduplicated",
+        "conflicted",
+        "retired"
+      ],
+      "description": "Closed vocabulary. Unknown types are rejected."
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Store clock, RFC 3339 UTC."
+    },
+    "mode": {
+      "enum": [
+        "single_revision",
+        "revisioned"
+      ]
+    },
+    "failure_model": {
+      "enum": [
+        "survives_power_loss",
+        "survives_process_loss",
+        "none"
+      ]
+    },
+    "record": {
+      "$ref": "#/$defs/record"
+    },
+    "record_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "digest": {
+      "$ref": "#/$defs/digest"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "presented": {
+      "$ref": "#/$defs/revisionPin"
+    },
+    "current": {
+      "$ref": "#/$defs/revisionPin"
+    },
+    "body_status": {
+      "enum": [
+        "verified",
+        "unverified"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "stream_opened"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "mode",
+          "failure_model"
+        ],
+        "properties": {
+          "type": {
+            "const": "stream_opened"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "appended",
+              "revised"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "record",
+          "digest",
+          "idempotency_key"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "record_id"
+              ]
+            },
+            {
+              "required": [
+                "revision"
+              ]
+            }
+          ]
+        },
+        "if": {
+          "properties": {
+            "record": {
+              "required": [
+                "body"
+              ]
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "body_status"
+          ]
+        },
+        "else": {
+          "not": {
+            "required": [
+              "body_status"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "appended"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "record": {
+            "properties": {
+              "revision": {
+                "const": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "revised"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "record": {
+            "properties": {
+              "revision": {
+                "minimum": 2
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "stream_opened"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "seq": {
+            "const": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "deduplicated"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "record_id",
+          "idempotency_key"
+        ],
+        "properties": {
+          "type": {
+            "const": "deduplicated"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "conflicted"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "record_id",
+          "reason",
+          "presented"
+        ],
+        "properties": {
+          "type": {
+            "const": "conflicted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "retired"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "record_id",
+          "reason"
+        ],
+        "properties": {
+          "type": {
+            "const": "retired"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "revisionPin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "digest"
+      ],
+      "description": "Revision within the enclosing stream and record.",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stream",
+        "record_id",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "bodyRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "length",
+        "media_type"
+      ],
+      "description": "Bytes held outside the record, bound by digest and length. Retrieval hints never appear here.",
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "media_type": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$"
+        },
+        "artifact_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$",
+          "description": "Optional contract: data-artifact/v0 artifact token."
+        },
+        "encryption": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "scheme",
+            "key_ref"
+          ],
+          "properties": {
+            "scheme": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9.-]{0,63}$"
+            },
+            "key_ref": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$",
+              "description": "Opaque token naming the key-custody record. Never key material."
+            }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor_kind",
+        "actor"
+      ],
+      "description": "Who produced this revision. Model and tool describe the producer; they do not own the record.",
+      "properties": {
+        "actor_kind": {
+          "enum": [
+            "human",
+            "agent",
+            "process"
+          ]
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "supervisor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "tool": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "retention",
+        "sensitivity"
+      ],
+      "description": "Retention-lifecycle and sensitivity classifier keys. unknown is a deferred decision, not a default.",
+      "properties": {
+        "retention": {
+          "enum": [
+            "unknown",
+            "transient",
+            "short",
+            "standard",
+            "long",
+            "legal-hold"
+          ]
+        },
+        "sensitivity": {
+          "enum": [
+            "unknown",
+            "0-public",
+            "1-confidential",
+            "2-blinded",
+            "3-proprietary",
+            "4-personal",
+            "5-privileged",
+            "6-eyes-only"
+          ]
+        }
+      }
+    },
+    "link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_id"
+      ],
+      "properties": {
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rel": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,31}$"
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "stream",
+        "record_id",
+        "revision",
+        "payload_contract",
+        "provenance",
+        "classification"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "payload"
+          ],
+          "not": {
+            "required": [
+              "body"
+            ]
+          }
+        },
+        {
+          "required": [
+            "body"
+          ],
+          "not": {
+            "required": [
+              "payload"
+            ]
+          }
+        }
+      ],
+      "if": {
+        "properties": {
+          "revision": {
+            "const": 1
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "supersedes"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "supersedes"
+        ]
+      },
+      "properties": {
+        "v": {
+          "const": 0
+        },
+        "stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "supersedes": {
+          "$ref": "#/$defs/revisionPin",
+          "description": "Required when revision > 1; forbidden at revision 1. Its revision must be exactly one less (semantic rule)."
+        },
+        "payload_contract": {
+          "type": "string",
+          "pattern": "^contract: [a-z0-9][a-z0-9-]*/v[0-9]+$",
+          "description": "Host-less token naming the payload's own contract. Carried, never validated by the store."
+        },
+        "payload": {
+          "description": "Inline I-JSON payload. Opaque to the store."
+        },
+        "body": {
+          "$ref": "#/$defs/bodyRef"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "classification": {
+          "$ref": "#/$defs/classification"
+        },
+        "labels": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$"
+          }
+        },
+        "links": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/link"
+          }
+        }
+      }
+    }
+  }
+}

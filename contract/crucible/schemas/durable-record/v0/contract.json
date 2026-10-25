@@ -1,0 +1,10 @@
+{
+  "capability": "contract: durable-record/v0",
+  "entry_schema": "stratum-profile.schema.json",
+  "object_schemas": {
+    "record": "record.schema.json",
+    "journal_entry": "journal-entry.schema.json",
+    "write_receipt": "write-receipt.schema.json"
+  },
+  "status": "proposed"
+}

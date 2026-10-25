@@ -1,0 +1,10 @@
+{
+  "v": 0,
+  "kind": "reconciliation",
+  "stream": "pipeline-stage-results.example",
+  "idempotency_key": "run-17.stage-3.part-0099",
+  "attempted_at": "2026-10-12T14:04:59Z",
+  "result": "not_found",
+  "window_covers_until": "2026-10-19T14:04:59Z",
+  "window_covers_from": "2026-10-05T14:04:59Z"
+}

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract:durable-record/v1/protection-receipt.schema.json",
+  "title": "Durable Record Protection Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "stream": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "outcome": {
+      "enum": [
+        "tombstoned",
+        "untombstoned",
+        "idempotency_conflict",
+        "target_not_found",
+        "body_mismatch",
+        "hold_not_active",
+        "hold_mismatch",
+        "observation_order"
+      ]
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "request_digest": {
+      "$ref": "#/$defs/digest"
+    },
+    "failure_model": {
+      "enum": [
+        "survives_power_loss",
+        "survives_process_loss",
+        "none"
+      ]
+    }
+  },
+  "required": [
+    "v",
+    "stream",
+    "idempotency_key",
+    "outcome"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "enum": [
+              "tombstoned",
+              "untombstoned"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "seq",
+          "request_digest",
+          "failure_model"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "seq"
+              ]
+            },
+            {
+              "required": [
+                "request_digest"
+              ]
+            },
+            {
+              "required": [
+                "failure_model"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

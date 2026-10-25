@@ -1,0 +1,11 @@
+{
+  "v": 0,
+  "seq": 2,
+  "group": 2,
+  "group_size": 1,
+  "stream": "session-handoff.example",
+  "type": "appended",
+  "at": "2026-10-12T14:00:01.250Z",
+  "digest": "sha256:181df20acfffc3a89ab39148b3544abe4fccac7dc4fedf2adbeda6a4db481bfc",
+  "idempotency_key": "handoff-0001:r1"
+}
