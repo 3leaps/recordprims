@@ -32,7 +32,7 @@ sys.exit(1 if bad else 0)'; then
 fi
 
 # Go: every non-standard dependency must be allow-listed, and the build is cgo-free.
-go_deps="$(GOWORK=off CGO_ENABLED=0 go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | grep -v '^github.com/3leaps/recordprims' || true)"
+go_deps="$(GOWORK=off CGO_ENABLED=0 go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | tr -d '\r' | grep -v '^github.com/3leaps/recordprims' || true)"
 for dep in $go_deps; do
   ok=0
   for allowed in $GO_ALLOWED_MODULES; do
@@ -43,7 +43,7 @@ for dep in $go_deps; do
     fail=1
   fi
 done
-if grep -rlE '^\s*import\s+"C"' --include='*.go' . >/dev/null 2>&1; then
+if grep -rlE '^\s*import\s+"C"' --include='*.go' --exclude-dir=target --exclude-dir=.git . >/dev/null 2>&1; then
   echo "deps-check: the Go tree must be cgo-free (found import \"C\")" >&2
   fail=1
 fi

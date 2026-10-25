@@ -49,7 +49,7 @@ def tree_id(path: Path) -> str:
 def pinned_rows() -> list[tuple[str, str, bool]]:
     """(path, object id, is_tree) rows from the 'Vendored set' table."""
     rows = []
-    section = PIN.read_text().split("## Vendored set", 1)[1].split("##", 1)[0]
+    section = PIN.read_text(encoding="utf-8").split("## Vendored set", 1)[1].split("##", 1)[0]
     for line in section.splitlines():
         m = re.match(r"\|\s*`([^`]+)`\s*\|\s*(tree\s+)?`([0-9a-f]{40})`", line)
         if m:
@@ -71,13 +71,13 @@ def main() -> int:
             failures.append(f"object id mismatch: {rel} (pinned {want[:12]}, on disk {got[:12]})")
 
     expected = {}
-    for line in INVENTORY.read_text().splitlines():
+    for line in INVENTORY.read_text(encoding="utf-8").splitlines():
         digest, rel = line.split("  ", 1)
         expected[rel] = digest
     actual = {}
     for path in sorted(VENDOR.rglob("*")):
         if path.is_file() and "__pycache__" not in path.parts:
-            actual[str(path.relative_to(VENDOR))] = hashlib.sha256(path.read_bytes()).hexdigest()
+            actual[path.relative_to(VENDOR).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
     for rel in sorted(expected.keys() - actual.keys()):
         failures.append(f"inventory lists a missing file: {rel}")
     for rel in sorted(actual.keys() - expected.keys()):

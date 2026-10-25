@@ -54,6 +54,9 @@ runs:
 
     - name: make check
       shell: bash
+      env:
+        # Python's default encoding is cp1252 on Windows; keep reads UTF-8 everywhere.
+        PYTHONUTF8: "1"
       run: |
         goneat version | grep '^Module: v0\.6\.1$'
         make check PYTHON=python
