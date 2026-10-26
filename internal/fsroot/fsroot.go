@@ -23,6 +23,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"sort"
 	"strings"
 )
 
@@ -357,4 +358,42 @@ func (r *Root) OpenLockFile(name string, opts Options) (*os.File, error) {
 		return nil, err
 	}
 	return f, nil
+}
+
+// ReadDirNames lists, sorted, the entries of a verified directory within the
+// root.
+func (r *Root) ReadDirNames(name string, opts Options) ([]string, error) {
+	if err := validName(name); err != nil {
+		return nil, err
+	}
+	if err := r.checkComponents(name); err != nil {
+		return nil, err
+	}
+	fi, err := r.checkFinal(name)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.IsDir() {
+		return nil, ErrSpecialFile
+	}
+	d, err := r.r.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer d.Close()
+	if fi, err = d.Stat(); err != nil {
+		return nil, err
+	}
+	if err := checkObject(fi, true, opts); err != nil {
+		return nil, err
+	}
+	if err := checkHandle(d, true, opts); err != nil {
+		return nil, err
+	}
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(names)
+	return names, nil
 }
