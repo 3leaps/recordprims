@@ -48,7 +48,7 @@ func TestOpenRefusesSymlinkedRoot(t *testing.T) {
 
 func TestOpenRefusesGroupWritableRoot(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("POSIX modes not enforced on Windows")
+		t.Skip("POSIX modes; the Windows DACL equivalent is TestOpenRefusesPermissiveRoot")
 	}
 	dir := t.TempDir()
 	os.Chmod(dir, 0o770)
@@ -59,6 +59,15 @@ func TestOpenRefusesGroupWritableRoot(t *testing.T) {
 	os.Chmod(dir, 0o1777)
 	if _, err := Open(dir, testOpts); !errors.Is(err, ErrMode) {
 		t.Fatalf("sticky: want ErrMode, got %v", err)
+	}
+}
+
+func TestOpenRefusesPermissiveRoot(t *testing.T) {
+	dir := t.TempDir()
+	os.Chmod(dir, 0o700)
+	makePermissive(t, dir)
+	if _, err := Open(dir, testOpts); !errors.Is(err, ErrMode) {
+		t.Fatalf("want ErrMode, got %v", err)
 	}
 }
 
@@ -117,23 +126,20 @@ func TestRefusesInRootSymlink(t *testing.T) {
 }
 
 func TestRefusesHardlinkedFile(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("hardlinks covered by checkLinks on Windows")
-	}
 	dir, r := newRoot(t)
 	os.WriteFile(filepath.Join(dir, "a"), []byte("a"), 0o600)
-	os.Link(filepath.Join(dir, "a"), filepath.Join(dir, "b"))
+	if err := os.Link(filepath.Join(dir, "a"), filepath.Join(dir, "b")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := r.OpenRead("a", testOpts); !errors.Is(err, ErrMultipleLink) {
 		t.Fatalf("want ErrMultipleLink, got %v", err)
 	}
 }
 
-func TestRefusesGroupReadableFile(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX modes not enforced on Windows")
-	}
+func TestRefusesPermissiveFile(t *testing.T) {
 	dir, r := newRoot(t)
-	os.WriteFile(filepath.Join(dir, "a"), []byte("a"), 0o640)
+	os.WriteFile(filepath.Join(dir, "a"), []byte("a"), 0o600)
+	makePermissive(t, filepath.Join(dir, "a"))
 	if _, err := r.OpenRead("a", testOpts); !errors.Is(err, ErrMode) {
 		t.Fatalf("want ErrMode, got %v", err)
 	}

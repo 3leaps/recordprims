@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -107,11 +106,8 @@ func TestOpenRefusesWrongKeyLength(t *testing.T) {
 }
 
 func TestOpenRefusesPermissiveKey(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX modes not enforced on Windows")
-	}
 	dir := initStore(t)
-	os.Chmod(filepath.Join(dir, fileDiagKey), 0o644)
+	makePermissive(t, filepath.Join(dir, fileDiagKey))
 	if _, err := Open(dir, OpenOptions{fs: testFS}); !errors.Is(err, ErrStoreInvalid) {
 		t.Fatalf("want ErrStoreInvalid, got %v", err)
 	}
@@ -157,9 +153,6 @@ func contains(s, sub string) bool {
 }
 
 func TestWithLockIsExclusiveInProcess(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("same-process exclusivity on Windows is covered by the lock package")
-	}
 	dir := initStore(t)
 	a := openStore(t, dir)
 	b := openStore(t, dir)

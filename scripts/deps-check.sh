@@ -13,7 +13,7 @@ fail=0
 # version (a tag once the sibling is public; an exact commit during
 # pre-release) and no sibling type in recordprims' public API.
 RUST_ALLOWED_PRIMS="canonprims canonprims-core canonprims-json storageprims"
-GO_ALLOWED_MODULES="github.com/3leaps/canonprims"
+GO_ALLOWED_MODULES="github.com/3leaps/canonprims golang.org/x/sys"
 
 # Rust: no *prims crate outside the allow-list anywhere in the resolved graph.
 if ! metadata="$(cargo metadata --locked --format-version 1 2>/dev/null)"; then
@@ -31,8 +31,13 @@ sys.exit(1 if bad else 0)'; then
   fail=1
 fi
 
-# Go: every non-standard dependency must be allow-listed, and the build is cgo-free.
-go_deps="$(GOWORK=off CGO_ENABLED=0 go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | tr -d '\r' | grep -v '^github.com/3leaps/recordprims' || true)"
+# Go: every non-standard dependency must be allow-listed on every target OS,
+# and the build is cgo-free.
+go_deps=""
+for goos in darwin linux windows; do
+  go_deps="$go_deps $(GOOS="$goos" GOWORK=off CGO_ENABLED=0 go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | tr -d '\r' | grep -v '^github.com/3leaps/recordprims' || true)"
+done
+go_deps="$(printf '%s\n' $go_deps | sort -u)"
 for dep in $go_deps; do
   ok=0
   for allowed in $GO_ALLOWED_MODULES; do
