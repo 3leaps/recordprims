@@ -1,0 +1,105 @@
+# goneat tools configuration: host tools for development and the release
+# ceremony, with a recommended minimum for each. `make doctor`
+# (scripts/doctor.py) reports every tool's version against its minimum and
+# fails when one is missing, older, or unreadable. It reads each version with
+# the pattern in config/doctor-versions.txt rather than goneat's comparison,
+# which skips two-part versions such as jq-1.6.
+#
+# The minimums are recommendations: the versions this repository is known to
+# work with, not proven lower bounds. Older versions may work; YMMV. Two are
+# floors for a stated reason: jq 1.6 rejects a jq keyword used as a variable
+# name, and the release scripts require Python 3.11 themselves.
+#
+# Validate with: goneat doctor tools --config .goneat/tools.yaml --validate-config
+scopes:
+  release:
+    description: Host tools the maintainer release ceremony runs
+    tools: [git, gh, jq, python3, gpg, minisign]
+  dev:
+    description: Host tools for make check
+    tools: [git, jq, python3, go]
+tools:
+  git:
+    name: git
+    description: Version control; tags, ls-remote and archive in the release scripts
+    kind: system
+    detect_command: git --version
+    platforms: [darwin, linux, windows]
+    installer_priority:
+      darwin: [brew]
+      linux: [brew]
+      windows: [scoop, winget]
+    version_scheme: semver
+    minimum_version: 2.38.0
+  gh:
+    name: gh
+    description: GitHub CLI; release drafts, run downloads and verification reads
+    kind: system
+    detect_command: gh --version
+    platforms: [darwin, linux, windows]
+    installer_priority:
+      darwin: [brew]
+      linux: [brew]
+      windows: [scoop, winget]
+    version_scheme: semver
+    minimum_version: 2.40.0
+  jq:
+    name: jq
+    description: JSON processor in the release scripts (1.6 rejects keyword variable names)
+    kind: system
+    detect_command: jq --version
+    platforms: [darwin, linux, windows]
+    installer_priority:
+      darwin: [brew]
+      linux: [brew]
+      windows: [scoop, winget]
+    version_scheme: semver
+    minimum_version: 1.7.0
+  python3:
+    name: python3
+    description: Release and corpus scripts (3.11 or newer is enforced by the scripts)
+    kind: system
+    detect_command: python3 --version
+    platforms: [darwin, linux, windows]
+    installer_priority:
+      darwin: [brew]
+      linux: [brew]
+      windows: [scoop, winget]
+    version_scheme: semver
+    minimum_version: 3.11.0
+  gpg:
+    name: gpg
+    description: OpenPGP tag and manifest signing and verification
+    kind: system
+    detect_command: gpg --version
+    platforms: [darwin, linux, windows]
+    installer_priority:
+      darwin: [brew]
+      linux: [brew]
+      windows: [scoop, winget]
+    version_scheme: semver
+    minimum_version: 2.2.0
+  minisign:
+    name: minisign
+    description: Release manifest signing and verification
+    kind: system
+    detect_command: minisign -v
+    platforms: [darwin, linux, windows]
+    installer_priority:
+      darwin: [brew]
+      linux: [brew]
+      windows: [scoop]
+    version_scheme: semver
+    minimum_version: 0.11.0
+  go:
+    name: go
+    description: Go toolchain for the pure-Go implementation
+    kind: go
+    detect_command: go version
+    platforms: [darwin, linux, windows]
+    installer_priority:
+      darwin: [brew]
+      linux: [brew]
+      windows: [scoop, winget]
+    version_scheme: semver
+    minimum_version: 1.26.0

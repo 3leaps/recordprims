@@ -15,7 +15,7 @@ if [[ -z "$bin" || ! -x "$bin" ]]; then
 fi
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
-unset LIMENSAFE_CATALOG_PATH RECORDPRIMS_SURFACE_PR_TEXT RECORDPRIMS_SURFACE_SCAN_REQUIRED RECORDPRIMS_SURFACE_SCOPE
+unset LIMENSAFE_CATALOG_PATH RECORDPRIMS_SURFACE_PR_TEXT RECORDPRIMS_SURFACE_SCAN_REQUIRED RECORDPRIMS_SURFACE_SCOPE RECORDPRIMS_SURFACE_BASE
 # Invented terms, split so this file never holds them whole.
 term="zq""lantern" canary="recp-test-canary-""7f3e19a2"
 printf '%s==>Codename\n%s==>RecordprimsCanary\n' "$term" "$canary" >"$scratch/terms.txt"
