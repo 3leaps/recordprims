@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/3leaps/recordprims/internal/fsroot"
@@ -94,6 +95,14 @@ type Store struct {
 
 	attemptKey []byte
 	diagKey    []byte
+
+	// mu serializes this handle's mutations in-process, so goroutines sharing
+	// a Store wait for each other rather than failing fast on the file lock.
+	mu sync.Mutex
+	// bodyDirsReady records that the body directories exist and are verified.
+	bodyDirsReady bool
+	// hook, when set by tests, can fail an operation at a named phase.
+	hook func(phase string) error
 }
 
 // Init creates a new, empty store at dir, which must exist, be empty, and be
@@ -220,8 +229,11 @@ func (s *Store) IdempotencyWindow() time.Duration {
 	return time.Duration(s.meta.IdempotencyWindowMS) * time.Millisecond
 }
 
-// withLock runs fn under the store-wide cross-process lock.
+// withLock runs fn under the store-wide lock: the handle's in-process mutex,
+// then the cross-process file lock.
 func (s *Store) withLock(fn func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.root == nil {
 		return ErrClosed
 	}
