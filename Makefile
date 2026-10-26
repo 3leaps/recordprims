@@ -7,7 +7,8 @@ PYTHON ?= python3
 
 .DEFAULT_GOAL := help
 .PHONY: all help check precommit fmt fmt-check lint test test-go test-rust \
-        contract-check contract-oracle deps-check api-scan deny go-standalone surface-scan pr-final \
+        contract-check contract-oracle deps-check api-scan deny go-standalone surface-scan content-check \
+        surface-tests prepush pr-final \
         bootstrap release-check version version-check build clean
 
 all: check
@@ -15,18 +16,33 @@ all: check
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*## "} /^[a-z][a-z0-9-]*:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-check: fmt-check lint test contract-check contract-oracle deps-check api-scan deny version-check ## Everything CI runs on one host
+check: fmt-check lint test contract-check contract-oracle deps-check api-scan content-check surface-tests deny version-check ## Everything CI runs on one host
 
 precommit: fmt-check lint ## Fast pre-commit gate
 
-pr-final: check surface-scan ## Before opening or updating a PR: check plus the maintainer surface scan
+prepush: check surface-scan ## Pre-push gate (the surface scan is skipped without a catalog)
+	@echo "[ok] prepush"
+
+# Before opening or updating a PR: everything CI runs, plus the maintainer's
+# public-surface scan, which is required here, including the PR title and body
+# in the file named by RECORDPRIMS_SURFACE_PR_TEXT.
+pr-final: check ## Before opening or updating a PR: check plus the required surface scan
+	@RECORDPRIMS_SURFACE_SCAN_REQUIRED=1 PYTHON=$(PYTHON) scripts/surface-scan.sh
 	@echo "[ok] pr-final"
 
-# The maintainer's public-surface scan: LIMENSAFE_CATALOG_PATH names a catalog
-# (catalog_id recordprims-release) outside the repository. Unset, it is skipped
-# with a warning; RECORDPRIMS_SURFACE_SCAN_REQUIRED=1 makes it mandatory.
-surface-scan: ## Public-surface scan (tree + proposed commit messages), when LIMENSAFE_CATALOG_PATH is set
+# The public-surface scan uses limensafe with a maintainer catalog named by
+# LIMENSAFE_CATALOG_PATH, outside this repository. It never runs in CI.
+surface-scan: ## Public-surface scan (tree, commit messages, PR text, branch) when LIMENSAFE_CATALOG_PATH is set
 	@PYTHON=$(PYTHON) scripts/surface-scan.sh
+
+# Vocabulary-free shapes only (local paths, keys, tokens, commit markers); runs
+# in CI as part of check.
+content-check: ## Refuse local paths, private keys, tokens and commit markers in tracked files
+	@$(PYTHON) -I -B scripts/content-check.py
+
+surface-tests: ## Controls for content-check and the surface scan (the scan suite skips without limensafe)
+	@PYTHON=$(PYTHON) scripts/content-check.test.sh
+	@PYTHON=$(PYTHON) scripts/surface-scan.test.sh
 
 fmt: ## Format Go and Rust
 	gofmt -w $$(git ls-files '*.go')

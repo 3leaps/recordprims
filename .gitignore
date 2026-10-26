@@ -6,6 +6,7 @@
 # Local planning and machine guidance (convenience filter only; not a security boundary)
 /.plans/
 /AGENTS.local.md
+/.limensafe/
 
 # Secrets
 /.env
