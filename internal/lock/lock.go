@@ -25,8 +25,7 @@ func Acquire(path string, timeout time.Duration) (release func() error, err erro
 
 // AcquireFile takes the lock on an already-open file handle (opened through
 // the confined store root), waiting up to timeout. The returned function
-// releases the lock; it does not close f. Unix only; on Windows the lock is the
-// exclusive open itself, so callers use OpenExclusive.
+// releases the lock; it does not close f.
 func AcquireFile(f FileLocker, timeout time.Duration) (release func() error, err error) {
 	return acquire(func() (func() error, error) { return tryLockFile(f) }, timeout)
 }

@@ -54,6 +54,6 @@ func ProcessIdentityAmbiguous() bool {
 	return os.Getuid() != os.Geteuid()
 }
 
-// checkLinks is a no-op on Unix: checkObject already checks the link count
-// from the opened object's stat.
-func checkLinks(f *os.File) error { return nil }
+// checkHandle is a no-op on Unix: checkObject already checks owner, mode and
+// link count from the opened object's stat.
+func checkHandle(f *os.File, isDir bool, opts Options) error { return nil }

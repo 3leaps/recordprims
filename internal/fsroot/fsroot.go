@@ -12,8 +12,8 @@
 //     sockets or Windows reparse points);
 //   - store-created regular files must have exactly one link;
 //   - new files are created exclusively (O_CREAT|O_EXCL) with owner-only mode;
-//   - ownership and mode are checked on the opened object, not on an earlier
-//     path stat.
+//   - ownership and mode (on Windows, owner and DACL) are checked on the
+//     opened object, not on an earlier path stat.
 //
 // Errors never carry paths: they are mapped to an operation and a class.
 package fsroot
@@ -76,6 +76,10 @@ func Open(dir string, opts Options) (*Root, error) {
 		return nil, err
 	}
 	if err := checkObject(fi, true, opts); err != nil {
+		r.Close()
+		return nil, err
+	}
+	if err := root.checkDirHandle(".", opts); err != nil {
 		r.Close()
 		return nil, err
 	}
@@ -179,7 +183,7 @@ func (r *Root) OpenRead(name string, opts Options) (*os.File, error) {
 		f.Close()
 		return nil, err
 	}
-	if err := checkLinks(f); err != nil {
+	if err := checkHandle(f, false, opts); err != nil {
 		f.Close()
 		return nil, err
 	}
@@ -222,7 +226,7 @@ func (r *Root) OpenAppend(name string, opts Options) (*os.File, error) {
 		f.Close()
 		return nil, err
 	}
-	if err := checkLinks(f); err != nil {
+	if err := checkHandle(f, false, opts); err != nil {
 		f.Close()
 		return nil, err
 	}
@@ -249,7 +253,20 @@ func (r *Root) Mkdir(name string, opts Options) error {
 	if !fi.IsDir() {
 		return ErrSpecialFile
 	}
-	return checkObject(fi, true, opts)
+	if err := checkObject(fi, true, opts); err != nil {
+		return err
+	}
+	return r.checkDirHandle(name, opts)
+}
+
+// checkDirHandle opens a directory through the root and verifies it by handle.
+func (r *Root) checkDirHandle(name string, opts Options) error {
+	d, err := r.r.Open(name)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return checkHandle(d, true, opts)
 }
 
 // Rename atomically renames oldname to newname within the root. Both names
@@ -332,6 +349,10 @@ func (r *Root) OpenLockFile(name string, opts Options) (*os.File, error) {
 		return nil, err
 	}
 	if err := checkObject(fi, false, opts); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if err := checkHandle(f, false, opts); err != nil {
 		f.Close()
 		return nil, err
 	}
