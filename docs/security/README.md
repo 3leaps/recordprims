@@ -1,8 +1,8 @@
 # Release Signing and Verification
 
 recordprims has not been released. This page states the release trust model
-and the trust files that exist today; the signing pins and fingerprint anchors
-are added before the first release.
+and its trust files. The signing pins and fingerprint anchors are written once,
+before the first release, and land through review.
 
 ## Release identity
 
@@ -22,6 +22,11 @@ signature is not independent authentication.
 
 | File | Contents |
 | --- | --- |
+| `docs/security/release-signing-keys.asc` | Public OpenPGP export: the approved primary key and the exact signing subkey, nothing else |
+| `docs/security/recordprims-minisign.pub` | The minisign public key that signs the checksum manifests |
+| `config/release/signing-subkey.txt` | The fingerprint of the one signing subkey tags may use |
+| `keys/expected-fingerprints.txt` | Two lines: the OpenPGP primary fingerprint, then the minisign public-blob SHA-256 |
+| `keys/expected-fingerprints.ndjson` | The checker's fingerprint records for the same two keys |
 | `config/release/tagger-identity.txt` | The exact git tagger identity for release tags |
 | `config/release/release-workflow.sha256` | Digests of every reviewed workflow and local action |
 | `config/ci-tools.sha256` | Digests of the tools CI downloads |
@@ -35,3 +40,13 @@ top-level `permissions: contents: read` with no job granting more. `make
 check` fails on any change until the pin is updated, so a workflow change is
 always a reviewed change to a trust file. CI holds no signing, release or
 registry authority.
+
+## Pins and anchors
+
+The pins are written once by `make release-export-pin`, from the maintainer's
+approved keys, and validated before anything is written; existing pins are
+never overwritten. `make release-insert-anchors` derives the two fingerprint
+anchors from the committed exports with `decernor` 0.1.8 or newer, twice, and
+compares the results. `make release-validate-pin` reads the committed pins and
+anchors as git blobs and checks them in an isolated keyring. The minisign
+fingerprint covers the decoded public blob, not its comment or the whole file.

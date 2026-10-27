@@ -9,6 +9,7 @@ PYTHON ?= python3
 .PHONY: all help check precommit fmt fmt-check lint test test-go test-rust \
         contract-check contract-oracle deps-check api-scan deny go-standalone surface-scan content-check \
         surface-tests prepush pr-final workflow-pin release-tooling-test doctor doctor-test \
+        release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
         bootstrap release-check version version-check build clean
 
 all: check
@@ -54,6 +55,22 @@ release-tooling-test: ## Controls for the release tooling (synthetic; no keys or
 # symlinks, so they run on maintainer hosts (prepush), not on Windows CI.
 doctor-test: ## Controls for make doctor (maintainer hosts)
 	@scripts/doctor.test.sh
+
+# Release-ceremony controls need gpg and decernor (RECORDPRIMS_DECERNOR_BIN,
+# or decernor on PATH for tests). They use throwaway keys only and run on
+# maintainer hosts, not in CI.
+release-ceremony-test: ## Synthetic release-ceremony controls (throwaway keys; maintainer hosts)
+	@scripts/release-validate-pin.test.sh
+	@scripts/release-anchors.test.sh
+
+release-export-pin: ## One time: write the public signing pins for review (refuses overwrite)
+	scripts/release-export-pin.sh
+
+release-validate-pin: ## Validate the committed public pins and anchors
+	scripts/release-validate-pin.sh
+
+release-insert-anchors: ## Derive the fingerprint anchors with decernor (refuses overwrite)
+	scripts/release-insert-anchors.sh
 
 doctor: ## Report host tool versions against the recommended minimums (DOCTOR_SCOPE=release|dev)
 	@scripts/doctor.sh $(or $(DOCTOR_SCOPE),release)
