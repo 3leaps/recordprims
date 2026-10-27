@@ -9,7 +9,7 @@ PYTHON ?= python3
 .DEFAULT_GOAL := help
 .PHONY: all help check precommit fmt fmt-check lint test test-go test-rust \
         contract-check contract-oracle deps-check api-scan deny go-standalone surface-scan content-check \
-        surface-tests prepush pr-final workflow-pin release-tooling-test doctor doctor-test \
+        surface-tests prepush pr-final workflow-pin release-tooling-test checklist-targets doctor doctor-test \
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
         release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
         release-verify-remote-tag release-record-anchor \
@@ -21,7 +21,7 @@ all: check
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*## "} /^[a-z][a-z0-9-]*:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-check: fmt-check lint test contract-check contract-oracle deps-check api-scan content-check surface-tests workflow-pin release-tooling-test deny version-check ## Everything CI runs on one host
+check: fmt-check lint test contract-check contract-oracle deps-check api-scan content-check surface-tests workflow-pin release-tooling-test checklist-targets deny version-check ## Everything CI runs on one host
 
 precommit: fmt-check lint ## Fast pre-commit gate
 
@@ -51,6 +51,9 @@ surface-tests: ## Controls for content-check and the surface scan (the scan suit
 
 workflow-pin: ## Every workflow and local action matches its reviewed digest and is read-only
 	@$(PYTHON) -B -E scripts/release-workflow-pin.py check
+
+checklist-targets: ## Every make target named in RELEASE_CHECKLIST.md exists
+	@scripts/checklist-targets.sh
 
 release-tooling-test: ## Controls for the release tooling (synthetic; no keys or credentials)
 	@PYTHON=$(PYTHON) scripts/release-workflow-pin.test.sh

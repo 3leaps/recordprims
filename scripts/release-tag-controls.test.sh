@@ -15,13 +15,8 @@ lib="$repo/scripts/release-tag-common.sh"
 in_repo() { (cd "$repo" && env "$@"); }
 call() { in_repo "${@:2}" bash -c "source '$lib'; $1"; }
 
-# Every checklist `make` target exists.
-while IFS= read -r target; do
-	grep -Eq "^${target}:" "$fixture_root/Makefile" || {
-		echo "error: RELEASE_CHECKLIST.md names missing make target $target" >&2
-		exit 1
-	}
-done < <(grep -oE 'make [a-z][a-z0-9-]+' "$fixture_root/RELEASE_CHECKLIST.md" | awk '{print $2}' | sort -u)
+# Every checklist `make` target exists (also part of make check).
+"$fixture_root/scripts/checklist-targets.sh" >/dev/null
 
 # The Makefile refuses a bare RELEASE_TAG from any origin and derives no default.
 expect_fail_with 'RELEASE_TAG is not accepted' env RELEASE_TAG=v9.9.9 make -s -C "$fixture_root" -n help
