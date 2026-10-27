@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Shared synthetic fixtures for the release-tooling tests. Every key is
+# generated here, in a temporary GPG home, for the test only; no operator
+# keyring, signing key or estate material is read.
+# Source this file; it sets fixture_* variables and helpers.
+
+fixture_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+fixture_dir="$(cd "$(mktemp -d)" && pwd -P)"
+fixture_cleanup() {
+	gpgconf --homedir "$fixture_dir/gpg" --kill all >/dev/null 2>&1 || true
+	gpgconf --homedir "$fixture_dir/gpg-other" --kill all >/dev/null 2>&1 || true
+	rm -rf "$fixture_dir"
+}
+trap fixture_cleanup EXIT
+
+fixture_decernor() {
+	local bin="${RECORDPRIMS_DECERNOR_BIN:-}"
+	if [[ -z "$bin" ]]; then
+		# Tests may locate a checker; the release scripts themselves never do.
+		bin="$(command -v decernor || true)"
+	fi
+	[[ "$bin" == /* && -x "$bin" ]] || {
+		echo 'error: release tooling tests need decernor >= 0.1.8 (set RECORDPRIMS_DECERNOR_BIN)' >&2
+		exit 1
+	}
+	# Resolve symlinks so the ceremony resolver accepts the path.
+	python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$bin"
+}
+
+expect_fail() {
+	if "$@" >"$fixture_dir/last.out" 2>&1; then
+		echo "error: expected rejection: $*" >&2
+		cat "$fixture_dir/last.out" >&2
+		exit 1
+	fi
+}
+
+expect_fail_with() {
+	local pattern="$1"
+	shift
+	expect_fail "$@"
+	grep -Eq -- "$pattern" "$fixture_dir/last.out" || {
+		echo "error: rejection for '$*' did not mention: $pattern" >&2
+		cat "$fixture_dir/last.out" >&2
+		exit 1
+	}
+}
+
+# fixture_keys <home>: primary (certify only) plus one signing subkey.
+# Prints "<primary> <subkey>".
+fixture_keys() {
+	local home="$1" primary subkey
+	mkdir -m 700 "$home"
+	gpg --homedir "$home" --batch --pinentry-mode loopback --passphrase '' \
+		--quick-gen-key 'Synthetic release <synthetic@example.invalid>' ed25519 cert 1d >/dev/null 2>&1
+	primary="$(gpg --homedir "$home" --batch --with-colons --list-keys | awk -F: '$1=="fpr" {print $10; exit}')"
+	gpg --homedir "$home" --batch --pinentry-mode loopback --passphrase '' \
+		--quick-add-key "$primary" ed25519 sign 1d >/dev/null 2>&1
+	subkey="$(gpg --homedir "$home" --batch --with-colons --with-subkey-fingerprint --list-keys |
+		awk -F: '$1=="sub" {s=1; next} s && $1=="fpr" {print $10; exit}')"
+	printf '%s %s\n' "$primary" "$subkey"
+}
+
+# fixture_minisign_pub <path> <byte>: a structurally valid synthetic public key.
+fixture_minisign_pub() {
+	python3 - "$1" "$2" <<'PY'
+import base64
+import pathlib
+import sys
+path, byte = sys.argv[1], int(sys.argv[2])
+blob = b'Ed' + bytes([byte]) * 8 + bytes([byte]) * 32
+pathlib.Path(path).write_text('untrusted comment: synthetic public key\n' + base64.b64encode(blob).decode() + '\n')
+PY
+}
+
+# fixture_repo <dir> <version>
+# A git repo carrying the release scripts, VERSION, tag config and the root Go
+# module marker, with a fake origin so the scripts' origin checks pass.
+fixture_repo() {
+	local repo="$1" version="$2"
+	mkdir -p "$repo/scripts" "$repo/config/release" "$repo/docs/security" "$repo/keys"
+	local script
+	# The release scripts present in this repository; later ceremony stages add
+	# theirs as they land.
+	for script in release-workflow-pin.py release-tag-common.sh release-decernor.sh release-prepare-tag-message.py \
+		release-tag-body.sh verify-pinned-tag.sh validate-release-anchors.sh release-insert-anchors.sh \
+		install-release-anchors.sh release-validate-pin.sh verify-public-keys.sh; do
+		[[ ! -e "$fixture_root/scripts/$script" ]] || cp "$fixture_root/scripts/$script" "$repo/scripts/"
+	done
+	cp "$fixture_root"/config/release/tagger-identity.txt "$repo/config/release/"
+	printf '%s\n' "$version" >"$repo/VERSION"
+	printf 'module github.com/3leaps/recordprims\n' >"$repo/go.mod"
+	fixture_workflow_pin "$repo"
+	git -C "$repo" init -q -b main
+	git -C "$repo" config user.name fixture
+	git -C "$repo" config user.email fixture@example.invalid
+	git -C "$repo" config commit.gpgsign false
+	git -C "$repo" config tag.gpgsign false
+	git -C "$repo" remote add origin https://github.com/3leaps/recordprims.git
+}
+
+# fixture_workflow_pin <repo>: a minimal tag-triggered workflow and its pin.
+fixture_workflow_pin() {
+	mkdir -p "$1/.github/workflows" "$1/config/release"
+	printf 'on:\n  push:\n    tags: [v*]\npermissions:\n  contents: read\njobs: {}\n' >"$1/.github/workflows/release.yml"
+	printf '%s  .github/workflows/release.yml\n' "$(python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1/.github/workflows/release.yml")" \
+		>"$1/config/release/release-workflow.sha256"
+}
+
+fixture_commit() {
+	git -C "$1" add -A
+	git -C "$1" commit -qm "${2:-fixture}"
+}
+
+# fixture_messages <dir> <version> <tags...>: complete, valid tag messages.
+fixture_messages() {
+	local dir="$1" version="$2" tag subject
+	shift 2
+	mkdir -p "$dir"
+	for tag in "$@"; do
+		subject="$tag"
+		[[ "$tag" == "v$version" ]] && subject="Release $version"
+		printf '%s\n\nSynthetic release text.\n\nGenerated by Model via Tool under supervision of @3leapsdave\n\nCo-Authored-By: Model <noreply@3leaps.net>\nRole: devlead\nCommitter-of-Record: @3leapsdave\n' \
+			"$subject" >"$dir/${tag//\//__}.txt"
+	done
+}
