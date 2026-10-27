@@ -52,7 +52,7 @@ expect_fail_with 'does not match VERSION' call tag_load_set RECORDPRIMS_RELEASE_
 git -C "$repo" checkout -q -- .
 
 # Message files: one per tag, outside the repo, under a directory named for the
-# tag, complete, with the expected subject.
+# tag, holding exactly the generated message.
 messages="$fixture_dir/messages/v$version"
 fixture_messages "$messages" "$version" "v$version"
 msg() { call "tag_message_file '$1'" RECORDPRIMS_RELEASE_TAG="v$version" RECORDPRIMS_TAG_MESSAGE_DIR="${2:-$messages}"; }
@@ -80,29 +80,30 @@ rm -rf "$(dirname "$raw_tmp")"
 mkdir -p "$repo/inside/v$version"
 expect_fail_with 'outside the repository' msg "v$version" "$repo/inside/v$version"
 cp "$messages/v$version.txt" "$fixture_dir/good.txt"
-sed -i.bak '1s/.*/Release 9.9.9/' "$messages/v$version.txt"
-expect_fail_with 'subject must be' msg "v$version"
-cp "$fixture_dir/good.txt" "$messages/v$version.txt"
-sed -i.bak 's/^Role: devlead$/Role: <role>/' "$messages/v$version.txt"
-expect_fail_with 'placeholder' msg "v$version"
-cp "$fixture_dir/good.txt" "$messages/v$version.txt"
-sed -i.bak '/^Committer-of-Record/d' "$messages/v$version.txt"
-expect_fail_with 'attribution footer' msg "v$version"
-cp "$fixture_dir/good.txt" "$messages/v$version.txt"
-printf 'trailing space \n' >>"$messages/v$version.txt"
-expect_fail_with 'trailing whitespace' msg "v$version"
+# The message is exactly "recordprims X.Y.Z" and a newline; anything else fails.
+for bad in 'recordprims 9.9.9' 'Release 1.2.3' 'recordprims 1.2.3 ' 'recordprims  1.2.3'; do
+	printf '%s\n' "$bad" >"$messages/v$version.txt"
+	expect_fail_with 'must be exactly' msg "v$version"
+done
+printf 'recordprims 1.2.3' >"$messages/v$version.txt"
+expect_fail_with 'must be exactly' msg "v$version"
+printf 'recordprims 1.2.3\n\nExtra text.\n' >"$messages/v$version.txt"
+expect_fail_with 'must be exactly' msg "v$version"
 cp "$fixture_dir/good.txt" "$messages/v$version.txt"
 msg "v$version" >/dev/null
 
-# The preparer writes a skeleton per tag and never clobbers a reviewed file.
+# The preparer writes the complete message, ready to use, and never clobbers:
+# an existing file is kept, and must already be the generated message.
 prep="$fixture_dir/prep/v$version"
 in_repo RECORDPRIMS_RELEASE_TAG="v$version" RECORDPRIMS_TAG_MESSAGE_DIR="$prep" ./scripts/release-prepare-tag-message.py >/dev/null
 [[ -f "$prep/v$version.txt" && ! -e "$prep/go__canon__v$version.txt" ]]
 [[ "$(find "$prep" -mindepth 1 | wc -l | tr -d ' ')" == 1 ]]
-grep -q '^Release 1.2.3$' "$prep/v$version.txt"
-cp "$fixture_dir/good.txt" "$prep/v$version.txt"
+cmp "$fixture_dir/good.txt" "$prep/v$version.txt"
 in_repo RECORDPRIMS_RELEASE_TAG="v$version" RECORDPRIMS_TAG_MESSAGE_DIR="$prep" ./scripts/release-prepare-tag-message.py >/dev/null
 cmp "$fixture_dir/good.txt" "$prep/v$version.txt"
+printf 'hand edited\n' >"$prep/v$version.txt"
+expect_fail_with 'must be exactly' in_repo RECORDPRIMS_RELEASE_TAG="v$version" RECORDPRIMS_TAG_MESSAGE_DIR="$prep" ./scripts/release-prepare-tag-message.py
+[[ "$(cat "$prep/v$version.txt")" == 'hand edited' ]]
 expect_fail_with 'must match VERSION' in_repo RECORDPRIMS_RELEASE_TAG=v0.0.1 RECORDPRIMS_TAG_MESSAGE_DIR="$fixture_dir/prep/v0.0.1" ./scripts/release-prepare-tag-message.py
 
 # The subkey selector must be the committed subkey, exact and with "!".

@@ -55,7 +55,8 @@ fingerprint covers the decoded public blob, not its comment or the whole file.
 
 A release is one tag, `vX.Y.Z`, which releases the Rust crate and the root Go
 module together. It must be annotated, signed by the committed signing subkey,
-tagged by the committed tagger identity, carry exactly the prepared message, and
+tagged by the committed tagger identity, carry exactly the generated message
+(`recordprims X.Y.Z`), and
 point at a commit whose root `go.mod` declares `github.com/3leaps/recordprims`.
 Verification refuses a release where the tag is missing or points elsewhere.
 

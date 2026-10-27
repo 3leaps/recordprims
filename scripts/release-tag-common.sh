@@ -116,9 +116,7 @@ tag_message_file() {
 		tag_die "tag message for $tag is missing"
 		return 1
 	}
-	local subject="$tag"
-	[[ "$tag" == "$RECORDPRIMS_RELEASE_TAG" ]] && subject="Release ${RECORDPRIMS_RELEASE_TAG#v}"
-	"$tag_root/scripts/release-prepare-tag-message.py" --validate-message "$file" "$subject" || return 1
+	"$tag_root/scripts/release-prepare-tag-message.py" --validate-message "$file" "${RECORDPRIMS_RELEASE_TAG#v}" || return 1
 	printf '%s\n' "$file"
 }
 

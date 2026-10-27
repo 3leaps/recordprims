@@ -15,10 +15,12 @@ case "$destination" in "$root" | "$root"/*)
     exit 1
     ;;
 esac
-[[ "${RECORDPRIMS_EXPECTED_TAG_OBJECT:-}" =~ ^[0-9a-f]{40}$ && "${RECORDPRIMS_EXPECTED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] || {
-    echo 'error: original approved tag object and commit required' >&2
-    exit 1
-}
+for name in RECORDPRIMS_EXPECTED_TAG_OBJECT RECORDPRIMS_EXPECTED_COMMIT; do
+    [[ "${!name:-}" =~ ^[0-9a-f]{40}$ ]] || {
+        echo "error: $name must be the approved 40-hex value (make release-push-tag prints both)" >&2
+        exit 1
+    }
+done
 scratch="$(mktemp)"
 trap 'rm -f "$scratch"' EXIT
 RECORDPRIMS_ANCHOR_OUT="$scratch" "$root/scripts/release-verify-published-tag.sh"
