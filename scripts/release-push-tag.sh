@@ -19,3 +19,10 @@ for tag in "${tags[@]}"; do
 done
 git push --atomic origin "${refs[@]}"
 "$tag_root/scripts/release-verify-remote-tag.sh"
+# The ceremony anchor records this identity once it is approved. Print the exact
+# values so they are reviewed here, not retyped later.
+object="$(git rev-parse "refs/tags/$RECORDPRIMS_RELEASE_TAG")"
+commit="$(git rev-parse "refs/tags/$RECORDPRIMS_RELEASE_TAG^{commit}")"
+echo "[ok] pushed $RECORDPRIMS_RELEASE_TAG: tag object $object at commit $commit"
+echo "next, after make release-verify-remote-tag, record the approved identity:"
+echo "  RECORDPRIMS_EXPECTED_TAG_OBJECT=$object RECORDPRIMS_EXPECTED_COMMIT=$commit make release-record-anchor"

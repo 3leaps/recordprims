@@ -40,7 +40,7 @@ verify >/dev/null
 
 # A tag whose message differs from the prepared message is refused, even though
 # it is validly signed.
-sed 's/^Synthetic release text\.$/Altered release text./' "$messages/$tag.txt" >"$fixture_dir/altered.txt"
+printf 'recordprims %s altered\n' "$version" >"$fixture_dir/altered.txt"
 sign '3 Leaps Infosec Team' "$fixture_dir/altered.txt"
 expect_fail_with 'differs from the prepared message' verify
 

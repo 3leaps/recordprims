@@ -94,21 +94,24 @@ pin in the tagged commit. To change one:
 
 ## 2. Tag
 
-- [ ] `make release-prepare-tag-message`. It creates `vX.Y.Z.txt` in
-  `RECORDPRIMS_TAG_MESSAGE_DIR` and never overwrites. Complete it: subject
-  `Release X.Y.Z`, the release text, and the attribution footer.
+- [ ] `make release-prepare-tag-message`. It writes `vX.Y.Z.txt` in
+  `RECORDPRIMS_TAG_MESSAGE_DIR`, already complete: one line,
+  `recordprims X.Y.Z`. Nothing needs editing; the tag must carry exactly
+  that message.
 - [ ] `make release-validate-pin`.
 - [ ] `make release-tag`: the tag, signed by the committed subkey, local only,
   at `HEAD`, which must equal `origin/main`.
 - [ ] `make release-verify-tag`: message bytes, tagger, target, and the
   signature against the pin committed in the tagged commit.
 - [ ] `make release-push-tag`: one push, then the remote object is
-  re-verified.
+  re-verified. It prints the tag object and commit, and the exact
+  `release-record-anchor` command for them.
 - [ ] `make release-verify-remote-tag`: the tag verifies against the committed
   pin and the approved primary, and GitHub reports it verified.
 - [ ] Record the ceremony identity once, outside the repository, and keep
-  `RECORDPRIMS_RELEASE_ANCHOR_FILE` set for every later step:
-  `RECORDPRIMS_EXPECTED_TAG_OBJECT=<vX.Y.Z object> RECORDPRIMS_EXPECTED_COMMIT=<commit> make release-record-anchor`.
+  `RECORDPRIMS_RELEASE_ANCHOR_FILE` set for every later step: run the
+  `RECORDPRIMS_EXPECTED_TAG_OBJECT=... RECORDPRIMS_EXPECTED_COMMIT=... make release-record-anchor`
+  line that `make release-push-tag` printed, after checking both values.
 
 ## 3. After the tag
 
