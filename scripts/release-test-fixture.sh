@@ -85,7 +85,7 @@ fixture_repo() {
 	# theirs as they land.
 	for script in release-workflow-pin.py release-tag-common.sh release-decernor.sh release-prepare-tag-message.py \
 		release-tag-body.sh verify-pinned-tag.sh validate-release-anchors.sh release-insert-anchors.sh \
-		install-release-anchors.sh release-validate-pin.sh verify-public-keys.sh; do
+		install-release-anchors.sh release-validate-pin.sh verify-public-keys.sh release-gh.sh; do
 		[[ ! -e "$fixture_root/scripts/$script" ]] || cp "$fixture_root/scripts/$script" "$repo/scripts/"
 	done
 	cp "$fixture_root"/config/release/tagger-identity.txt "$repo/config/release/"
