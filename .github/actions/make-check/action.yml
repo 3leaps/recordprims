@@ -52,6 +52,10 @@ runs:
         dest="$(scripts/ci-install-tools.sh "${TARGET}" "${tmp}/ci-tools")"
         (cygpath -w "${dest}" 2>/dev/null || echo "${dest}") >> "${GITHUB_PATH}"
 
+    - name: Install pinned Python packages
+      shell: bash
+      run: scripts/ci-install-pyyaml.sh python
+
     - name: make check
       shell: bash
       env:

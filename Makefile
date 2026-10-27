@@ -8,7 +8,7 @@ PYTHON ?= python3
 .DEFAULT_GOAL := help
 .PHONY: all help check precommit fmt fmt-check lint test test-go test-rust \
         contract-check contract-oracle deps-check api-scan deny go-standalone surface-scan content-check \
-        surface-tests prepush pr-final \
+        surface-tests prepush pr-final workflow-pin release-tooling-test doctor doctor-test \
         bootstrap release-check version version-check build clean
 
 all: check
@@ -16,11 +16,11 @@ all: check
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*## "} /^[a-z][a-z0-9-]*:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-check: fmt-check lint test contract-check contract-oracle deps-check api-scan content-check surface-tests deny version-check ## Everything CI runs on one host
+check: fmt-check lint test contract-check contract-oracle deps-check api-scan content-check surface-tests workflow-pin release-tooling-test deny version-check ## Everything CI runs on one host
 
 precommit: fmt-check lint ## Fast pre-commit gate
 
-prepush: check surface-scan ## Pre-push gate (the surface scan is skipped without a catalog)
+prepush: check doctor-test surface-scan ## Pre-push gate (the surface scan is skipped without a catalog)
 	@echo "[ok] prepush"
 
 # Before opening or updating a PR: everything CI runs, plus the maintainer's
@@ -43,6 +43,20 @@ content-check: ## Refuse local paths, private keys, tokens and commit markers in
 surface-tests: ## Controls for content-check and the surface scan (the scan suite skips without limensafe)
 	@PYTHON=$(PYTHON) scripts/content-check.test.sh
 	@PYTHON=$(PYTHON) scripts/surface-scan.test.sh
+
+workflow-pin: ## Every workflow and local action matches its reviewed digest and is read-only
+	@$(PYTHON) -B -E scripts/release-workflow-pin.py check
+
+release-tooling-test: ## Controls for the release tooling (synthetic; no keys or credentials)
+	@PYTHON=$(PYTHON) scripts/release-workflow-pin.test.sh
+
+# The doctor reports maintainer host tools; its controls stub them on PATH with
+# symlinks, so they run on maintainer hosts (prepush), not on Windows CI.
+doctor-test: ## Controls for make doctor (maintainer hosts)
+	@scripts/doctor.test.sh
+
+doctor: ## Report host tool versions against the recommended minimums (DOCTOR_SCOPE=release|dev)
+	@scripts/doctor.sh $(or $(DOCTOR_SCOPE),release)
 
 fmt: ## Format Go and Rust
 	gofmt -w $$(git ls-files '*.go')
