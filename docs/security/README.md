@@ -50,3 +50,16 @@ anchors from the committed exports with `decernor` 0.1.8 or newer, twice, and
 compares the results. `make release-validate-pin` reads the committed pins and
 anchors as git blobs and checks them in an isolated keyring. The minisign
 fingerprint covers the decoded public blob, not its comment or the whole file.
+
+## Tags
+
+A release is one tag, `vX.Y.Z`, which releases the Rust crate and the root Go
+module together. It must be annotated, signed by the committed signing subkey,
+tagged by the committed tagger identity, carry exactly the prepared message, and
+point at a commit whose root `go.mod` declares `github.com/3leaps/recordprims`.
+Verification refuses a release where the tag is missing or points elsewhere.
+
+Tag verification reads committed public data from the tagged commit in an
+isolated keyring and requires the exact signing subkey of the approved primary,
+which comes from the maintainer environment, never from the tree. The forge's
+own "verified" flag is an additional check.

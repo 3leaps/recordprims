@@ -3,6 +3,7 @@
 # `make check` is everything CI runs on one host.
 
 SHELL := bash
+.SHELLFLAGS := -eu -o pipefail -c
 PYTHON ?= python3
 
 .DEFAULT_GOAL := help
@@ -10,6 +11,8 @@ PYTHON ?= python3
         contract-check contract-oracle deps-check api-scan deny go-standalone surface-scan content-check \
         surface-tests prepush pr-final workflow-pin release-tooling-test doctor doctor-test \
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
+        release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
+        release-verify-remote-tag release-record-anchor \
         bootstrap release-check version version-check build clean
 
 all: check
@@ -62,6 +65,79 @@ doctor-test: ## Controls for make doctor (maintainer hosts)
 release-ceremony-test: ## Synthetic release-ceremony controls (throwaway keys; maintainer hosts)
 	@scripts/release-validate-pin.test.sh
 	@scripts/release-anchors.test.sh
+	@scripts/release-gh.test.sh
+	@scripts/release-tag-controls.test.sh
+	@scripts/release-verify-tag.test.sh
+	@scripts/verify-pinned-tag.test.sh
+	@scripts/release-verify-published-tag.test.sh
+
+# Release
+# -----------------------------------------------------------------------------
+#
+# A release is one signed annotated tag, vX.Y.Z, at a commit of main; it
+# releases the Rust crate and the root Go module together. The tag is an
+# explicit input (RECORDPRIMS_RELEASE_TAG); it is never derived from VERSION,
+# git describe or the branch, and a bare RELEASE_TAG from any origin is refused
+# so it cannot stand in for it.
+#
+# Maintainer inputs (local environment; never in this tree):
+#   RECORDPRIMS_RELEASE_TAG             vX.Y.Z
+#   RECORDPRIMS_TAG_MESSAGE_DIR         per-release message directory ending in the tag
+#   RECORDPRIMS_DECERNOR_BIN            absolute path to decernor >= 0.1.8 (no fallback)
+#   RECORDPRIMS_TAGGER_NAME/EMAIL       the committed tagger identity
+#   RECORDPRIMS_PGP_KEY_ID              the committed signing subkey followed by !
+#   RECORDPRIMS_GPG_HOMEDIR             external GPG home
+#   RECORDPRIMS_GPG_SIGNING_FINGERPRINT the approved primary fingerprint
+#   RECORDPRIMS_RELEASE_ANCHOR_FILE     external ceremony anchor record
+#
+# The public pins are committed (docs/security, keys/, config/release) and
+# every verify step reads them from the tagged commit. CI holds no signing,
+# release or registry authority.
+
+# Release stages must not overlap under `make -j`.
+.NOTPARALLEL:
+
+ifneq ($(origin RELEASE_TAG),undefined)
+$(error RELEASE_TAG is not accepted; set RECORDPRIMS_RELEASE_TAG=vX.Y.Z)
+endif
+REQUIRE_RELEASE_TAG = @if [ -z "$(RECORDPRIMS_RELEASE_TAG)" ]; then \
+	echo "error: RECORDPRIMS_RELEASE_TAG=vX.Y.Z is required"; exit 1; fi
+
+release-preflight: ## Pre-tag gate on a clean main synced with origin
+	@source scripts/release-decernor.sh && resolve_release_decernor && echo "[ok] checker $$RELEASE_DECERNOR_BIN"
+	@test -z "$$(git status --porcelain)" || { echo "error: working tree not clean"; git status --short; exit 1; }
+	@test "$$(git symbolic-ref --quiet --short HEAD)" = main || { echo "error: release from main"; exit 1; }
+	git fetch --quiet origin main
+	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" || { echo "error: HEAD differs from origin/main"; exit 1; }
+	$(MAKE) check doctor-test release-ceremony-test
+	RECORDPRIMS_SURFACE_SCAN_REQUIRED=1 RECORDPRIMS_SURFACE_SCOPE=release PYTHON=$(PYTHON) scripts/surface-scan.sh
+	@v="$$(cat VERSION)"; grep -q "^## \[$$v\]" CHANGELOG.md || { echo "error: CHANGELOG.md has no [$$v] section"; exit 1; }; \
+	  grep -q "^\[$$v\]: " CHANGELOG.md || { echo "error: CHANGELOG.md has no [$$v] compare link"; exit 1; }
+	@echo "[ok] release preflight; next: make release-prepare-tag-message"
+
+release-prepare-tag-message: ## Prepare the release tag message (outside the repo)
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-tag-operator.sh prepare-message
+
+release-tag: ## Create the release tag, signed and local only
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-tag-operator.sh local-tag
+
+release-push-tag: ## Push the verified release tag, then verify it
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-tag-operator.sh remote-push
+
+release-verify-tag: ## Verify the local release tag against the committed pin
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-verify-tag.sh
+
+release-verify-remote-tag: ## Verify the pushed release tag against the committed pin and GitHub
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-verify-published-tag.sh
+
+release-record-anchor: ## Record the approved tag object and commit (no overwrite)
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-record-anchor.sh
 
 release-export-pin: ## One time: write the public signing pins for review (refuses overwrite)
 	scripts/release-export-pin.sh
