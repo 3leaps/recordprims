@@ -68,7 +68,7 @@ pin in the tagged commit. To change one:
 ## 1. Release pack
 
 - [ ] All in-scope PRs merged; on `main`, clean, in sync with `origin/main`.
-- [ ] Set the version with a make target, never by hand: `make version-patch`,
+- [ ] Set the version through the Makefile, never by hand: `make version-patch`,
   `version-minor`, `version-major` or `version-set V=X.Y.Z`. `VERSION` is the
   single source of truth; the target writes it to `Cargo.toml` and
   `Cargo.lock`, and `make version-check` confirms every site agrees.
