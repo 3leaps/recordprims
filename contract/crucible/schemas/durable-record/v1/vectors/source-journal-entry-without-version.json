@@ -1,0 +1,117 @@
+{
+  "window_ms": 60000,
+  "source_journal": [
+    {}
+  ],
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.continued",
+      "type": "stream_opened",
+      "at": "2026-10-20T00:00:10.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss",
+      "continues": {
+        "capability": "contract: durable-record/v1",
+        "stream": "records.example",
+        "cut_seq": 4,
+        "cut_digest": "sha256:791c6ec8b20504fcb232e9a1d15e0633c7ca44485f61d635ac5d6223156c9bf1"
+      }
+    },
+    {
+      "v": 1,
+      "seq": 2,
+      "group": 2,
+      "group_size": 1,
+      "stream": "records.continued",
+      "type": "appended",
+      "at": "2026-10-20T00:00:11.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "records.continued",
+        "record_id": "second",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "payload": {
+          "note": "second"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:925b0419d242a7bdf9186c6f44e26cbb5489098c356c5246e501f69c86283d8b",
+      "idempotency_key": "write-records.continued-second",
+      "imported_from": {
+        "capability": "contract: durable-record/v1",
+        "pin": {
+          "stream": "records.example",
+          "record_id": "second",
+          "revision": 1,
+          "digest": "sha256:cd5cd9e31fc183a38c2b47be8d505acc2a63dee1c035b2fb951f4be19cd52c73"
+        }
+      }
+    },
+    {
+      "v": 1,
+      "seq": 3,
+      "group": 3,
+      "group_size": 1,
+      "stream": "records.continued",
+      "type": "restrictions_reviewed",
+      "at": "2026-10-20T00:00:12.000000Z",
+      "source": {
+        "capability": "contract: durable-record/v1",
+        "stream": "records.example",
+        "cut_seq": 4,
+        "cut_digest": "sha256:791c6ec8b20504fcb232e9a1d15e0633c7ca44485f61d635ac5d6223156c9bf1"
+      },
+      "destination_cut_seq": 2,
+      "source_state_digest": "sha256:4e6a014a1ef5c4f7aa0425cce8ed64cce78a88178534207da3f355a5b2027ac3",
+      "destination_applied_state_digest": "sha256:0fcac3330b0dcc2f731b0f96c9498f66c305a5adbf63e268a19c81cffdaf280a",
+      "authorization": {
+        "ref": "review:example",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "provenance": {
+        "actor_kind": "human",
+        "actor": "operator"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "use": {
+        "v": 1,
+        "stream": "records.continued",
+        "protection_cut": 3,
+        "current_cut": 3,
+        "protection_state": "verified",
+        "purpose": "serve",
+        "selection": [
+          {
+            "stream": "records.continued",
+            "record_id": "second",
+            "revision": 1,
+            "digest": "sha256:925b0419d242a7bdf9186c6f44e26cbb5489098c356c5246e501f69c86283d8b"
+          }
+        ],
+        "inherited_block": false,
+        "closure": "references_only",
+        "bodies": [],
+        "omitted": [],
+        "source_state_digest": "sha256:4e6a014a1ef5c4f7aa0425cce8ed64cce78a88178534207da3f355a5b2027ac3"
+      }
+    }
+  ],
+  "expected": {
+    "refusal": "continuation"
+  }
+}

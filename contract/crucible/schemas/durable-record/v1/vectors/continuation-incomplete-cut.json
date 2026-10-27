@@ -1,0 +1,97 @@
+{
+  "window_ms": 60000,
+  "source_journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "stream_opened",
+      "at": "2026-10-20T00:00:01.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss"
+    },
+    {
+      "v": 1,
+      "seq": 2,
+      "group": 2,
+      "group_size": 2,
+      "stream": "records.example",
+      "type": "appended",
+      "at": "2026-10-20T00:00:02.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "records.example",
+        "record_id": "first",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "payload": {
+          "note": "first"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:8b538d41478dce6d555709710a0e55ed4f1c9336ce9de80e6e6c66dd41c871e1",
+      "idempotency_key": "write-records.example-first"
+    },
+    {
+      "v": 1,
+      "seq": 3,
+      "group": 2,
+      "group_size": 2,
+      "stream": "records.example",
+      "type": "appended",
+      "at": "2026-10-20T00:00:03.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "records.example",
+        "record_id": "second",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "payload": {
+          "note": "second"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:cd5cd9e31fc183a38c2b47be8d505acc2a63dee1c035b2fb951f4be19cd52c73",
+      "idempotency_key": "write-records.example-second"
+    }
+  ],
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.continued",
+      "type": "stream_opened",
+      "at": "2026-10-20T00:00:10.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss",
+      "continues": {
+        "capability": "contract: durable-record/v1",
+        "stream": "records.example",
+        "cut_seq": 2,
+        "cut_digest": "sha256:3772e6ffd8564d92e01599f227f848485e7bf0ae52ab4541270b97170de96723"
+      }
+    }
+  ],
+  "steps": [],
+  "expected": {
+    "refusal": "continuation"
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "window_ms": 60000,
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "stream_opened",
+      "at": "2026-10-20T00:00:01.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss"
+    },
+    {
+      "v": 1,
+      "seq": 2,
+      "group": 2,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "appended",
+      "at": "2026-10-20T00:00:02.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "records.example",
+        "record_id": "first",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8,
+          "media_type": "text/plain"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "produced_at": {
+          "instant": "2026-10-20T00:00:01.25Z",
+          "source": "producer_clock"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:971319a1ab307f46328812005a1bbb4e5303bd1ad2536f39adf7be1c33d9c922",
+      "idempotency_key": "write-first-1",
+      "body_status": "verified"
+    },
+    {
+      "v": 1,
+      "seq": 3,
+      "group": 3,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "appended",
+      "at": "2026-10-20T00:00:03.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "records.example",
+        "record_id": "second",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8,
+          "media_type": "text/plain"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:cfaad4041d3dbce0a111391dcb610bd535a1e675bcec4c8283c4721f49803ca8",
+      "idempotency_key": "write-second-1",
+      "body_status": "verified"
+    }
+  ],
+  "steps": [],
+  "invalid_journal_entries": [
+    1
+  ],
+  "expected": {
+    "refusal": "instant_spelling"
+  }
+}

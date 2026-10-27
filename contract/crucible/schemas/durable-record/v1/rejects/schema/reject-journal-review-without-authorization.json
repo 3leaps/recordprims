@@ -1,0 +1,51 @@
+{
+  "schema": "journal-entry",
+  "baseline": {
+    "v": 1,
+    "seq": 3,
+    "group": 3,
+    "group_size": 1,
+    "stream": "records.continued",
+    "type": "restrictions_reviewed",
+    "at": "2026-10-20T00:00:12.000000Z",
+    "source": {
+      "capability": "contract: durable-record/v1",
+      "stream": "records.example",
+      "cut_seq": 4,
+      "cut_digest": "sha256:791c6ec8b20504fcb232e9a1d15e0633c7ca44485f61d635ac5d6223156c9bf1"
+    },
+    "destination_cut_seq": 2,
+    "source_state_digest": "sha256:4e6a014a1ef5c4f7aa0425cce8ed64cce78a88178534207da3f355a5b2027ac3",
+    "destination_applied_state_digest": "sha256:0fcac3330b0dcc2f731b0f96c9498f66c305a5adbf63e268a19c81cffdaf280a",
+    "authorization": {
+      "ref": "review:example",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "provenance": {
+      "actor_kind": "human",
+      "actor": "operator"
+    }
+  },
+  "reject": {
+    "v": 1,
+    "seq": 3,
+    "group": 3,
+    "group_size": 1,
+    "stream": "records.continued",
+    "type": "restrictions_reviewed",
+    "at": "2026-10-20T00:00:12.000000Z",
+    "source": {
+      "capability": "contract: durable-record/v1",
+      "stream": "records.example",
+      "cut_seq": 4,
+      "cut_digest": "sha256:791c6ec8b20504fcb232e9a1d15e0633c7ca44485f61d635ac5d6223156c9bf1"
+    },
+    "destination_cut_seq": 2,
+    "source_state_digest": "sha256:4e6a014a1ef5c4f7aa0425cce8ed64cce78a88178534207da3f355a5b2027ac3",
+    "destination_applied_state_digest": "sha256:0fcac3330b0dcc2f731b0f96c9498f66c305a5adbf63e268a19c81cffdaf280a",
+    "provenance": {
+      "actor_kind": "human",
+      "actor": "operator"
+    }
+  }
+}

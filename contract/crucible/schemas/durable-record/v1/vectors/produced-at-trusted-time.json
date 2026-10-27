@@ -1,0 +1,95 @@
+{
+  "window_ms": 60000,
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "stream_opened",
+      "at": "2026-10-20T00:00:01.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss"
+    },
+    {
+      "v": 1,
+      "seq": 2,
+      "group": 2,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "appended",
+      "at": "2026-10-20T00:00:02.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "records.example",
+        "record_id": "first",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8,
+          "media_type": "text/plain"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "produced_at": {
+          "instant": "2026-10-20T00:00:01.250000Z",
+          "source": "trusted_time",
+          "evidence": {
+            "kind": "rfc3161",
+            "ref": "tsa-token:example",
+            "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:dbe6d0750b650f30aa0429c848391da174368dbf2c7af2e7268dd4455d6a9e1c",
+      "idempotency_key": "write-first-1",
+      "body_status": "verified"
+    },
+    {
+      "v": 1,
+      "seq": 3,
+      "group": 3,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "appended",
+      "at": "2026-10-20T00:00:03.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "records.example",
+        "record_id": "second",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8,
+          "media_type": "text/plain"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:cfaad4041d3dbce0a111391dcb610bd535a1e675bcec4c8283c4721f49803ca8",
+      "idempotency_key": "write-second-1",
+      "body_status": "verified"
+    }
+  ],
+  "steps": [],
+  "expected": {
+    "results": [],
+    "active_holds": [],
+    "journal_size": 3
+  }
+}

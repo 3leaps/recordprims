@@ -8,7 +8,7 @@
       "group_size": 1,
       "stream": "records.example",
       "type": "stream_opened",
-      "at": "2026-10-20T00:00:01Z",
+      "at": "2026-10-20T00:00:01.000000Z",
       "mode": "revisioned",
       "failure_model": "survives_power_loss"
     },
@@ -19,9 +19,9 @@
       "group_size": 1,
       "stream": "records.example",
       "type": "appended",
-      "at": "2026-10-20T00:00:02Z",
+      "at": "2026-10-20T00:00:02.000000Z",
       "record": {
-        "v": 0,
+        "v": 1,
         "stream": "records.example",
         "record_id": "first",
         "revision": 1,
@@ -40,7 +40,7 @@
           "sensitivity": "0-public"
         }
       },
-      "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7",
+      "digest": "sha256:b6bd30bd3e619fb37940b9e31718c1b206bfa5fd672b0a7ba0c848c7c121bdf4",
       "idempotency_key": "write-first-1",
       "body_status": "verified"
     },
@@ -51,9 +51,9 @@
       "group_size": 1,
       "stream": "records.example",
       "type": "appended",
-      "at": "2026-10-20T00:00:03Z",
+      "at": "2026-10-20T00:00:03.000000Z",
       "record": {
-        "v": 0,
+        "v": 1,
         "stream": "records.example",
         "record_id": "second",
         "revision": 1,
@@ -72,7 +72,7 @@
           "sensitivity": "0-public"
         }
       },
-      "digest": "sha256:eb5d8fab4f6c110407b088f998169120bd4b64380d59654781851db2caee6c8e",
+      "digest": "sha256:cfaad4041d3dbce0a111391dcb610bd535a1e675bcec4c8283c4721f49803ca8",
       "idempotency_key": "write-second-1",
       "body_status": "verified"
     },
@@ -83,7 +83,7 @@
       "group_size": 1,
       "stream": "records.example",
       "type": "tombstoned",
-      "at": "2026-10-20T00:00:04Z",
+      "at": "2026-10-20T00:00:04.000000Z",
       "request": {
         "v": 1,
         "stream": "records.example",
@@ -93,7 +93,7 @@
           "stream": "records.example",
           "record_id": "first",
           "revision": 1,
-          "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7"
+          "digest": "sha256:b6bd30bd3e619fb37940b9e31718c1b206bfa5fd672b0a7ba0c848c7c121bdf4"
         },
         "scope": "record",
         "reason": "source_removed",
@@ -101,13 +101,13 @@
           "ref": "source-observation:example",
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
-        "observed_at": "2026-10-20T00:00:03Z",
+        "observed_at": "2026-10-20T00:00:03.000000Z",
         "provenance": {
           "actor_kind": "human",
           "actor": "operator"
         }
       },
-      "request_digest": "sha256:fad632855953ba37b194a1561414762859150003e8691ad96f119a903b185a0a"
+      "request_digest": "sha256:db67532810f37d0aca155463af01db95d99e4db0ae5285ab602e8ba8a2d7736c"
     },
     {
       "v": 1,
@@ -116,7 +116,7 @@
       "group_size": 1,
       "stream": "records.example",
       "type": "deduplicated",
-      "at": "2026-10-20T00:00:05Z",
+      "at": "2026-10-20T00:00:05.000000Z",
       "record_id": "first",
       "idempotency_key": "hold-1"
     }

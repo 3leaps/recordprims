@@ -1,0 +1,80 @@
+{
+  "window_ms": 60000,
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.continued",
+      "type": "stream_opened",
+      "at": "2026-10-20T00:00:10.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss"
+    },
+    {
+      "v": 1,
+      "seq": 2,
+      "group": 2,
+      "group_size": 1,
+      "stream": "records.continued",
+      "type": "appended",
+      "at": "2026-10-20T00:00:11.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "records.continued",
+        "record_id": "local",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "payload": {
+          "note": "local"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:114b7104854e4223b3bac816c3c782f6feb9df1f855e3e37b1e1bcc77629ff14",
+      "idempotency_key": "write-records.continued-local"
+    }
+  ],
+  "steps": [
+    {
+      "use": {
+        "v": 1,
+        "stream": "records.continued",
+        "protection_cut": 2,
+        "current_cut": 2,
+        "protection_state": "verified",
+        "purpose": "serve",
+        "selection": [
+          {
+            "stream": "records.continued",
+            "record_id": "local",
+            "revision": 1,
+            "digest": "sha256:114b7104854e4223b3bac816c3c782f6feb9df1f855e3e37b1e1bcc77629ff14"
+          }
+        ],
+        "inherited_block": false,
+        "closure": "references_only",
+        "bodies": [],
+        "omitted": [],
+        "source_state_digest": "sha256:4e6a014a1ef5c4f7aa0425cce8ed64cce78a88178534207da3f355a5b2027ac3"
+      }
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "outcome": "refused",
+        "reason": "protection_unavailable"
+      }
+    ],
+    "active_holds": [],
+    "journal_size": 2
+  }
+}
