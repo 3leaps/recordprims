@@ -68,17 +68,28 @@ pin in the tagged commit. To change one:
 ## 1. Release pack
 
 - [ ] All in-scope PRs merged; on `main`, clean, in sync with `origin/main`.
-- [ ] `VERSION` and the `Cargo.toml` workspace version set to `X.Y.Z`
-  (`make version-check`).
+- [ ] Set the version with a make target, never by hand: `make version-patch`,
+  `version-minor`, `version-major` or `version-set V=X.Y.Z`. `VERSION` is the
+  single source of truth; the target writes it to `Cargo.toml` and
+  `Cargo.lock`, and `make version-check` confirms every site agrees.
 - [ ] `CHANGELOG.md`: move `[Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, and
   **advance the compare links by hand**: `[Unreleased]: .../compare/vX.Y.Z...HEAD`
   and `[X.Y.Z]: .../compare/vPREV...vX.Y.Z` (the first release links to its
   tag). Every `## [x.y.z]` heading needs its footer definition.
+- [ ] `docs/releases/vX.Y.Z.md`: the permanent notes for this release,
+  starting with `# vX.Y.Z`.
+- [ ] `RELEASE_NOTES.md`: add `## vX.Y.Z - YYYY-MM-DD` at the top, summarizing
+  the release and linking its `docs/releases/` notes. Keep the latest three
+  releases; remove the oldest when adding a fourth (its notes stay in
+  `docs/releases/`).
+- [ ] Read `README.md` through and correct anything the release changes
+  (status, bindings, supported platforms and toolchains).
 - [ ] Merge the release pack with an exact squash message whose body ends with
   the standard attribution footer, then check it: `git log -1 --format=%B`.
 - [ ] `make release-preflight` on the merged `main`: the checker, a clean tree
   on `main` equal to `origin/main`, `make check`, the tool and ceremony
-  controls, the required release-scope surface scan, and the changelog entry.
+  controls, the required release-scope surface scan, the changelog entry, the
+  release notes and `docs/releases/vX.Y.Z.md`.
 - [ ] Main CI is green on this exact commit. Preflight alone is not enough.
 
 ## 2. Tag
