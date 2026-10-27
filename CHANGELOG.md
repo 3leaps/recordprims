@@ -7,4 +7,24 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-[Unreleased]: https://github.com/3leaps/recordprims/commits/main
+## [0.0.1] - 2026-10-27
+
+The first tag. Pre-release; the API will change before 0.1.0.
+
+- Go store foundation: `Init` and `Open` with a confined, verified store root
+  (owner, permissions or DACL, no symlinks, special files or hard links), and
+  a filesystem-type allowlist on macOS, Linux and Windows
+- A cross-process store lock taken through the confined root
+- Content-addressed bodies: `PutBody` and `RemoveBody` with publication leases,
+  incarnation records and retention tombstones, idempotent by state, with
+  `ErrBodyIncomplete` for retryable incomplete operations
+- Published determinate and indeterminate error sets that carry no paths
+- Release process: one signed tag per release (`vX.Y.Z`) for the Go module and
+  the Rust crate, committed public signing pins and fingerprint anchors read
+  from the tagged commit
+- Repository checks: the vendored `durable-record/v1` contract pin and its
+  oracle, sibling-prim allow-list, exported-API scan, workflow digest pins, a
+  vocabulary-free content check, and a maintainer public-surface scan
+
+[Unreleased]: https://github.com/3leaps/recordprims/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/3leaps/recordprims/tree/v0.0.1

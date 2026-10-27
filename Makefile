@@ -13,7 +13,8 @@ PYTHON ?= python3
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
         release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
         release-verify-remote-tag release-record-anchor \
-        bootstrap release-check version version-check build clean
+        bootstrap release-check version version-check version-sync version-set version-patch \
+        version-minor version-major build clean
 
 all: check
 
@@ -112,7 +113,9 @@ release-preflight: ## Pre-tag gate on a clean main synced with origin
 	$(MAKE) check doctor-test release-ceremony-test
 	RECORDPRIMS_SURFACE_SCAN_REQUIRED=1 RECORDPRIMS_SURFACE_SCOPE=release PYTHON=$(PYTHON) scripts/surface-scan.sh
 	@v="$$(cat VERSION)"; grep -q "^## \[$$v\]" CHANGELOG.md || { echo "error: CHANGELOG.md has no [$$v] section"; exit 1; }; \
-	  grep -q "^\[$$v\]: " CHANGELOG.md || { echo "error: CHANGELOG.md has no [$$v] compare link"; exit 1; }
+	  grep -q "^\[$$v\]: " CHANGELOG.md || { echo "error: CHANGELOG.md has no [$$v] compare link"; exit 1; } ; \
+	  test -f "docs/releases/v$$v.md" || { echo "error: docs/releases/v$$v.md is required"; exit 1; }; \
+	  grep -q "^## v$$v " RELEASE_NOTES.md || { echo "error: RELEASE_NOTES.md has no v$$v entry"; exit 1; }
 	@echo "[ok] release preflight; next: make release-prepare-tag-message"
 
 release-prepare-tag-message: ## Prepare the release tag message (outside the repo)
@@ -202,9 +205,30 @@ release-check: ## Release readiness (pre-release: no release machinery yet)
 version: ## Print the version
 	@cat VERSION
 
-version-check: ## VERSION matches Cargo.toml
-	@v="$$(cat VERSION)"; c="$$(awk -F'"' '/^\[workspace.package\]/{f=1} f&&/^version/{print $$2; exit}' Cargo.toml)"; \
-	  if [ "$$v" != "$$c" ]; then echo "version-check: VERSION=$$v Cargo.toml=$$c" >&2; exit 1; fi; echo "[ok] version-check $$v"
+# VERSION is the single source of truth. Change it only through these targets;
+# they write every version site (Cargo.toml, Cargo.lock) from it.
+version-check: ## Every version site matches VERSION
+	@$(PYTHON) -I -B scripts/version-sync.py check
+
+version-sync: ## Write VERSION to every version site
+	@$(PYTHON) -I -B scripts/version-sync.py
+
+version-set: ## Set an explicit version (V=X.Y.Z), then sync
+	@[[ "$(V)" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$ ]] || { echo "usage: make version-set V=X.Y.Z" >&2; exit 1; }
+	@printf '%s\n' "$(V)" >VERSION
+	@$(PYTHON) -I -B scripts/version-sync.py
+
+version-patch: ## Bump the patch version, then sync
+	@IFS=. read -r major minor patch <VERSION; printf '%s\n' "$$major.$$minor.$$((patch + 1))" >VERSION
+	@$(PYTHON) -I -B scripts/version-sync.py
+
+version-minor: ## Bump the minor version, then sync
+	@IFS=. read -r major minor patch <VERSION; printf '%s\n' "$$major.$$((minor + 1)).0" >VERSION
+	@$(PYTHON) -I -B scripts/version-sync.py
+
+version-major: ## Bump the major version, then sync
+	@IFS=. read -r major minor patch <VERSION; printf '%s\n' "$$((major + 1)).0.0" >VERSION
+	@$(PYTHON) -I -B scripts/version-sync.py
 
 build: ## Build both trees
 	CGO_ENABLED=0 go build ./...
