@@ -199,19 +199,16 @@ Subject to 3 Leaps OSS policies: https://github.com/3leaps/oss-policies
 
 ## Project Name Notice
 
-"canonprims" is a project name of 3 Leaps, LLC, used to identify this software.
-The name derives from "canonicalization" and has no connection with Canon Inc.
-or its marks.
-"3 Leaps" is a registered trademark of 3 Leaps, LLC, a Florida LLC with
-offices in South Carolina.
+"recordprims" is a project name of 3 Leaps, LLC, used to identify this software.
+"3 Leaps" is a registered trademark of 3 Leaps, LLC, a North Carolina LLC.
 
 While code and documentation are open under the Apache License 2.0, usage of
-the "canonprims" project name is reserved for official implementations to prevent
+the "recordprims" project name is reserved for official implementations to prevent
 confusion and benefit the ecosystem. Use of this name in derivative works
 does not imply endorsement by 3 Leaps, LLC.
 
 For the benefit of the community, please rename your project folder and
-configurations to avoid using "3leaps" or "canonprims" in derivative works that
+configurations to avoid using "3leaps" or "recordprims" in derivative works that
 are not official 3 Leaps projects.
 
 For questions regarding project name usage, contact hello@3leaps.net.
