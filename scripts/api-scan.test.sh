@@ -9,7 +9,7 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 repo="$scratch/repo"
 mkdir "$repo"
-git -C "$root" ls-files -z | (cd "$root" && xargs -0 tar -cf -) | tar -xf - -C "$repo"
+git -C "$root" ls-files -z | tar -C "$root" --null -T - -cf - | tar -xf - -C "$repo"
 seam="$repo/internal/canon/canon.go"
 cp "$seam" "$scratch/seam.go"
 
