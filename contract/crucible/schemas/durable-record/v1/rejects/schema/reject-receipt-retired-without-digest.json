@@ -1,0 +1,24 @@
+{
+  "schema": "write-receipt",
+  "baseline": {
+    "v": 1,
+    "kind": "receipt",
+    "stream": "records.example",
+    "idempotency_key": "retire-1",
+    "outcome": "retired",
+    "seq": 4,
+    "record_id": "first",
+    "request_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "failure_model": "survives_power_loss"
+  },
+  "reject": {
+    "v": 1,
+    "kind": "receipt",
+    "stream": "records.example",
+    "idempotency_key": "retire-1",
+    "outcome": "retired",
+    "seq": 4,
+    "record_id": "first",
+    "failure_model": "survives_power_loss"
+  }
+}

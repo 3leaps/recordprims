@@ -75,6 +75,10 @@
         "$ref": "#/$defs/pin"
       },
       "uniqueItems": true
+    },
+    "source_state_digest": {
+      "$ref": "#/$defs/digest",
+      "description": "Trusted input: the effective restriction manifest digest of a continuation's source at its current authoritative cut. Only for a continuation."
     }
   },
   "required": [

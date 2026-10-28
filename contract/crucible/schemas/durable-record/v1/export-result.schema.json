@@ -57,7 +57,8 @@
             "target_not_found",
             "export_selection",
             "body_closure",
-            "invalid_purpose"
+            "invalid_purpose",
+            "restrictions_pending"
           ]
         }
       },

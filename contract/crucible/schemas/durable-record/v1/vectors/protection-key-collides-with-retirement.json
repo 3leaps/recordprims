@@ -1,0 +1,140 @@
+{
+  "window_ms": 60000,
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "stream_opened",
+      "at": "2026-10-20T00:00:01.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss"
+    },
+    {
+      "v": 1,
+      "seq": 2,
+      "group": 2,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "appended",
+      "at": "2026-10-20T00:00:02.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "records.example",
+        "record_id": "first",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8,
+          "media_type": "text/plain"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:b6bd30bd3e619fb37940b9e31718c1b206bfa5fd672b0a7ba0c848c7c121bdf4",
+      "idempotency_key": "write-first-1",
+      "body_status": "verified"
+    },
+    {
+      "v": 1,
+      "seq": 3,
+      "group": 3,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "appended",
+      "at": "2026-10-20T00:00:03.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "records.example",
+        "record_id": "second",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8,
+          "media_type": "text/plain"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:cfaad4041d3dbce0a111391dcb610bd535a1e675bcec4c8283c4721f49803ca8",
+      "idempotency_key": "write-second-1",
+      "body_status": "verified"
+    }
+  ],
+  "steps": [
+    {
+      "retire": {
+        "stream": "records.example",
+        "record_id": "first",
+        "reason": "superseded by a corrected source",
+        "idempotency_key": "shared-key"
+      },
+      "at": "2026-10-20T00:00:04.000000Z"
+    },
+    {
+      "request": {
+        "v": 1,
+        "stream": "records.example",
+        "idempotency_key": "shared-key",
+        "action": "tombstone",
+        "target": {
+          "stream": "records.example",
+          "record_id": "first",
+          "revision": 1,
+          "digest": "sha256:b6bd30bd3e619fb37940b9e31718c1b206bfa5fd672b0a7ba0c848c7c121bdf4"
+        },
+        "scope": "record",
+        "reason": "source_removed",
+        "evidence": {
+          "ref": "source-observation:example",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "observed_at": "2026-10-20T00:00:03.000000Z",
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        }
+      },
+      "at": "2026-10-20T00:00:05.000000Z"
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "v": 1,
+        "kind": "receipt",
+        "stream": "records.example",
+        "idempotency_key": "shared-key",
+        "outcome": "retired",
+        "seq": 4,
+        "record_id": "first",
+        "request_digest": "sha256:9f239a3ee92aa2a0881724b607792fa4465eafec4d25bc02438e533d8a5bff20",
+        "failure_model": "survives_power_loss"
+      },
+      {
+        "v": 1,
+        "stream": "records.example",
+        "idempotency_key": "shared-key",
+        "outcome": "idempotency_conflict"
+      }
+    ],
+    "active_holds": [],
+    "journal_size": 4
+  }
+}

@@ -8,7 +8,7 @@
       "group_size": 1,
       "stream": "records.example",
       "type": "stream_opened",
-      "at": "2026-10-20T00:00:01Z",
+      "at": "2026-10-20T00:00:01.000000Z",
       "mode": "revisioned",
       "failure_model": "survives_power_loss"
     },
@@ -19,9 +19,9 @@
       "group_size": 1,
       "stream": "records.example",
       "type": "appended",
-      "at": "2026-10-20T00:00:02Z",
+      "at": "2026-10-20T00:00:02.000000Z",
       "record": {
-        "v": 0,
+        "v": 1,
         "stream": "records.example",
         "record_id": "first",
         "revision": 1,
@@ -40,7 +40,7 @@
           "sensitivity": "0-public"
         }
       },
-      "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7",
+      "digest": "sha256:b6bd30bd3e619fb37940b9e31718c1b206bfa5fd672b0a7ba0c848c7c121bdf4",
       "idempotency_key": "write-first-1",
       "body_status": "verified"
     },
@@ -51,9 +51,9 @@
       "group_size": 1,
       "stream": "records.example",
       "type": "appended",
-      "at": "2026-10-20T00:00:03Z",
+      "at": "2026-10-20T00:00:03.000000Z",
       "record": {
-        "v": 0,
+        "v": 1,
         "stream": "records.example",
         "record_id": "second",
         "revision": 1,
@@ -72,7 +72,7 @@
           "sensitivity": "0-public"
         }
       },
-      "digest": "sha256:1cf2b9fd0719293b0b56b4abd0e76aabb90e88c2aab2ca23339d3b1b51e09f38",
+      "digest": "sha256:9c93944eb0358eb979b468f651aa1955f58a6664cbd75ebfdd160dac8f39b705",
       "idempotency_key": "write-second-1",
       "body_status": "verified"
     }
@@ -88,7 +88,7 @@
           "stream": "records.example",
           "record_id": "first",
           "revision": 1,
-          "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7"
+          "digest": "sha256:b6bd30bd3e619fb37940b9e31718c1b206bfa5fd672b0a7ba0c848c7c121bdf4"
         },
         "scope": "body",
         "reason": "source_removed",
@@ -96,7 +96,7 @@
           "ref": "source-observation:example",
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
-        "observed_at": "2026-10-20T00:00:03Z",
+        "observed_at": "2026-10-20T00:00:03.000000Z",
         "provenance": {
           "actor_kind": "human",
           "actor": "operator"
@@ -106,7 +106,7 @@
           "length": 8
         }
       },
-      "at": "2026-10-20T00:00:04Z"
+      "at": "2026-10-20T00:00:04.000000Z"
     },
     {
       "use": {
@@ -121,7 +121,7 @@
             "stream": "records.example",
             "record_id": "second",
             "revision": 1,
-            "digest": "sha256:1cf2b9fd0719293b0b56b4abd0e76aabb90e88c2aab2ca23339d3b1b51e09f38"
+            "digest": "sha256:9c93944eb0358eb979b468f651aa1955f58a6664cbd75ebfdd160dac8f39b705"
           }
         ],
         "inherited_block": false,
@@ -132,7 +132,7 @@
             "stream": "records.example",
             "record_id": "first",
             "revision": 1,
-            "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7"
+            "digest": "sha256:b6bd30bd3e619fb37940b9e31718c1b206bfa5fd672b0a7ba0c848c7c121bdf4"
           }
         ]
       }
@@ -146,7 +146,7 @@
         "idempotency_key": "hold-1",
         "outcome": "tombstoned",
         "seq": 4,
-        "request_digest": "sha256:e9a0eda22c4f866c0d4d522f294ff8f04d0b444048b78a46cc69b45f458d5876",
+        "request_digest": "sha256:c9c65c0d6e851e5e9ec8f314375846bb4e8f62954402d1e6ee6a76d6bf35e711",
         "failure_model": "survives_power_loss"
       },
       {
@@ -157,7 +157,7 @@
             "stream": "records.example",
             "record_id": "second",
             "revision": 1,
-            "digest": "sha256:1cf2b9fd0719293b0b56b4abd0e76aabb90e88c2aab2ca23339d3b1b51e09f38"
+            "digest": "sha256:9c93944eb0358eb979b468f651aa1955f58a6664cbd75ebfdd160dac8f39b705"
           }
         ],
         "omitted": [
@@ -165,7 +165,7 @@
             "stream": "records.example",
             "record_id": "first",
             "revision": 1,
-            "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7"
+            "digest": "sha256:b6bd30bd3e619fb37940b9e31718c1b206bfa5fd672b0a7ba0c848c7c121bdf4"
           }
         ],
         "protection_cut": 4

@@ -1,0 +1,37 @@
+{
+  "schema": "journal-entry",
+  "baseline": {
+    "v": 1,
+    "seq": 1,
+    "group": 1,
+    "group_size": 1,
+    "stream": "records.continued",
+    "type": "stream_opened",
+    "at": "2026-10-20T00:00:10.000000Z",
+    "mode": "revisioned",
+    "failure_model": "survives_power_loss",
+    "continues": {
+      "capability": "contract: durable-record/v1",
+      "stream": "records.example",
+      "cut_seq": 4,
+      "cut_digest": "sha256:791c6ec8b20504fcb232e9a1d15e0633c7ca44485f61d635ac5d6223156c9bf1"
+    }
+  },
+  "reject": {
+    "v": 1,
+    "seq": 1,
+    "group": 1,
+    "group_size": 1,
+    "stream": "records.continued",
+    "type": "stream_opened",
+    "at": "2026-10-20T00:00:10.000000Z",
+    "mode": "revisioned",
+    "failure_model": "survives_power_loss",
+    "continues": {
+      "capability": "contract: durable-record/v2",
+      "stream": "records.example",
+      "cut_seq": 4,
+      "cut_digest": "sha256:791c6ec8b20504fcb232e9a1d15e0633c7ca44485f61d635ac5d6223156c9bf1"
+    }
+  }
+}

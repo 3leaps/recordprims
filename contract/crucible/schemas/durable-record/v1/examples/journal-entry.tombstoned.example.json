@@ -5,7 +5,7 @@
   "group_size": 1,
   "stream": "records.example",
   "type": "tombstoned",
-  "at": "2026-10-20T00:00:04Z",
+  "at": "2026-10-20T00:00:04.000000Z",
   "request": {
     "v": 1,
     "stream": "records.example",
@@ -23,11 +23,11 @@
       "ref": "source-observation:example",
       "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
-    "observed_at": "2026-10-20T00:00:03Z",
+    "observed_at": "2026-10-20T00:00:03.000000Z",
     "provenance": {
       "actor_kind": "human",
       "actor": "operator"
     }
   },
-  "request_digest": "sha256:fad632855953ba37b194a1561414762859150003e8691ad96f119a903b185a0a"
+  "request_digest": "sha256:07285eb2c0d4348cae1b4813039520827d0acf0e3559fa18568997a3578a1a8b"
 }

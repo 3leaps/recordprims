@@ -1,0 +1,85 @@
+{
+  "schema": "journal-entry",
+  "baseline": {
+    "v": 1,
+    "seq": 2,
+    "group": 2,
+    "group_size": 1,
+    "stream": "records.continued",
+    "type": "appended",
+    "at": "2026-10-20T00:00:11.000000Z",
+    "record": {
+      "v": 1,
+      "stream": "records.continued",
+      "record_id": "second",
+      "revision": 1,
+      "payload_contract": "contract: example/v0",
+      "payload": {
+        "note": "second"
+      },
+      "provenance": {
+        "actor_kind": "human",
+        "actor": "operator"
+      },
+      "classification": {
+        "retention": "standard",
+        "sensitivity": "0-public"
+      }
+    },
+    "digest": "sha256:925b0419d242a7bdf9186c6f44e26cbb5489098c356c5246e501f69c86283d8b",
+    "idempotency_key": "write-records.continued-second",
+    "imported_from": {
+      "capability": "contract: durable-record/v1",
+      "pin": {
+        "stream": "records.example",
+        "record_id": "second",
+        "revision": 1,
+        "digest": "sha256:cd5cd9e31fc183a38c2b47be8d505acc2a63dee1c035b2fb951f4be19cd52c73"
+      }
+    }
+  },
+  "reject": {
+    "v": 1,
+    "seq": 2,
+    "group": 2,
+    "group_size": 1,
+    "stream": "records.continued",
+    "type": "appended",
+    "at": "2026-10-20T00:00:11.000000Z",
+    "record": {
+      "v": 1,
+      "stream": "records.continued",
+      "record_id": "second",
+      "revision": 1,
+      "payload_contract": "contract: example/v0",
+      "payload": {
+        "note": "second"
+      },
+      "provenance": {
+        "actor_kind": "human",
+        "actor": "operator"
+      },
+      "classification": {
+        "retention": "standard",
+        "sensitivity": "0-public"
+      }
+    },
+    "digest": "sha256:925b0419d242a7bdf9186c6f44e26cbb5489098c356c5246e501f69c86283d8b",
+    "idempotency_key": "write-records.continued-second",
+    "imported_from": {
+      "capability": "contract: durable-record/v1",
+      "pin": {
+        "stream": "records.example",
+        "record_id": "second",
+        "revision": 1,
+        "digest": "sha256:cd5cd9e31fc183a38c2b47be8d505acc2a63dee1c035b2fb951f4be19cd52c73"
+      }
+    },
+    "continues": {
+      "capability": "contract: durable-record/v1",
+      "stream": "records.example",
+      "cut_seq": 4,
+      "cut_digest": "sha256:791c6ec8b20504fcb232e9a1d15e0633c7ca44485f61d635ac5d6223156c9bf1"
+    }
+  }
+}

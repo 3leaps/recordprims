@@ -1,0 +1,28 @@
+{
+  "schema": "journal-entry",
+  "baseline": {
+    "v": 1,
+    "seq": 4,
+    "group": 4,
+    "group_size": 1,
+    "stream": "records.example",
+    "type": "retired",
+    "at": "2026-10-20T00:00:04.000000Z",
+    "record_id": "first",
+    "reason": "superseded by a corrected source",
+    "idempotency_key": "retire-1",
+    "request_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "reject": {
+    "v": 1,
+    "seq": 4,
+    "group": 4,
+    "group_size": 1,
+    "stream": "records.example",
+    "type": "retired",
+    "at": "2026-10-20T00:00:04.000000Z",
+    "record_id": "first",
+    "reason": "superseded by a corrected source",
+    "idempotency_key": "retire-1"
+  }
+}

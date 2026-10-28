@@ -125,9 +125,19 @@
           "description": "The strongest failure an acknowledged write survives, as a guarantee."
         },
         "commit_strategy": {
+          "enum": [
+            "fsync_file_and_dir",
+            "fsync_file",
+            "backend_acknowledged",
+            "none"
+          ],
+          "description": "Commit step taken before a receipt, for information only; never upgrades failure_model. backend_acknowledged means the configured backend acknowledged the operation, without implying which failure it survives. none means no explicit commit step, not an assertion that data cannot persist."
+        },
+        "commit_note": {
           "type": "string",
+          "minLength": 1,
           "maxLength": 256,
-          "description": "Information only; never upgrades failure_model."
+          "description": "Free-text detail on the commit step, for information only; never upgrades failure_model."
         },
         "history_policy": {
           "const": "append_only",
