@@ -1,0 +1,31 @@
+{
+  "schema": "journal-entry",
+  "baseline": {
+    "v": 1,
+    "seq": 2,
+    "group": 2,
+    "group_size": 1,
+    "stream": "store.bodies",
+    "type": "body_published",
+    "at": "2026-10-28T00:00:02.000000Z",
+    "body": {
+      "digest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "length": 12
+    },
+    "incarnation": 1
+  },
+  "reject": {
+    "v": 1,
+    "seq": 2,
+    "group": 2,
+    "group_size": 2,
+    "stream": "store.bodies",
+    "type": "body_published",
+    "at": "2026-10-28T00:00:02.000000Z",
+    "body": {
+      "digest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "length": 12
+    },
+    "incarnation": 1
+  }
+}

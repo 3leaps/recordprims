@@ -1,0 +1,30 @@
+{
+  "window_ms": 60000,
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "store.bodies",
+      "type": "stream_opened",
+      "at": "2026-10-28T00:00:01.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss"
+    }
+  ],
+  "steps": [
+    {
+      "body_state": {
+        "body": {
+          "digest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "length": 12
+        },
+        "present": true
+      }
+    }
+  ],
+  "expected": {
+    "refusal": "body_removal_stream"
+  }
+}

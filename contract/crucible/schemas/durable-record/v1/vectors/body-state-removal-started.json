@@ -1,0 +1,128 @@
+{
+  "window_ms": 60000,
+  "profile": {
+    "capabilities": [
+      "contract: durable-record/v1"
+    ],
+    "origin": "declared",
+    "conformance": "none",
+    "build": {
+      "name": "example-store",
+      "version": "0.1.0",
+      "compiled_strata": [
+        "journal-files"
+      ],
+      "compiled_capabilities": [
+        "revisioned",
+        "body_ref",
+        "export_bundle",
+        "tombstoning"
+      ]
+    },
+    "runtime": {
+      "stratum": "journal-files",
+      "failure_model": "survives_power_loss",
+      "history_policy": "append_only",
+      "enabled_capabilities": [
+        "revisioned",
+        "body_ref",
+        "export_bundle",
+        "tombstoning"
+      ],
+      "idempotency_window_ms": 60000,
+      "deletion": {
+        "live_head": "supported",
+        "retained_history": "unsupported",
+        "managed_replicas": "not_applicable",
+        "external_bodies": "supported",
+        "decryption": "unsupported",
+        "unmanaged_copies": "outside_claim"
+      },
+      "body_removal_stream": "store.bodies"
+    }
+  },
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "store.bodies",
+      "type": "stream_opened",
+      "at": "2026-10-28T00:00:01.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss"
+    },
+    {
+      "v": 1,
+      "seq": 2,
+      "group": 2,
+      "group_size": 1,
+      "stream": "store.bodies",
+      "type": "body_published",
+      "at": "2026-10-28T00:00:02.000000Z",
+      "body": {
+        "digest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "length": 12
+      },
+      "incarnation": 1
+    },
+    {
+      "v": 1,
+      "seq": 3,
+      "group": 3,
+      "group_size": 1,
+      "stream": "store.bodies",
+      "type": "body_removal_started",
+      "at": "2026-10-28T00:00:03.000000Z",
+      "body": {
+        "digest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "length": 12
+      },
+      "incarnation": 1,
+      "reason": "retention",
+      "provenance": {
+        "actor_kind": "process",
+        "actor": "store-retention"
+      },
+      "authorization": {
+        "ref": "removal-auth-1",
+        "digest": "sha256:c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "body_state": {
+        "body": {
+          "digest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "length": 12
+        },
+        "present": true
+      }
+    },
+    {
+      "body_state": {
+        "body": {
+          "digest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "length": 12
+        },
+        "present": false
+      }
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "outcome": "body_state",
+        "state": "removal_pending"
+      },
+      {
+        "outcome": "body_state",
+        "state": "removal_pending"
+      }
+    ],
+    "active_holds": [],
+    "journal_size": 3
+  }
+}

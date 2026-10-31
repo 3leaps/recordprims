@@ -1,0 +1,11 @@
+{
+  "window_ms": 60000,
+  "raw_journal": [
+    "{\"v\": 1, \"seq\": 1, \"group\": 1, \"group_size\": 1, \"stream\": \"records.example\", \"type\": \"stream_opened\", \"at\": \"2026-10-20T00:00:01.000000Z\", \"mode\": \"revisioned\", \"failure_model\": \"survives_power_loss\"}",
+    "{\"v\":1,\"seq\":2,\"group\":2,\"group_size\":1,\"stream\":\"records.example\",\"type\":\"appended\",\"at\":\"2026-10-20T00:00:02.000000Z\",\"record\":{\"v\":1,\"stream\":\"records.example\",\"record_id\":\"first\",\"revision\":1,\"payload_contract\":\"contract: example/v0\",\"payload\":{\"x\":1e400},\"provenance\":{\"actor_kind\":\"human\",\"actor\":\"operator\"},\"classification\":{\"retention\":\"standard\",\"sensitivity\":\"0-public\"}},\"digest\":\"sha256:b6bd30bd3e619fb37940b9e31718c1b206bfa5fd672b0a7ba0c848c7c121bdf4\",\"idempotency_key\":\"w1\"}"
+  ],
+  "steps": [],
+  "expected": {
+    "refusal": "ingest"
+  }
+}

@@ -14,10 +14,9 @@ import hashlib
 from datetime import timedelta
 import importlib.util
 import json
+import math
 import re
 from pathlib import Path
-import subprocess
-import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE = ROOT / "schemas/durable-record/v1"
@@ -143,6 +142,59 @@ def source_pins(journal):
     }
 
 
+LIFECYCLE = ("body_published", "body_removal_started", "body_removed")
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+MAX_SAFE_INTEGER = legacy.MAX_SAFE_INTEGER
+
+
+def integral(value):
+    # The JSON Schema integer grammar bounded by durable-record's exact I-JSON
+    # safe integer domain: a finite, nonnegative integer <= 2^53 - 1, however
+    # it is spelled (12, 12.0, 1.2e1). A Boolean is not a number here, though
+    # Python treats it as one.
+    if type(value) is int:
+        return 0 <= value <= MAX_SAFE_INTEGER
+    return (
+        type(value) is float
+        and math.isfinite(value)
+        and value == int(value)
+        and 0 <= int(value) <= MAX_SAFE_INTEGER
+    )
+
+
+def check_integral():
+    for value in (
+        0,
+        12,
+        MAX_SAFE_INTEGER - 1,
+        MAX_SAFE_INTEGER,
+        0.0,
+        -0.0,
+        12.0,
+        1.2e1,
+    ):
+        assert integral(value), ("integer length rejected", value)
+    for value in (
+        -1,
+        -(10**400),
+        MAX_SAFE_INTEGER + 1,
+        2**63 - 1,
+        2**64 - 1,
+        10**400,
+        -1.0,
+        0.5,
+        float(MAX_SAFE_INTEGER + 1),
+        float("inf"),
+        float("-inf"),
+        float("nan"),
+        True,
+        False,
+        None,
+        "12",
+    ):
+        assert not integral(value), ("invalid length accepted", value)
+
+
 def require(ok, reason):
     if not ok:
         raise legacy.Reject(reason, "durable-record/v1")
@@ -160,6 +212,7 @@ def canonical(text):
 class State:
     def __init__(self, window):
         require(type(window) is int and window > 0, "idempotency_window")
+        require(window <= MAX_SAFE_INTEGER, "numeric_domain")
         self.window = window
         self.journal = []
         self.records = {}
@@ -175,6 +228,8 @@ class State:
         self.review = None
         self.restricted_at = []
         self.upstream = None
+        self.removal_stream = None
+        self.bodies = {}
 
     def instant(self, text):
         # Every v1 wire instant uses one spelling. A reader refuses any other
@@ -199,7 +254,15 @@ class State:
         return None
 
     def ingest(self, e):
-        # The v0 journal invariants also apply to the expanded v1 vocabulary.
+        # The v0 journal invariants and safe-integer wire bounds also apply to
+        # the expanded v1 vocabulary. Group closing-seq overflow is checked both
+        # here and in legacy.check_journal, so window-above-safe-max serves as
+        # the single-guard numeric_domain mutation witness.
+        legacy.check_typed_domain(e, "journal_entry", "journal")
+        require(
+            e["group"] + e["group_size"] - 1 <= MAX_SAFE_INTEGER,
+            "numeric_domain",
+        )
         require(e["v"] == 1, "journal_version")
         self.instant(e["at"])
         if "record" in e:
@@ -217,6 +280,22 @@ class State:
                 "journal_time",
             )
         typ = e["type"]
+        if self.removal_stream is not None or typ in LIFECYCLE:
+            # The designated stream carries only stream_opened and lifecycle
+            # entries, and lifecycle entries appear nowhere else. A continuation
+            # designation is also refused by the continuation checks, so its
+            # vector has no single-guard mutation witness.
+            designated = self.removal_stream == e["stream"]
+            if designated:
+                require(
+                    (typ in LIFECYCLE or typ == "stream_opened")
+                    and "continues" not in e,
+                    "body_removal_stream",
+                )
+            else:
+                require(typ not in LIFECYCLE, "body_removal_stream")
+        if typ in LIFECYCLE:
+            self.track_body(e)
         if typ == "stream_opened":
             self.stream, self.failure_model = e["stream"], e["failure_model"]
             if "continues" in e:
@@ -326,6 +405,51 @@ class State:
             "continuation",
         )
         self.imports.append((e["seq"], pin_key(imported["pin"])))
+
+    def track_body(self, e):
+        # One lifecycle per {digest, length}: (latest incarnation, phase), where
+        # phase is published, started or removed.
+        key = (e["body"]["digest"], e["body"]["length"])
+        latest, phase = self.bodies.get(key, (0, None))
+        n, typ = e["incarnation"], e["type"]
+        if typ == "body_published":
+            # A later publication closes an open removal as abandoned.
+            require(n > latest, "body_lifecycle")
+            self.bodies[key] = (n, "published")
+        elif typ == "body_removal_started":
+            require(n == latest and phase == "published", "body_lifecycle")
+            self.bodies[key] = (n, "started")
+        else:
+            require(n == latest and phase == "started", "body_lifecycle")
+            self.bodies[key] = (n, "removed")
+
+    def body_state(self, step):
+        # The observation is closed: an exact body and a real boolean. Anything
+        # else, including an unknown or failed observation, is refused before
+        # any state is derived, never read as present or absent.
+        require(
+            isinstance(step, dict)
+            and set(step) == {"body", "present"}
+            and type(step["present"]) is bool
+            and isinstance(step["body"], dict)
+            and set(step["body"]) == {"digest", "length"}
+            and isinstance(step["body"]["digest"], str)
+            and DIGEST.fullmatch(step["body"]["digest"]) is not None
+            and integral(step["body"]["length"]),
+            "body_observation",
+        )
+        legacy.check_journal(self.journal, "v1")
+        require(self.removal_stream == self.stream, "body_removal_stream")
+        body = step["body"]
+        _, phase = self.bodies.get((body["digest"], body["length"]), (0, None))
+        present = step["present"]
+        state = {
+            None: "publishing" if present else "unpublished",
+            "published": "available" if present else "integrity_loss",
+            "started": "removal_pending",
+            "removed": "publishing" if present else "removed",
+        }[phase]
+        return {"outcome": "body_state", "state": state}
 
     def check_review(self, e):
         require(self.continues is not None, "continuation")
@@ -467,6 +591,7 @@ class State:
                 outcome=reason,
             )
         seq = len(self.journal) + 1
+        require(seq <= MAX_SAFE_INTEGER, "numeric_domain")
         self.ingest(
             dict(
                 v=1,
@@ -492,6 +617,7 @@ class State:
             self.active.remove(r["restores"])
 
     def request(self, r, at):
+        legacy.check_typed_domain(r, "protection_request", "request")
         legacy.check_journal(self.journal, "v1")
         require(
             self.instant(at) >= self.instant(self.journal[-1]["at"]), "journal_time"
@@ -514,6 +640,7 @@ class State:
                 outcome=reason,
             )
         seq = len(self.journal) + 1
+        require(seq <= MAX_SAFE_INTEGER, "numeric_domain")
         receipt = self.receipt(r, seq)
         self.ingest(
             dict(
@@ -547,6 +674,13 @@ class State:
         return False
 
     def verify_receipt(self, received):
+        legacy.check_typed_domain(
+            received,
+            "write_receipt"
+            if received.get("kind") == "receipt"
+            else "protection_receipt",
+            "receipt",
+        )
         require(
             received["outcome"] in ("tombstoned", "untombstoned", "retired"),
             "receipt_mismatch",
@@ -595,6 +729,7 @@ class State:
         return result
 
     def use(self, r):
+        legacy.check_typed_domain(r, "export_request", "use")
         legacy.check_journal(self.journal, "v1")
 
         def refused(reason):
@@ -664,17 +799,23 @@ class Unobserved:
 UNOBSERVED = Unobserved()
 
 
-def observed(journal, window, source, upstream):
+def observed(journal, window, source, upstream, raw_entries=None):
     """Replay one observed source journal under its declared family.
 
-    An invalid source cannot supply restriction state: shape, journal and
-    family semantics are all checked before its manifest is derived.
+    An invalid source cannot supply restriction state: wire ingestion, numeric
+    domain, shape, journal and family semantics are all checked before its
+    manifest is derived.
     """
     family = journal[0]["v"]
     require(family in CAPABILITY, "continuation")
     schema = BASE.parent / f"v{family}" / "journal-entry.schema.json"
-    for e in journal:
-        require(e.get("v") == family and shape(e, schema), "continuation")
+    for idx, e in enumerate(journal):
+        ok_shape = (
+            shape_raw(raw_entries[idx], schema)
+            if raw_entries is not None
+            else shape(e, schema)
+        )
+        require(e.get("v") == family and ok_shape, "continuation")
     try:
         legacy.check_journal(journal, "source")
         if family == 0:
@@ -688,14 +829,36 @@ def observed(journal, window, source, upstream):
     return state
 
 
+def _parse_source_spec(spec):
+    if isinstance(spec, list) and spec and all(isinstance(x, str) for x in spec):
+        try:
+            parsed = [
+                legacy.parse_wire(x, "journal_entry", f"source[{i}]")
+                for i, x in enumerate(spec)
+            ]
+        except legacy.Reject:
+            require(False, "continuation")
+        return parsed, spec
+    return spec, None
+
+
 def chain(case):
     # The observed source chain: the immediate source, then each ancestor the
     # store observes. Each is replayed under its own family; a source that is
     # itself a continuation is replayed over its own source, so its review
     # currency can be checked.
-    journals = [case["source_journal"]] + case.get("ancestors", [])
+    first_spec = (
+        case["raw_source_journal"]
+        if "raw_source_journal" in case
+        else case["source_journal"]
+    )
+    anc_specs = (
+        case["raw_ancestors"] if "raw_ancestors" in case else case.get("ancestors", [])
+    )
+    specs = [first_spec] + list(anc_specs)
     upstream = None
-    for journal in reversed(journals):
+    for spec in reversed(specs):
+        journal, raw_entries = _parse_source_spec(spec)
         # A malformed container is refused by name, never by an exception.
         # Disabling this guard crashes rather than accepts, so its vectors have
         # no mutation witness.
@@ -709,17 +872,76 @@ def chain(case):
         if journal[0].get("continues") is not None and upstream is None:
             # A continuation source whose own source is not observed cannot
             # show that the chain is current.
-            return copy.deepcopy(journals[0]), UNOBSERVED
+            first_journal, _ = _parse_source_spec(specs[0])
+            return copy.deepcopy(first_journal), UNOBSERVED
         source, above = upstream if upstream else (None, None)
-        state = observed(journal, case["window_ms"], source, above)
+        state = observed(
+            journal, case["window_ms"], source, above, raw_entries=raw_entries
+        )
         continuation = state is not None and state.continues is not None
         upstream = (copy.deepcopy(journal), state if continuation else None)
     return upstream
 
 
+def _parse_raw_receipt_step(raw_text, where):
+    ast_node = legacy.parse_raw_json(raw_text, where)
+    kind = (
+        "write_receipt"
+        if isinstance(ast_node, dict) and ast_node.get("kind") == "receipt"
+        else "protection_receipt"
+    )
+    return legacy._preflight_node(ast_node, kind, where)
+
+
+def materialize_destination_wire(case):
+    """Run Stage 1 (ingest) + Stage 2 (numeric_domain) on destination raw_* fields."""
+    out = copy.deepcopy(case)
+    if "raw_profile" in out:
+        out["profile"] = legacy.parse_wire(
+            out["raw_profile"], "stratum_profile", "raw_profile"
+        )
+    if "raw_journal" in out:
+        out["journal"] = [
+            legacy.parse_wire(raw, "journal_entry", f"raw_journal[{i}]")
+            for i, raw in enumerate(out["raw_journal"])
+        ]
+    steps = []
+    for idx, step in enumerate(out["steps"]):
+        s = copy.deepcopy(step)
+        if "raw_request" in s:
+            s["request"] = legacy.parse_wire(
+                s["raw_request"], "protection_request", f"steps[{idx}].raw_request"
+            )
+        elif "raw_receipt" in s:
+            s["receipt"] = _parse_raw_receipt_step(
+                s["raw_receipt"], f"steps[{idx}].raw_receipt"
+            )
+        elif "raw_entry" in s:
+            s["entry"] = legacy.parse_wire(
+                s["raw_entry"], "journal_entry", f"steps[{idx}].raw_entry"
+            )
+        elif "raw_body_state" in s:
+            s["body_state"] = legacy.parse_wire(
+                s["raw_body_state"],
+                "body_state_request",
+                f"steps[{idx}].raw_body_state",
+            )
+        elif "raw_use" in s:
+            s["use"] = legacy.parse_wire(
+                s["raw_use"], "export_request", f"steps[{idx}].raw_use"
+            )
+        steps.append(s)
+    out["steps"] = steps
+    return out
+
+
 def evaluate(case):
+    case = materialize_destination_wire(case)
     s = State(case["window_ms"])
-    if "source_journal" in case:
+    if "profile" in case:
+        legacy.check_profile(case["profile"], "profile")
+        s.removal_stream = case["profile"]["runtime"].get("body_removal_stream")
+    if "source_journal" in case or "raw_source_journal" in case:
         s.source, s.upstream = chain(case)
     legacy.check_journal(case["journal"], "v1")
     for e in case["journal"]:
@@ -737,10 +959,17 @@ def evaluate(case):
         elif "entry" in step:
             s.ingest(step["entry"])
             results.append({"outcome": "journaled"})
+        elif "body_state" in step:
+            results.append(s.body_state(step["body_state"]))
         elif "source_entry" in step:
             # The source journal advances outside this stream.
             case = copy.deepcopy(case)
             case["source_journal"].append(copy.deepcopy(step["source_entry"]))
+            s.source, s.upstream = chain(case)
+            results.append({"outcome": "journaled"})
+        elif "raw_source_entry" in step:
+            case = copy.deepcopy(case)
+            case["raw_source_journal"].append(step["raw_source_entry"])
             s.source, s.upstream = chain(case)
             results.append({"outcome": "journaled"})
         elif "ancestor_entry" in step:
@@ -749,6 +978,11 @@ def evaluate(case):
             case["ancestors"][step["ancestor"]].append(
                 copy.deepcopy(step["ancestor_entry"])
             )
+            s.source, s.upstream = chain(case)
+            results.append({"outcome": "journaled"})
+        elif "raw_ancestor_entry" in step:
+            case = copy.deepcopy(case)
+            case["raw_ancestors"][step["ancestor"]].append(step["raw_ancestor_entry"])
             s.source, s.upstream = chain(case)
             results.append({"outcome": "journaled"})
         else:
@@ -761,26 +995,30 @@ def evaluate(case):
     }
 
 
-def shape(doc, name):
-    with tempfile.TemporaryDirectory(prefix="record-v1-shape-") as tmp:
-        p = Path(tmp) / "input.json"
-        p.write_text(json.dumps(doc), encoding="utf-8")
-        result = subprocess.run(
-            [
-                "goneat",
-                "validate",
-                "data",
-                "--schema-file",
-                str(name if isinstance(name, Path) else BASE / (name + ".schema.json")),
-                "--data",
-                str(p),
-            ],
-            capture_output=True,
-            text=True,
+SHAPE_CACHE: dict[tuple[str, str], bool] = {}
+SUITE_CALLS = 0
+
+
+def _norm_raw(raw_json: str) -> str:
+    return raw_json if raw_json.endswith("\n") else raw_json + "\n"
+
+
+def shape_raw(raw_json, name):
+    global SUITE_CALLS
+    schema_rel = legacy._normalize_schema_rel(name, default_ver="v1")
+    payload = _norm_raw(raw_json)
+    key = (schema_rel, payload)
+    if key not in SHAPE_CACHE:
+        SUITE_CALLS += 1
+        verdicts = legacy.shape_suite(
+            [("single", schema_rel, payload)], default_ver="v1"
         )
-        if result.returncode not in (0, 1):
-            raise RuntimeError(result.stderr)
-        return result.returncode == 0
+        SHAPE_CACHE[key] = verdicts["single"]
+    return SHAPE_CACHE[key]
+
+
+def shape(doc, name):
+    return shape_raw(json.dumps(doc), name)
 
 
 def check_case(case):
@@ -832,7 +1070,9 @@ def envelope_matches(original, amended):
 
 
 def reason_controls(cases):
-    source = Path(__file__).read_text().split("def reason_controls(", 1)[0]
+    source = (
+        Path(__file__).read_text(encoding="utf-8").split("def reason_controls(", 1)[0]
+    )
     tree = ast.parse(source)
     emitted = set()
     for node in ast.walk(tree):
@@ -863,7 +1103,9 @@ def reason_controls(cases):
                 and isinstance(n.value, ast.Constant)
                 and isinstance(n.value.value, str)
             )
-    standard = (ROOT / "docs/standards/durable-record-v1-contract.md").read_text()
+    standard = (ROOT / "docs/standards/durable-record-v1-contract.md").read_text(
+        encoding="utf-8"
+    )
     section = standard.split("## Refusal vocabulary", 1)[1].split("## Conformance", 1)[
         0
     ]
@@ -893,7 +1135,9 @@ def reason_controls(cases):
 def mutation_controls():
     # Fixed AST edits. No fixture-supplied code; a mutation must match exactly
     # one selected guard and yield acceptance or a precisely named alternative.
-    source = Path(__file__).read_text().split("def reason_controls(", 1)[0]
+    source = (
+        Path(__file__).read_text(encoding="utf-8").split("def reason_controls(", 1)[0]
+    )
     specs = [
         ("ingest", "slide_dedup", "", 0, "dedup-non-sliding", None),
         ("use", "if_reason", "invalid_purpose", 0, "unknown-purpose", None),
@@ -917,6 +1161,7 @@ def mutation_controls():
         ("ingest", "require", "invalid_deduplication", 0, "dedup-protection", None),
         ("ingest", "require", "invalid_deduplication", 0, "dedup-absent", None),
         ("State", "require", "idempotency_window", 0, "zero-window", None),
+        ("State", "require", "numeric_domain", 0, "window-above-safe-max", None),
         (
             "refusal",
             "compare",
@@ -1109,6 +1354,147 @@ def mutation_controls():
             "continuation-ancestor-changed",
             None,
         ),
+        (
+            "ingest",
+            "require",
+            "body_removal_stream",
+            1,
+            "body-entry-in-content-stream",
+            None,
+        ),
+        (
+            "ingest",
+            "require",
+            "body_removal_stream",
+            0,
+            "body-content-in-removal-stream",
+            None,
+        ),
+        (
+            "ingest",
+            "require",
+            "body_removal_stream",
+            1,
+            "body-entry-without-profile",
+            None,
+        ),
+        (
+            "track_body",
+            "require",
+            "body_lifecycle",
+            0,
+            "body-publish-not-increasing",
+            None,
+        ),
+        ("track_body", "require", "body_lifecycle", 0, "body-publish-decreasing", None),
+        ("track_body", "require", "body_lifecycle", 1, "body-start-unpublished", None),
+        (
+            "track_body",
+            "require",
+            "body_lifecycle",
+            1,
+            "body-start-wrong-incarnation",
+            None,
+        ),
+        ("track_body", "require", "body_lifecycle", 1, "body-start-twice", None),
+        (
+            "track_body",
+            "require",
+            "body_lifecycle",
+            1,
+            "body-start-after-removed",
+            None,
+        ),
+        (
+            "track_body",
+            "require",
+            "body_lifecycle",
+            2,
+            "body-removed-without-start",
+            None,
+        ),
+        ("track_body", "require", "body_lifecycle", 2, "body-removed-abandoned", None),
+        ("track_body", "require", "body_lifecycle", 2, "body-removed-twice", None),
+        (
+            "body_state",
+            "require",
+            "body_observation",
+            0,
+            "body-observation-null-present",
+            None,
+        ),
+        (
+            "body_state",
+            "require",
+            "body_observation",
+            0,
+            "body-observation-string-present",
+            None,
+        ),
+        (
+            "body_state",
+            "require",
+            "body_observation",
+            0,
+            "body-observation-boolean-length",
+            None,
+        ),
+        (
+            "body_state",
+            "require",
+            "body_observation",
+            0,
+            "body-observation-fractional-length",
+            None,
+        ),
+        (
+            "body_state",
+            "require",
+            "body_observation",
+            0,
+            "body-observation-extra-field",
+            None,
+        ),
+        (
+            "body_state",
+            "require",
+            "body_observation",
+            0,
+            "body-observation-bad-digest",
+            None,
+        ),
+        (
+            "body_state",
+            "require",
+            "body_observation",
+            0,
+            "body-observation-removal-started-null",
+            None,
+        ),
+        (
+            "body_state",
+            "require",
+            "body_observation",
+            0,
+            "body-observation-none-zero",
+            None,
+        ),
+        (
+            "body_state",
+            "require",
+            "body_removal_stream",
+            0,
+            "body-state-without-profile",
+            None,
+        ),
+        (
+            "body_state",
+            "require",
+            "body_removal_stream",
+            0,
+            "body-state-other-stream",
+            None,
+        ),
     ]
     for method, kind, value, occurrence, witness, alternative in specs:
         tree = ast.parse(source)
@@ -1224,6 +1610,7 @@ def mutation_controls():
                                 old[i] = replacement
         ns = {"__file__": __file__, "__name__": "record_mutation"}
         exec(compile(ast.fix_missing_locations(tree), __file__, "exec"), ns)
+        ns["SHAPE_CACHE"].update(SHAPE_CACHE)
         case = load(BASE / "vectors" / (witness + ".json"))
         outcome = ns["check_case"](case)
         assert outcome != case["expected"], (
@@ -1264,6 +1651,7 @@ def mutation_controls():
                 "journaled",
                 "receipt_verified",
                 "allowed",
+                "body_state",
             }
             assert all(r.get("outcome") in accepted for r in outcome["results"]), (
                 "mutation did not accept",
@@ -1274,7 +1662,364 @@ def mutation_controls():
     return len(specs)
 
 
+def _collect_case_shape_items(c, add_key):
+    """Collect every Stage-3 schema check reachable after Stage 1+2 wire preflight."""
+    if "raw_profile" in c:
+        try:
+            legacy.parse_wire(c["raw_profile"], "stratum_profile", "raw_profile")
+        except legacy.Reject:
+            return
+        add_key("stratum-profile", c["raw_profile"])
+    elif "profile" in c:
+        add_key("stratum-profile", json.dumps(c["profile"]))
+
+    if "raw_journal" in c:
+        for i, raw in enumerate(c["raw_journal"]):
+            try:
+                legacy.parse_wire(raw, "journal_entry", f"raw_journal[{i}]")
+            except legacy.Reject:
+                return
+            add_key("journal-entry", raw)
+    elif "journal" in c:
+        for e in c["journal"]:
+            add_key("journal-entry", json.dumps(e))
+
+    for idx, step in enumerate(c["steps"]):
+        if "raw_request" in step:
+            try:
+                legacy.parse_wire(
+                    step["raw_request"],
+                    "protection_request",
+                    f"steps[{idx}].raw_request",
+                )
+            except legacy.Reject:
+                return
+            add_key("protection-request", step["raw_request"])
+        elif "request" in step:
+            add_key("protection-request", json.dumps(step["request"]))
+        elif "raw_use" in step:
+            try:
+                legacy.parse_wire(
+                    step["raw_use"], "export_request", f"steps[{idx}].raw_use"
+                )
+            except legacy.Reject:
+                return
+            add_key("export-request", step["raw_use"])
+        elif "use" in step:
+            add_key("export-request", json.dumps(step["use"]))
+        elif "raw_receipt" in step:
+            try:
+                parsed_rcpt = _parse_raw_receipt_step(
+                    step["raw_receipt"], f"steps[{idx}].raw_receipt"
+                )
+            except legacy.Reject:
+                return
+            schema = (
+                "write-receipt"
+                if parsed_rcpt.get("kind") == "receipt"
+                else "protection-receipt"
+            )
+            add_key(schema, step["raw_receipt"])
+        elif "receipt" in step:
+            schema = (
+                "write-receipt"
+                if step["receipt"].get("kind") == "receipt"
+                else "protection-receipt"
+            )
+            add_key(schema, json.dumps(step["receipt"]))
+        elif "raw_entry" in step:
+            try:
+                legacy.parse_wire(
+                    step["raw_entry"], "journal_entry", f"steps[{idx}].raw_entry"
+                )
+            except legacy.Reject:
+                return
+            add_key("journal-entry", step["raw_entry"])
+        elif "entry" in step:
+            add_key("journal-entry", json.dumps(step["entry"]))
+        elif "raw_body_state" in step:
+            try:
+                legacy.parse_wire(
+                    step["raw_body_state"],
+                    "body_state_request",
+                    f"steps[{idx}].raw_body_state",
+                )
+            except legacy.Reject:
+                return
+            add_key("body-state-request", step["raw_body_state"])
+        elif "body_state" in step:
+            add_key("body-state-request", json.dumps(step["body_state"]))
+
+    def collect_source_list(spec):
+        if isinstance(spec, list) and spec and all(isinstance(x, str) for x in spec):
+            try:
+                parsed = [
+                    legacy.parse_wire(x, "journal_entry", f"source[{i}]")
+                    for i, x in enumerate(spec)
+                ]
+            except legacy.Reject:
+                return
+            if isinstance(parsed[0], dict) and parsed[0].get("v") in CAPABILITY:
+                fam = parsed[0]["v"]
+                sch = BASE.parent / f"v{fam}/journal-entry.schema.json"
+                for e, raw in zip(parsed, spec):
+                    if isinstance(e, dict) and e.get("v") == fam:
+                        add_key(sch, raw)
+        elif isinstance(spec, list) and spec and isinstance(spec[0], dict):
+            fam = spec[0].get("v")
+            if fam in CAPABILITY:
+                sch = BASE.parent / f"v{fam}/journal-entry.schema.json"
+                for e in spec:
+                    if isinstance(e, dict) and e.get("v") == fam:
+                        add_key(sch, json.dumps(e))
+
+    if "raw_source_journal" in c:
+        src_copy = list(c["raw_source_journal"])
+        collect_source_list(src_copy)
+        for step in c["steps"]:
+            if "raw_source_entry" in step:
+                src_copy.append(step["raw_source_entry"])
+                collect_source_list(src_copy)
+    elif "source_journal" in c:
+        src_copy = copy.deepcopy(c["source_journal"])
+        collect_source_list(src_copy)
+        for step in c["steps"]:
+            if "source_entry" in step and isinstance(src_copy, list):
+                src_copy.append(copy.deepcopy(step["source_entry"]))
+                collect_source_list(src_copy)
+
+    if "raw_ancestors" in c:
+        anc_copy = [list(a) for a in c["raw_ancestors"]]
+        for a in anc_copy:
+            collect_source_list(a)
+        for step in c["steps"]:
+            if "raw_ancestor_entry" in step:
+                anc_copy[step["ancestor"]].append(step["raw_ancestor_entry"])
+                collect_source_list(anc_copy[step["ancestor"]])
+    elif "ancestors" in c:
+        anc_copy = copy.deepcopy(c["ancestors"])
+        for a in anc_copy:
+            collect_source_list(a)
+        for step in c["steps"]:
+            if "ancestor_entry" in step:
+                anc_copy[step["ancestor"]].append(copy.deepcopy(step["ancestor_entry"]))
+                collect_source_list(anc_copy[step["ancestor"]])
+
+    for result in c["expected"].get("results", []):
+        if result.get("kind") in ("reconciliation", "receipt"):
+            add_key("write-receipt", json.dumps(result))
+            continue
+        if result["outcome"] in ("journaled", "receipt_verified", "body_state"):
+            continue
+        name = (
+            "export-result"
+            if result["outcome"] in ("allowed", "refused")
+            else "protection-receipt"
+        )
+        add_key(name, json.dumps(result))
+
+
+def prewarm_shape_cache(cases, rejects, examples):
+    global SUITE_CALLS
+    unique_keys: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add_key(schema_ref, raw_json):
+        schema_rel = legacy._normalize_schema_rel(schema_ref, default_ver="v1")
+        payload = _norm_raw(raw_json)
+        key = (schema_rel, payload)
+        if key not in seen:
+            seen.add(key)
+            unique_keys.append(key)
+
+    for path in cases:
+        _collect_case_shape_items(load(path), add_key)
+    for path in rejects:
+        rc = load(path)
+        add_key(rc["schema"], json.dumps(rc["baseline"]))
+        add_key(rc["schema"], json.dumps(rc["reject"]))
+    for path in examples:
+        add_key(path.name.split(".")[0], json.dumps(load(path)))
+
+    items = [
+        (f"k{idx}", schema_rel, payload)
+        for idx, (schema_rel, payload) in enumerate(unique_keys)
+    ]
+    SUITE_CALLS += 1
+    verdicts = legacy.shape_suite(items, default_ver="v1")
+    for idx, key in enumerate(unique_keys):
+        SHAPE_CACHE[key] = verdicts[f"k{idx}"]
+
+
+def suite_error_controls():
+    """Verify batched goneat suite rejects parse/range/schema errors as RuntimeError."""
+    for label, bad_item in (
+        ("malformed_json", ("bad", "v1/record.schema.json", "{\n")),
+        (
+            "float64_overflow",
+            ("huge", "v1/record.schema.json", '{"v":1,"revision":1e400}\n'),
+        ),
+        ("missing_schema", ("missing", "v1/nonexistent.schema.json", "{}\n")),
+    ):
+        try:
+            legacy.shape_suite([bad_item], default_ver="v1")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"suite_error_controls did not fail on {label}")
+
+
+def check_case_stage3_shapes(c, path):
+    """Run Stage 3 (shape) on destination items in order, stopping if Stage 1+2 refuses."""
+    invalid = c.get("invalid_journal_entries", [])
+    j_len = len(c["raw_journal"]) if "raw_journal" in c else len(c["journal"])
+    assert len(invalid) == len(set(invalid)) and all(0 <= i < j_len for i in invalid), (
+        path
+    )
+    invalid_uses = c.get("invalid_use_steps", [])
+    assert len(invalid_uses) == len(set(invalid_uses)) and all(
+        0 <= i < len(c["steps"])
+        and ("use" in c["steps"][i] or "raw_use" in c["steps"][i])
+        for i in invalid_uses
+    ), path
+    invalid_requests = c.get("invalid_request_steps", [])
+    assert len(invalid_requests) == len(set(invalid_requests)) and all(
+        0 <= i < len(c["steps"])
+        and ("request" in c["steps"][i] or "raw_request" in c["steps"][i])
+        for i in invalid_requests
+    ), path
+    invalid_states = c.get("invalid_body_state_steps", [])
+    assert len(invalid_states) == len(set(invalid_states)) and all(
+        0 <= i < len(c["steps"])
+        and ("body_state" in c["steps"][i] or "raw_body_state" in c["steps"][i])
+        for i in invalid_states
+    ), path
+    invalid_receipts = c.get("invalid_receipt_steps", [])
+    assert len(invalid_receipts) == len(set(invalid_receipts)) and all(
+        0 <= i < len(c["steps"])
+        and ("receipt" in c["steps"][i] or "raw_receipt" in c["steps"][i])
+        for i in invalid_receipts
+    ), path
+
+    def abort_stage12(err):
+        assert err.reason in ("ingest", "numeric_domain"), (path, err)
+        assert c["expected"] == {"refusal": err.reason}, (path, err, c["expected"])
+
+    if "raw_profile" in c:
+        try:
+            legacy.parse_wire(c["raw_profile"], "stratum_profile", "raw_profile")
+        except legacy.Reject as err:
+            abort_stage12(err)
+            return
+        assert shape_raw(c["raw_profile"], "stratum-profile"), path
+    elif "profile" in c:
+        assert shape(c["profile"], "stratum-profile"), path
+
+    if "raw_journal" in c:
+        for i, raw in enumerate(c["raw_journal"]):
+            try:
+                legacy.parse_wire(raw, "journal_entry", f"raw_journal[{i}]")
+            except legacy.Reject as err:
+                abort_stage12(err)
+                return
+            assert shape_raw(raw, "journal-entry") == (i not in invalid), path
+    else:
+        for i, e in enumerate(c["journal"]):
+            assert shape(e, "journal-entry") == (i not in invalid), path
+
+    for step_index, step in enumerate(c["steps"]):
+        if "raw_request" in step:
+            try:
+                legacy.parse_wire(
+                    step["raw_request"],
+                    "protection_request",
+                    f"steps[{step_index}].raw_request",
+                )
+            except legacy.Reject as err:
+                abort_stage12(err)
+                return
+            assert shape_raw(step["raw_request"], "protection-request") == (
+                step_index not in invalid_requests
+            ), path
+        elif "request" in step:
+            assert shape(step["request"], "protection-request") == (
+                step_index not in invalid_requests
+            ), path
+        elif "raw_use" in step:
+            try:
+                legacy.parse_wire(
+                    step["raw_use"], "export_request", f"steps[{step_index}].raw_use"
+                )
+            except legacy.Reject as err:
+                abort_stage12(err)
+                return
+            assert shape_raw(step["raw_use"], "export-request") == (
+                step_index not in invalid_uses
+            ), path
+        elif "use" in step:
+            assert shape(step["use"], "export-request") == (
+                step_index not in invalid_uses
+            ), path
+        elif "raw_receipt" in step:
+            try:
+                parsed_rcpt = _parse_raw_receipt_step(
+                    step["raw_receipt"], f"steps[{step_index}].raw_receipt"
+                )
+            except legacy.Reject as err:
+                abort_stage12(err)
+                return
+            schema = (
+                "write-receipt"
+                if parsed_rcpt.get("kind") == "receipt"
+                else "protection-receipt"
+            )
+            assert shape_raw(step["raw_receipt"], schema) == (
+                step_index not in invalid_receipts
+            ), path
+        elif "receipt" in step:
+            schema = (
+                "write-receipt"
+                if step["receipt"].get("kind") == "receipt"
+                else "protection-receipt"
+            )
+            assert shape(step["receipt"], schema) == (
+                step_index not in invalid_receipts
+            ), path
+        elif "raw_entry" in step:
+            try:
+                legacy.parse_wire(
+                    step["raw_entry"],
+                    "journal_entry",
+                    f"steps[{step_index}].raw_entry",
+                )
+            except legacy.Reject as err:
+                abort_stage12(err)
+                return
+            assert shape_raw(step["raw_entry"], "journal-entry"), path
+        elif "entry" in step:
+            assert shape(step["entry"], "journal-entry"), path
+        elif "raw_body_state" in step:
+            try:
+                legacy.parse_wire(
+                    step["raw_body_state"],
+                    "body_state_request",
+                    f"steps[{step_index}].raw_body_state",
+                )
+            except legacy.Reject as err:
+                abort_stage12(err)
+                return
+            assert shape_raw(step["raw_body_state"], "body-state-request") == (
+                step_index not in invalid_states
+            ), path
+        elif "body_state" in step:
+            assert shape(step["body_state"], "body-state-request") == (
+                step_index not in invalid_states
+            ), path
+
+
 def main():
+    check_integral()
+    suite_error_controls()
     # A0: the v1 record envelope is the v0 envelope with v const 1 plus only
     # the optional produced_at field. The embedded copy in journal entries
     # must equal the standalone schema's record definition.
@@ -1312,61 +2057,24 @@ def main():
     cases = sorted((BASE / "vectors").glob("*.json"))
     assert cases, "missing conformance corpus"
     rejects = sorted((BASE / "rejects/schema").glob("reject-*.json"))
-    inventory = (BASE / "rejects/README.md").read_text()
+    examples = sorted((BASE / "examples").glob("*.json"))
+    inventory = (BASE / "rejects/README.md").read_text(encoding="utf-8")
     listed = re.findall(r"\]\((?:schema/|\.\./vectors/)([^)]+)\)", inventory)
     assert sorted(listed) == sorted(p.name for p in cases + rejects), (
         "fixture inventory drift"
     )
     assert rejects, "missing schema rejects"
+    prewarm_shape_cache(cases, rejects, examples)
     for path in cases:
         c = load(path)
-        invalid = c.get("invalid_journal_entries", [])
-        assert len(invalid) == len(set(invalid)) and all(
-            0 <= i < len(c["journal"]) for i in invalid
-        )
-        for i, e in enumerate(c["journal"]):
-            assert shape(e, "journal-entry") == (i not in invalid), path
-        invalid_uses = c.get("invalid_use_steps", [])
-        assert len(invalid_uses) == len(set(invalid_uses)) and all(
-            0 <= i < len(c["steps"]) and "use" in c["steps"][i] for i in invalid_uses
-        )
-        invalid_requests = c.get("invalid_request_steps", [])
-        assert len(invalid_requests) == len(set(invalid_requests)) and all(
-            0 <= i < len(c["steps"]) and "request" in c["steps"][i]
-            for i in invalid_requests
-        )
-        invalid_receipts = c.get("invalid_receipt_steps", [])
-        assert len(invalid_receipts) == len(set(invalid_receipts)) and all(
-            0 <= i < len(c["steps"]) and "receipt" in c["steps"][i]
-            for i in invalid_receipts
-        )
-        for step_index, step in enumerate(c["steps"]):
-            if "request" in step:
-                assert shape(step["request"], "protection-request") == (
-                    step_index not in invalid_requests
-                ), path
-            elif "use" in step:
-                assert shape(step["use"], "export-request") == (
-                    step_index not in invalid_uses
-                ), path
-            elif "receipt" in step:
-                schema = (
-                    "write-receipt"
-                    if step["receipt"].get("kind") == "receipt"
-                    else "protection-receipt"
-                )
-                assert shape(step["receipt"], schema) == (
-                    step_index not in invalid_receipts
-                ), path
-            elif "entry" in step:
-                assert shape(step["entry"], "journal-entry"), path
+        check_case_stage3_shapes(c, path)
         got = check_case(c)
         assert got == c["expected"], (path.name, got, c["expected"])
         for result in got.get("results", []):
             if result.get("kind") in ("reconciliation", "receipt"):
                 assert shape(result, "write-receipt"), (path.name, result)
                 continue
-            if result["outcome"] in ("journaled", "receipt_verified"):
+            if result["outcome"] in ("journaled", "receipt_verified", "body_state"):
                 continue
             name = (
                 "export-result"
@@ -1380,14 +2088,15 @@ def main():
         assert shape(case["baseline"], case["schema"]), path
         assert not shape(case["reject"], case["schema"]), path
         legacy.check_pair(case["baseline"], case["reject"], path.name)
-    for path in sorted((BASE / "examples").glob("*.json")):
+    for path in examples:
         assert shape(load(path), path.name.split(".")[0]), path
         if path.name.startswith("stratum-profile."):
             legacy.check_profile(load(path), path.name)
     reason_controls(cases)
     count = mutation_controls()
+    assert SUITE_CALLS == 1, f"expected 1 batched suite call, got {SUITE_CALLS}"
     print(
-        f"Durable-record/v1 logical controls PASS: {len(cases)} vectors; {len(rejects)} schema rejects; {count} mutation witnesses. No store qualification."
+        f"Durable-record/v1 logical controls PASS: {len(cases)} vectors; {len(rejects)} schema rejects; {count} mutation witnesses; {SUITE_CALLS} batched suite run. No store qualification."
     )
 
 

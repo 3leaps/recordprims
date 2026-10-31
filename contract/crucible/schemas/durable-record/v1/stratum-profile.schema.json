@@ -164,11 +164,13 @@
         "clock_skew_bound_ms": {
           "type": "integer",
           "minimum": 0,
+          "maximum": 9007199254740991,
           "description": "Bound assumed between writer and store clocks when answering not_found."
         },
         "idempotency_window_ms": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 9007199254740991,
           "description": "Positive shared content/protection key retention window in milliseconds."
         },
         "deletion": {
@@ -255,8 +257,40 @@
               }
             }
           ]
+        },
+        "body_removal_stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+          "description": "The store's body-removal stream, an ordinary v1 stream carrying only body lifecycle entries. Required exactly when deletion.external_bodies is supported."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "deletion": {
+                "properties": {
+                  "external_bodies": {
+                    "const": "supported"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "body_removal_stream"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "body_removal_stream"
+              ]
+            }
+          }
+        }
+      ]
     }
   }
 }

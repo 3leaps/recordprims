@@ -1,0 +1,17 @@
+{
+  "schema": "export-result",
+  "baseline": {
+    "outcome": "allowed",
+    "closure": "references_only",
+    "selection": [],
+    "omitted": [],
+    "protection_cut": 9007199254740991
+  },
+  "reject": {
+    "outcome": "allowed",
+    "closure": "references_only",
+    "selection": [],
+    "omitted": [],
+    "protection_cut": 9007199254740992
+  }
+}

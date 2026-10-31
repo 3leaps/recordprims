@@ -8,7 +8,8 @@
     "protection_request": "protection-request.schema.json",
     "protection_receipt": "protection-receipt.schema.json",
     "export_request": "export-request.schema.json",
-    "export_result": "export-result.schema.json"
+    "export_result": "export-result.schema.json",
+    "body_state_request": "body-state-request.schema.json"
   },
   "status": "proposed"
 }

@@ -1,0 +1,21 @@
+{
+  "v": 0,
+  "stream": "pipeline-stage-results.example",
+  "record_id": "run-17.stage-3.part-0042",
+  "revision": 1,
+  "payload_contract": "contract: example-stage-result/v0",
+  "body": {
+    "digest": "sha256:2702cb31cfab1a5742cbb6aff3ef2050b60152d2c6377830fcc589990b9ec2f5",
+    "length": 9007199254740991,
+    "media_type": "text/plain",
+    "artifact_id": "artifact:run-17:stage-3:part-0042"
+  },
+  "provenance": {
+    "actor_kind": "process",
+    "actor": "stage-runner"
+  },
+  "classification": {
+    "retention": "short",
+    "sensitivity": "0-public"
+  }
+}
