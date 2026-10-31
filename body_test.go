@@ -443,3 +443,126 @@ func index(xs []string, x string) int {
 	}
 	return -1
 }
+
+// setIncarnation durably writes the incarnation record for b.
+func setIncarnation(t *testing.T, s *Store, b []byte, n uint64) {
+	t.Helper()
+	err := s.withLock(func() error {
+		if err := s.ensureBodyDirs(); err != nil {
+			return err
+		}
+		return s.writeIncarnation(digestHex(digestOf(b)), n)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// RemoveBody refuses every integer outside the durable-record domain and
+// accepts the ceiling itself.
+func TestRemoveBodySafeIntegerDomain(t *testing.T) {
+	s, _, _ := openBodyStore(t)
+	d := digestOf([]byte("domain"))
+	zero, max, over := uint64(0), uint64(maxSafeInteger), uint64(maxSafeInteger+1)
+	pin := func(rev uint64) []Pin { return []Pin{{Stream: "s", RecordID: "r", Revision: rev, Digest: d}} }
+	for name, req := range map[string]RemoveBodyRequest{
+		"length over":               {Digest: d, Length: maxSafeInteger + 1},
+		"length max int64":          {Digest: d, Length: 1<<63 - 1},
+		"complete incarnation 0":    {Digest: d, Length: 6, CompleteIncarnation: &zero},
+		"complete incarnation over": {Digest: d, Length: 6, CompleteIncarnation: &over},
+		"drop-set revision over":    {Digest: d, Length: 6, DropSet: pin(maxSafeInteger + 1)},
+		"drop-set revision max u64": {Digest: d, Length: 6, DropSet: pin(1<<64 - 1)},
+	} {
+		if _, err := s.RemoveBody(ctx, req); !errors.Is(err, ErrSchema) || IsIndeterminate(err) {
+			t.Errorf("%s: want determinate ErrSchema, got %v", name, err)
+		}
+	}
+	for name, req := range map[string]RemoveBodyRequest{
+		"length max":               {Digest: d, Length: maxSafeInteger},
+		"complete incarnation max": {Digest: d, Length: 6, CompleteIncarnation: &max},
+		"drop-set revision max":    {Digest: d, Length: 6, DropSet: pin(maxSafeInteger)},
+	} {
+		if _, err := s.RemoveBody(ctx, req); err != nil {
+			t.Errorf("%s: want a result, got %v", name, err)
+		}
+	}
+}
+
+// An interrupted publication that already holds the last incarnation leaves
+// nothing to publish into: PutBody refuses before any durable write.
+func TestPutBodyRefusesIncarnationExhaustion(t *testing.T) {
+	s, _, _ := openBodyStore(t)
+	b := []byte("exhausted")
+	setIncarnation(t, s, b, maxSafeInteger)
+	if got := state(t, s, b); got != statePublicationIncomplete {
+		t.Fatalf("setup state %s", got)
+	}
+	_, _, err := s.PutBody(ctx, bytes.NewReader(b), "text/plain")
+	if !errors.Is(err, ErrSchema) || IsIndeterminate(err) {
+		t.Fatalf("want determinate ErrSchema, got %v", err)
+	}
+	if n, _, _ := s.readIncarnation(digestHex(digestOf(b))); n != maxSafeInteger {
+		t.Fatalf("incarnation %d, want unchanged %d", n, uint64(maxSafeInteger))
+	}
+	if got := state(t, s, b); got != statePublicationIncomplete {
+		t.Fatalf("state %s, want unchanged", got)
+	}
+	if names, _ := s.root.ReadDirNames(dirBodyTmp, s.fso); len(names) != 0 {
+		t.Fatalf("staged files left: %v", names)
+	}
+}
+
+// The last incarnation is usable: a publication may take it, and a live body
+// at the ceiling republishes without an increment.
+func TestPutBodyUsesLastIncarnation(t *testing.T) {
+	s, _, _ := openBodyStore(t)
+	b := []byte("last")
+	setIncarnation(t, s, b, maxSafeInteger-1)
+	put(t, s, b)
+	if n, _, _ := s.readIncarnation(digestHex(digestOf(b))); n != maxSafeInteger {
+		t.Fatalf("incarnation %d, want %d", n, uint64(maxSafeInteger))
+	}
+	put(t, s, b)
+	if got := state(t, s, b); got != stateLive {
+		t.Fatalf("state %s, want live", got)
+	}
+	if names, _ := s.root.ReadDirNames(dirBodyTmp, s.fso); len(names) != 0 {
+		t.Fatalf("republishing a live body left staged files: %v", names)
+	}
+}
+
+// An incarnation record above the ceiling is not something this store
+// writes: the store is invalid.
+func TestIncarnationAboveCeilingIsInvalidStore(t *testing.T) {
+	s, _, _ := openBodyStore(t)
+	b := []byte("tampered")
+	setIncarnation(t, s, b, maxSafeInteger+1)
+	if _, _, err := s.PutBody(ctx, bytes.NewReader(b), "text/plain"); !errors.Is(err, ErrStoreInvalid) {
+		t.Fatalf("PutBody: want ErrStoreInvalid, got %v", err)
+	}
+	if _, err := s.RemoveBody(ctx, RemoveBodyRequest{Digest: digestOf(b), Length: int64(len(b))}); !errors.Is(err, ErrStoreInvalid) {
+		t.Fatalf("RemoveBody: want ErrStoreInvalid, got %v", err)
+	}
+}
+
+// A body longer than the ceiling is refused while staging and leaves nothing.
+func TestPutBodyRefusesLengthAboveCeiling(t *testing.T) {
+	s, _, _ := openBodyStore(t)
+	old := maxBodyLength
+	maxBodyLength = 4
+	t.Cleanup(func() { maxBodyLength = old })
+	if _, _, err := s.PutBody(ctx, bytes.NewReader([]byte("1234")), "text/plain"); err != nil {
+		t.Fatalf("at the ceiling: %v", err)
+	}
+	b := []byte("12345")
+	_, _, err := s.PutBody(ctx, bytes.NewReader(b), "text/plain")
+	if !errors.Is(err, ErrSchema) || IsIndeterminate(err) {
+		t.Fatalf("want determinate ErrSchema, got %v", err)
+	}
+	if got := state(t, s, b); got != stateUnknownDigest {
+		t.Fatalf("state %s, want unknown_digest", got)
+	}
+	if names, _ := s.root.ReadDirNames(dirBodyTmp, s.fso); len(names) != 0 {
+		t.Fatalf("staged files left: %v", names)
+	}
+}

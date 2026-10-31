@@ -22,6 +22,14 @@ const storeFormat = "recordprims-fs/v1"
 // keyLen is the length of attempt.key and diag.key: 32 bytes from the OS CSPRNG.
 const keyLen = 32
 
+// maxSafeInteger is the durable-record/v1 ceiling for every protocol integer,
+// 2^53 - 1. The store never accepts, persists or emits a larger value, and an
+// increment past it is refused, never wrapped.
+const maxSafeInteger = 1<<53 - 1
+
+// maxBodyLength bounds a staged body; a variable so tests can lower it.
+var maxBodyLength int64 = maxSafeInteger
+
 // Defaults.
 const (
 	DefaultIdempotencyWindow = 7 * 24 * time.Hour
