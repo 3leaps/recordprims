@@ -1,0 +1,49 @@
+{
+  "schema": "journal-entry",
+  "baseline": {
+    "v": 1,
+    "seq": 2,
+    "group": 2,
+    "group_size": 1,
+    "stream": "store.bodies",
+    "type": "body_removal_started",
+    "at": "2026-10-28T00:00:02.000000Z",
+    "body": {
+      "digest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "length": 12
+    },
+    "incarnation": 1,
+    "reason": "retention",
+    "provenance": {
+      "actor_kind": "process",
+      "actor": "store-retention"
+    },
+    "authorization": {
+      "ref": "removal-auth-1",
+      "digest": "sha256:c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+    }
+  },
+  "reject": {
+    "v": 1,
+    "seq": 2,
+    "group": 2,
+    "group_size": 1,
+    "stream": "store.bodies",
+    "type": "body_removal_started",
+    "at": "2026-10-28T00:00:02.000000Z",
+    "body": {
+      "digest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "length": 12
+    },
+    "incarnation": 1,
+    "reason": "cleanup",
+    "provenance": {
+      "actor_kind": "process",
+      "actor": "store-retention"
+    },
+    "authorization": {
+      "ref": "removal-auth-1",
+      "digest": "sha256:c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+    }
+  }
+}

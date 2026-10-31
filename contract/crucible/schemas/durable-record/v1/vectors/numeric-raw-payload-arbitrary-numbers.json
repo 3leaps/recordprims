@@ -1,0 +1,32 @@
+{
+  "window_ms": 60000,
+  "raw_journal": [
+    "{\"v\": 1, \"seq\": 1, \"group\": 1, \"group_size\": 1, \"stream\": \"records.example\", \"type\": \"stream_opened\", \"at\": \"2026-10-20T00:00:01.000000Z\", \"mode\": \"revisioned\", \"failure_model\": \"survives_power_loss\"}",
+    "{\"v\":1,\"seq\":2,\"group\":2,\"group_size\":1,\"stream\":\"records.example\",\"type\":\"appended\",\"at\":\"2026-10-20T00:00:02.000000Z\",\"record\":{\"v\":1.0,\"stream\":\"records.example\",\"record_id\":\"first\",\"revision\":1.0,\"payload_contract\":\"contract: example/v0\",\"payload\":{\"fractional\":12.5,\"above_safe_max\":9007199254740992,\"length\":0.25,\"seq\":-3.5},\"provenance\":{\"actor_kind\":\"human\",\"actor\":\"operator\"},\"classification\":{\"retention\":\"standard\",\"sensitivity\":\"0-public\"}},\"digest\":\"sha256:a27a64a7506a1ab1a3c512e49c604ad4eb42855b47c29509e6b19cfd38608074\",\"idempotency_key\":\"w-payload\"}"
+  ],
+  "steps": [
+    {
+      "raw_use": "{\"v\": 1, \"stream\": \"records.example\", \"protection_cut\": 2, \"current_cut\": 2, \"protection_state\": \"verified\", \"purpose\": \"export\", \"selection\": [{\"stream\": \"records.example\", \"record_id\": \"first\", \"revision\": 1, \"digest\": \"sha256:a27a64a7506a1ab1a3c512e49c604ad4eb42855b47c29509e6b19cfd38608074\"}], \"inherited_block\": false, \"closure\": \"references_only\", \"bodies\": [], \"omitted\": []}"
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "outcome": "allowed",
+        "closure": "references_only",
+        "selection": [
+          {
+            "stream": "records.example",
+            "record_id": "first",
+            "revision": 1,
+            "digest": "sha256:a27a64a7506a1ab1a3c512e49c604ad4eb42855b47c29509e6b19cfd38608074"
+          }
+        ],
+        "omitted": [],
+        "protection_cut": 2
+      }
+    ],
+    "active_holds": [],
+    "journal_size": 2
+  }
+}

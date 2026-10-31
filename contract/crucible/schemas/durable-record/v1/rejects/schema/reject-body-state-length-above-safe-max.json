@@ -1,0 +1,17 @@
+{
+  "schema": "body-state-request",
+  "baseline": {
+    "body": {
+      "digest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "length": 9007199254740991
+    },
+    "present": true
+  },
+  "reject": {
+    "body": {
+      "digest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "length": 9007199254740992
+    },
+    "present": true
+  }
+}

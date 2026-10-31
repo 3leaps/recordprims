@@ -42,7 +42,8 @@
         },
         "length": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -52,7 +53,8 @@
     },
     "restores": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "maximum": 9007199254740991
     },
     "reason": {
       "enum": [
@@ -189,7 +191,8 @@
         },
         "revision": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 9007199254740991
         },
         "digest": {
           "$ref": "#/$defs/digest"

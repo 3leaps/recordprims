@@ -1,0 +1,51 @@
+{
+  "schema": "record",
+  "baseline": {
+    "v": 1,
+    "stream": "records.example",
+    "record_id": "first",
+    "revision": 9007199254740991,
+    "supersedes": {
+      "revision": 9007199254740990,
+      "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7"
+    },
+    "payload_contract": "contract: example/v0",
+    "body": {
+      "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+      "length": 8,
+      "media_type": "text/plain"
+    },
+    "provenance": {
+      "actor_kind": "human",
+      "actor": "operator"
+    },
+    "classification": {
+      "retention": "standard",
+      "sensitivity": "0-public"
+    }
+  },
+  "reject": {
+    "v": 1,
+    "stream": "records.example",
+    "record_id": "first",
+    "revision": 9007199254740992,
+    "supersedes": {
+      "revision": 9007199254740990,
+      "digest": "sha256:6d565abfc5f6d23808da6e10b28be9551c445cb6676b516ca3c0a3fbcb8b58d7"
+    },
+    "payload_contract": "contract: example/v0",
+    "body": {
+      "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+      "length": 8,
+      "media_type": "text/plain"
+    },
+    "provenance": {
+      "actor_kind": "human",
+      "actor": "operator"
+    },
+    "classification": {
+      "retention": "standard",
+      "sensitivity": "0-public"
+    }
+  }
+}

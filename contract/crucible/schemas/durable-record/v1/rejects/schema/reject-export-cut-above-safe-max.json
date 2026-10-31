@@ -1,0 +1,29 @@
+{
+  "schema": "export-request",
+  "baseline": {
+    "v": 1,
+    "stream": "records.example",
+    "protection_cut": 9007199254740991,
+    "current_cut": 5,
+    "protection_state": "verified",
+    "purpose": "export",
+    "selection": [],
+    "inherited_block": false,
+    "closure": "references_only",
+    "bodies": [],
+    "omitted": []
+  },
+  "reject": {
+    "v": 1,
+    "stream": "records.example",
+    "protection_cut": 9007199254740992,
+    "current_cut": 5,
+    "protection_state": "verified",
+    "purpose": "export",
+    "selection": [],
+    "inherited_block": false,
+    "closure": "references_only",
+    "bodies": [],
+    "omitted": []
+  }
+}

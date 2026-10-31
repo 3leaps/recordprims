@@ -1,0 +1,10 @@
+{
+  "window_ms": 60000,
+  "raw_journal": [
+    "{"
+  ],
+  "steps": [],
+  "expected": {
+    "refusal": "ingest"
+  }
+}

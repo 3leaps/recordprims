@@ -1,0 +1,26 @@
+{
+  "schema": "journal-entry",
+  "baseline": {
+    "v": 1,
+    "seq": 2,
+    "group": 2,
+    "group_size": 1,
+    "stream": "records.example",
+    "type": "retired",
+    "at": "2026-10-28T00:00:02.000000Z",
+    "record_id": "first",
+    "reason": "cleanup"
+  },
+  "reject": {
+    "v": 1,
+    "seq": 2,
+    "group": 2,
+    "group_size": 1,
+    "stream": "records.example",
+    "type": "retired",
+    "at": "2026-10-28T00:00:02.000000Z",
+    "record_id": "first",
+    "reason": "cleanup",
+    "incarnation": 1
+  }
+}

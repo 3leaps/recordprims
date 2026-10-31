@@ -4,7 +4,7 @@ description: "Proposed engine-neutral record and journal semantics: stable recor
 category: "standards"
 status: "draft"
 version: "0.0.0"
-lastUpdated: "2026-10-12"
+lastUpdated: "2026-10-30"
 maintainer: "core-standards"
 reviewers: ["architecture", "security", "data-engineering"]
 approvers: ["lead-maintainer"]
@@ -71,7 +71,7 @@ mutated after append.
 - **Deletion is scoped.** A profile declares which deletion operations a store
   supports, per surface: the live head, retained history, managed replicas,
   external bodies, or decryption capability. A profile never states that
-  anything *was* deleted; completion belongs to a per-operation receipt.
+  anything _was_ deleted; completion belongs to a per-operation receipt.
   Copies outside management are outside every claim.
 - **Closed vocabulary.** Unknown entry types, outcomes, capabilities and
   stream modes fail closed. There is no `x-` extension prefix in v0.
@@ -89,25 +89,84 @@ or fail closed safely. Changing the meaning of a field, weakening the receipt,
 conflict or deletion-scope rules, adding or removing an entry type, and
 renaming fields without an alias are breaking.
 
+## Wire numeric domain and evaluation order
+
+Every contract-defined integer field in `durable-record/v0` has an upper bound
+of `9007199254740991` ($2^{53} - 1$), preserving each field's `minimum` or
+`const`:
+
+- `record.schema.json`: `v` (`0`), `revision`, `supersedes.revision`,
+  `body.length`, `links[].revision`, and shared `$defs.pin.revision`;
+- `journal-entry.schema.json`: `v` (`0`), `seq`, `group`, `group_size`,
+  `revision`, `presented.revision`, `current.revision`, and embedded `record`
+  integer paths;
+- `write-receipt.schema.json`: `receipt.seq`, `receipt.pin.revision`,
+  `receipt.current.revision`, and embedded `reconciliation.receipt` integer
+  paths;
+- `stratum-profile.schema.json`: `runtime.clock_skew_bound_ms` and numeric
+  `runtime.idempotency_window_ms`.
+
+This ceiling is an explicit `durable-record` interoperability restriction, not a
+claim that RFC 8785 (JCS) forbids larger numbers in general. JCS serializes IEEE
+754 binary64 numbers — including exact $2^{53}$ and larger floats — whereas
+[RFC 7493 Section 2.2](https://www.rfc-editor.org/rfc/rfc7493#section-2.2) and
+[RFC 8785 Appendix B](https://www.rfc-editor.org/rfc/rfc8785#appendix-B)
+recommend $[-(2^{53}-1), +(2^{53}-1)]$ for exact integer interchange across JSON
+parsers. Arbitrary numbers inside an application `record.payload` are not
+governed by this ceiling and remain subject only to general I-JSON / RFC 8785
+rules.
+
+Counter and span exhaustion (`seq`, `revision`, or an atomic group whose closing
+sequence `group + group_size - 1` would exceed `9007199254740991`) MUST be
+refused; wraparound is forbidden. Implementations MAY use wider internal types
+such as `int64` or `uint64`, and MUST enforce the wire domain at APIs, imports
+and journal boundaries before emitting, canonicalizing or incrementing.
+
+Wire readers and conformance gates evaluate inputs in four ordered stages:
+
+1. **Strict JSON ingestion (`ingest`)** — valid UTF-8 RFC 8259 syntax, unique
+   object member names at every nesting depth, no lone surrogates, and no
+   non-JSON or non-finite IEEE 754 numbers;
+2. **Exact numeric-domain preflight (`numeric_domain`)** — at protocol integer
+   schema paths only (never inside `record.payload`), raw JSON numeric tokens
+   are checked before binary64 conversion using bounded decimal/exponent
+   inspection without expanding enormous exponents. Mathematical integers within
+   `[-9007199254740991, +9007199254740991]` (`12`, `12.0`, `1.2e1`, `0.0`,
+   `-0.0`) pass preflight; fractional values, precision-aliasing tails
+   (`12.0000000000000001`, `1.0000000000000001`), underflow-to-zero exponents
+   (`1e-400`), and magnitudes above `9007199254740991` (`9007199254740992`,
+   wider `int64`/`uint64` values, overflow exponents) fail closed as
+   `numeric_domain`. Non-numeric JSON values (`boolean`, `null`, `string`,
+   `array`, `object`) pass through to schema validation, and safe negative
+   integers (`-1`) pass `numeric_domain` so field `minimum` rules reject them;
+3. **Schema validation (`shape`)** — JSON Schema Draft 2020-12 validation
+   yielding a structured validity verdict (`true`, or `false` with validation
+   diagnostics; parser, range or tool failures are infrastructure errors, never
+   schema rejections);
+4. **Logical semantics** — stream, group, digest, revision-chain, receipt,
+   coverage and profile invariants. Direct typed APIs enforce the same
+   `[minimum, 9007199254740991]` range, though an already-parsed float cannot
+   certify the original wire token.
+
 ## Governed objects
 
 ### Record
 
 Schema: `record.schema.json`.
 
-| Field | Rule |
-| --- | --- |
-| `v` | `0`. |
-| `stream` | Stream identifier; scope of record ids, sequence numbers and idempotency keys. |
-| `record_id` | Stable for the life of the record, unique per stream, opaque. |
-| `revision` | Positive integer. `1` creates the record. Each revision is exactly one greater than the revision it supersedes. |
-| `supersedes` | Required when `revision > 1`: `{revision, digest}` of the revision being replaced in the same stream and record. Forbidden when `revision` is `1`. |
-| `payload_contract` | Host-less token naming the payload's contract. Carried, never validated by the store. |
-| `payload` / `body` | Exactly one. `payload` is inline I-JSON. `body` is a body reference. |
-| `provenance` | Who produced this revision: `actor_kind` (`human`, `agent`, `process`), `actor`, optional `supervisor`, `model`, `tool`. Model and tool describe the producer; they do not own the record. |
-| `classification` | `retention` (retention-lifecycle classifier key) and `sensitivity` (sensitivity classifier key). Both required; `unknown` is valid and is a decision deferred, not a default. |
-| `labels` | Optional free tags. Never interpreted by the store. |
-| `links` | Optional soft references to other `record_id` values in the same stream, optionally pinned to a revision. Not a graph contract. |
+| Field              | Rule                                                                                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `v`                | `0`.                                                                                                                                                                                       |
+| `stream`           | Stream identifier; scope of record ids, sequence numbers and idempotency keys.                                                                                                             |
+| `record_id`        | Stable for the life of the record, unique per stream, opaque.                                                                                                                              |
+| `revision`         | Positive integer. `1` creates the record. Each revision is exactly one greater than the revision it supersedes.                                                                            |
+| `supersedes`       | Required when `revision > 1`: `{revision, digest}` of the revision being replaced in the same stream and record. Forbidden when `revision` is `1`.                                         |
+| `payload_contract` | Host-less token naming the payload's contract. Carried, never validated by the store.                                                                                                      |
+| `payload` / `body` | Exactly one. `payload` is inline I-JSON. `body` is a body reference.                                                                                                                       |
+| `provenance`       | Who produced this revision: `actor_kind` (`human`, `agent`, `process`), `actor`, optional `supervisor`, `model`, `tool`. Model and tool describe the producer; they do not own the record. |
+| `classification`   | `retention` (retention-lifecycle classifier key) and `sensitivity` (sensitivity classifier key). Both required; `unknown` is valid and is a decision deferred, not a default.              |
+| `labels`           | Optional free tags. Never interpreted by the store.                                                                                                                                        |
+| `links`            | Optional soft references to other `record_id` values in the same stream, optionally pinned to a revision. Not a graph contract.                                                            |
 
 **Revision digest.** SHA-256 over the RFC 8785 canonical bytes of the whole
 record object as written, including `stream`, `record_id`, `revision` and
@@ -124,13 +183,13 @@ bytes.
 
 A body is bytes held outside the record.
 
-| Field | Rule |
-| --- | --- |
-| `digest` | Required, `sha256:` + 64 lowercase hex, over the exact bytes. |
-| `length` | Required, byte count. |
-| `media_type` | Required. |
-| `artifact_id` | Optional `contract: data-artifact/v0` artifact token when the body is governed as an artifact. |
-| `encryption` | Optional `{scheme, key_ref}`. `key_ref` is an opaque token naming the key-custody record, never key material. |
+| Field         | Rule                                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------------------- |
+| `digest`      | Required, `sha256:` + 64 lowercase hex, over the exact bytes.                                                 |
+| `length`      | Required, byte count.                                                                                         |
+| `media_type`  | Required.                                                                                                     |
+| `artifact_id` | Optional `contract: data-artifact/v0` artifact token when the body is governed as an artifact.                |
+| `encryption`  | Optional `{scheme, key_ref}`. `key_ref` is an opaque token naming the key-custody record, never key material. |
 
 **Body first.** A store MUST NOT acknowledge a record whose body it cannot
 verify by digest and length at write time, unless capability
@@ -149,14 +208,14 @@ monotonic per stream and gap-free. `group` and `group_size` follow the atomic
 group rule of `contract: durable-queue/v0`: a prefix ending at `seq` N is a
 consistent cut iff, for the entry at N, `N - group + 1 == group_size`.
 
-| Type | Appended when | Carries |
-| --- | --- | --- |
-| `stream_opened` | A stream is created; always `seq` 1 | `mode`, `failure_model` |
-| `appended` | Revision 1 of a new record is accepted | `record`, `digest`, `idempotency_key`, `body_status` if the record has a body |
-| `revised` | A later revision is accepted against the current head | `record`, `digest`, `idempotency_key`, `body_status` if the record has a body |
-| `deduplicated` | A write repeats a live key with the same revision digest (audit only; the caller receives the original receipt) | `record_id`, `idempotency_key` |
-| `conflicted` | A write repeats a live key with a different digest, or presents a stale `supersedes` (audit) | `record_id`, `reason`, `presented` pin, `current` pin when a head exists |
-| `retired` | A record is withdrawn from current reads; history retained | `record_id`, `reason` |
+| Type            | Appended when                                                                                                   | Carries                                                                       |
+| --------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `stream_opened` | A stream is created; always `seq` 1                                                                             | `mode`, `failure_model`                                                       |
+| `appended`      | Revision 1 of a new record is accepted                                                                          | `record`, `digest`, `idempotency_key`, `body_status` if the record has a body |
+| `revised`       | A later revision is accepted against the current head                                                           | `record`, `digest`, `idempotency_key`, `body_status` if the record has a body |
+| `deduplicated`  | A write repeats a live key with the same revision digest (audit only; the caller receives the original receipt) | `record_id`, `idempotency_key`                                                |
+| `conflicted`    | A write repeats a live key with a different digest, or presents a stale `supersedes` (audit)                    | `record_id`, `reason`, `presented` pin, `current` pin when a head exists      |
+| `retired`       | A record is withdrawn from current reads; history retained                                                      | `record_id`, `reason`                                                         |
 
 Unlike the queue ledger, `appended` and `revised` carry the record: a complete
 journal is the portable form of the stream. `deduplicated` and `conflicted`
@@ -164,10 +223,10 @@ change no state and may follow `retired`. A v0 journal is never rewritten.
 
 ### Stream modes
 
-| Mode | Rule |
-| --- | --- |
+| Mode              | Rule                                                                                                |
+| ----------------- | --------------------------------------------------------------------------------------------------- |
 | `single_revision` | Only `appended`. `revised` is a `mode_violation` outcome. Fits events, measurements, stage results. |
-| `revisioned` | `appended` then any number of `revised`. Fits notes, procedures, session state. |
+| `revisioned`      | `appended` then any number of `revised`. Fits notes, procedures, session state.                     |
 
 ### Write request and keyed idempotency
 
@@ -190,14 +249,14 @@ key is checked **before** any revision or retirement rule.
 
 Schema: `write-receipt.schema.json`. One receipt per write.
 
-| Field | Rule |
-| --- | --- |
-| `outcome` | Accepted: `appended`, `revised`. Rejected: `idempotency_conflict`, `revision_conflict`, `no_head`, `mode_violation`, `body_unverified`, `retired_record`. |
-| `stream`, `idempotency_key` | Always. |
-| `pin`, `seq` | For accepted outcomes: the record's pin and the journal `seq` of its entry. |
-| `failure_model` | For accepted outcomes: the stream's model the entry was acknowledged under. |
-| `body_status` | For accepted outcomes, exactly when the record has a body: `verified` or `unverified`, as journaled. |
-| `current` | For `revision_conflict`: the current head pin. |
+| Field                       | Rule                                                                                                                                                      |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `outcome`                   | Accepted: `appended`, `revised`. Rejected: `idempotency_conflict`, `revision_conflict`, `no_head`, `mode_violation`, `body_unverified`, `retired_record`. |
+| `stream`, `idempotency_key` | Always.                                                                                                                                                   |
+| `pin`, `seq`                | For accepted outcomes: the record's pin and the journal `seq` of its entry.                                                                               |
+| `failure_model`             | For accepted outcomes: the stream's model the entry was acknowledged under.                                                                               |
+| `body_status`               | For accepted outcomes, exactly when the record has a body: `verified` or `unverified`, as journaled.                                                      |
+| `current`                   | For `revision_conflict`: the current head pin.                                                                                                            |
 
 `no_head` answers a revision (`revision > 1`) for a record that has no accepted
 head in the stream. `revision_conflict` always has a head to report.
@@ -265,13 +324,13 @@ cannot reconcile indeterminate writes; the schema admits it only when
 `runtime.deletion` declares, per surface, which deletion operation the store
 **supports**. It is a standing capability statement, never an outcome:
 
-| Surface | Operation scope |
-| --- | --- |
-| `live_head` | The current revision can be made to stop resolving. |
-| `retained_history` | Earlier revisions' bytes can be removed from the store's history. |
+| Surface            | Operation scope                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------------- |
+| `live_head`        | The current revision can be made to stop resolving.                                          |
+| `retained_history` | Earlier revisions' bytes can be removed from the store's history.                            |
 | `managed_replicas` | Copies the store manages (mirrors, remotes it publishes to, backups it owns) can be cleaned. |
-| `external_bodies` | Bytes held by body references can be removed. |
-| `decryption` | Decryption capability for retained ciphertext can be retired by key retirement. |
+| `external_bodies`  | Bytes held by body references can be removed.                                                |
+| `decryption`       | Decryption capability for retained ciphertext can be retired by key retirement.              |
 
 Each surface is `supported`, `unsupported` or `not_applicable`. In v0,
 `retained_history` is never `supported`. `decryption: supported` is a claim

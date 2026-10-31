@@ -14,11 +14,13 @@
     },
     "protection_cut": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "maximum": 9007199254740991
     },
     "current_cut": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "maximum": 9007199254740991
     },
     "protection_state": {
       "enum": [
@@ -119,7 +121,8 @@
         },
         "revision": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 9007199254740991
         },
         "digest": {
           "$ref": "#/$defs/digest"

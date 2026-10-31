@@ -1,0 +1,14 @@
+{
+  "window_ms": 60000,
+  "invalid_journal_entries": [
+    1
+  ],
+  "raw_journal": [
+    "{\"v\": 1, \"seq\": 1, \"group\": 1, \"group_size\": 1, \"stream\": \"records.example\", \"type\": \"stream_opened\", \"at\": \"2026-10-20T00:00:01.000000Z\", \"mode\": \"revisioned\", \"failure_model\": \"survives_power_loss\"}",
+    "{\"v\": 1, \"seq\": 2, \"group\": 2, \"group_size\": 1, \"stream\": \"records.example\", \"type\": \"appended\", \"at\": \"2026-10-20T00:00:02.000000Z\", \"record\": {\"v\": 1, \"stream\": \"records.example\", \"record_id\": \"first\", \"revision\": -1, \"payload_contract\": \"contract: example/v0\", \"payload\": {\"note\": \"neg\"}, \"provenance\": {\"actor_kind\": \"human\", \"actor\": \"operator\"}, \"classification\": {\"retention\": \"standard\", \"sensitivity\": \"0-public\"}}, \"digest\": \"sha256:203da841e924e45b78b5293369b53a3295bd9cc59f9fba7fce1675b7b93000fb\", \"idempotency_key\": \"w-neg\"}"
+  ],
+  "steps": [],
+  "expected": {
+    "refusal": "revision_chain"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "window_ms": 60000,
+  "raw_source_journal": [
+    "{\"v\": 0, \"seq\": 1, \"group\": 1, \"group_size\": 1, \"stream\": \"records.example\", \"type\": \"stream_opened\", \"at\": \"2026-10-20T00:00:01.000000Z\", \"mode\": \"revisioned\", \"failure_model\": \"survives_power_loss\"}",
+    "{\"v\":0,\"seq\":2,\"group\":2,\"group_size\":1,\"stream\":\"records.example\",\"type\":\"appended\",\"at\":\"2026-10-20T00:00:02.000000Z\",\"record\":{\"v\":0,\"stream\":\"records.example\",\"record_id\":\"first\",\"revision\":1,\"payload_contract\":\"contract: example/v0\",\"body\":{\"digest\":\"sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de\",\"length\":12.0000000000000001,\"media_type\":\"text/plain\"},\"provenance\":{\"actor_kind\":\"human\",\"actor\":\"operator\"},\"classification\":{\"retention\":\"standard\",\"sensitivity\":\"0-public\"}},\"digest\":\"sha256:74dba13ea8ee8382996592d459e5111835d15bff62bfed5ec2eb2dfbe8e7512c\",\"idempotency_key\":\"w1\"}"
+  ],
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.continued",
+      "type": "stream_opened",
+      "at": "2026-10-20T00:00:10.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss",
+      "continues": {
+        "capability": "contract: durable-record/v0",
+        "stream": "records.example",
+        "cut_seq": 3,
+        "cut_digest": "sha256:b983d6d12284b7b026b8ebce6e036c0efcf9a355eaa747a7b9ac1166f8d74349"
+      }
+    }
+  ],
+  "steps": [],
+  "expected": {
+    "refusal": "continuation"
+  }
+}
