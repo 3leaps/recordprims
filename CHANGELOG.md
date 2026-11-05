@@ -7,6 +7,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- `LICENSE-APACHE` and `LICENSE-MIT` are the verbatim license texts; the
+  dual-license statement and project name notice move to a new `NOTICE` file
+
 ## [0.0.1] - 2026-10-27
 
 The first tag. Pre-release; the API will change before 0.1.0.

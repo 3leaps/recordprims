@@ -48,7 +48,7 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
    "Contribution" shall mean any work of authorship, including
    the original version of the Work and any modifications or additions
    to that Work or Derivative Works thereof, that is intentionally
-   submitted to the Licensor for inclusion in the Work by the copyright owner
+   submitted to Licensor for inclusion in the Work by the copyright owner
    or by an individual or Legal Entity authorized to submit on behalf of
    the copyright owner. For the purposes of this definition, "submitted"
    means any form of electronic, verbal, or written communication sent
@@ -188,27 +188,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
----
-
-This project is dual-licensed under Apache-2.0 (this file) or MIT (see LICENSE-MIT), at your option.
-
-Subject to 3 Leaps OSS policies: https://github.com/3leaps/oss-policies
-
----
-
-## Project Name Notice
-
-"recordprims" is a project name of 3 Leaps, LLC, used to identify this software.
-"3 Leaps" is a registered trademark of 3 Leaps, LLC, a North Carolina LLC.
-
-While code and documentation are open under the Apache License 2.0, usage of
-the "recordprims" project name is reserved for official implementations to prevent
-confusion and benefit the ecosystem. Use of this name in derivative works
-does not imply endorsement by 3 Leaps, LLC.
-
-For the benefit of the community, please rename your project folder and
-configurations to avoid using "3leaps" or "recordprims" in derivative works that
-are not official 3 Leaps projects.
-
-For questions regarding project name usage, contact hello@3leaps.net.

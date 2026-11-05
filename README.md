@@ -43,4 +43,5 @@ crate. See [RELEASE_NOTES.md](RELEASE_NOTES.md) for recent releases,
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
-[MIT license](LICENSE-MIT) at your option.
+[MIT license](LICENSE-MIT) at your option. See [NOTICE](NOTICE) for project
+name and trademark notices.

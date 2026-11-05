@@ -13,7 +13,7 @@ PYTHON ?= python3
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
         release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
         release-verify-remote-tag release-record-anchor \
-        bootstrap release-check version version-check version-sync version-set version-patch \
+        license-check license-check-test bootstrap release-check version version-check version-sync version-set version-patch \
         version-minor version-major build clean
 
 all: check
@@ -21,7 +21,7 @@ all: check
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*## "} /^[a-z][a-z0-9-]*:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-check: fmt-check lint test contract-check contract-oracle deps-check api-scan api-scan-test content-check surface-tests workflow-pin release-tooling-test checklist-targets deny version-check ## Everything CI runs on one host
+check: fmt-check lint test contract-check contract-oracle deps-check api-scan api-scan-test content-check surface-tests workflow-pin release-tooling-test checklist-targets deny version-check license-check license-check-test ## Everything CI runs on one host
 
 precommit: fmt-check lint ## Fast pre-commit gate
 
@@ -193,6 +193,12 @@ api-scan: ## No sibling prim type in the exported API (Go and Rust)
 
 api-scan-test: ## Controls for api-scan: each leak route is refused through the real gate
 	@scripts/api-scan.test.sh
+
+license-check: ## License files are the verbatim texts; notices live in NOTICE
+	@$(PYTHON) -I -B scripts/license-check.py
+
+license-check-test: ## Controls for license-check: each known drift is refused
+	@PYTHON=$(PYTHON) scripts/license-check.test.sh
 
 deny: ## cargo-deny: licences, bans, sources, advisories
 	cargo deny --locked check

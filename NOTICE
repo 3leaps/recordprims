@@ -1,0 +1,23 @@
+recordprims
+Copyright 2026 3 Leaps, LLC
+
+This project is dual-licensed under the MIT License (see LICENSE-MIT) or the
+Apache License, Version 2.0 (see LICENSE-APACHE), at your option.
+
+Subject to 3 Leaps OSS policies: https://github.com/3leaps/oss-policies
+
+## Project Name Notice
+
+"recordprims" is a project name of 3 Leaps, LLC, used to identify this software.
+"3 Leaps®" is a registered trademark of 3 Leaps, LLC, a North Carolina LLC.
+
+While code and documentation are open under the MIT or Apache-2.0 License,
+usage of the "recordprims" project name is reserved for official implementations
+to prevent confusion and benefit the ecosystem. Use of this name in derivative
+works does not imply endorsement by 3 Leaps, LLC.
+
+For the benefit of the community, please rename your project folder and
+configurations to avoid using "3leaps" or "recordprims" in derivative works that
+are not official 3 Leaps projects.
+
+For questions regarding project name usage, contact hello@3leaps.net.
