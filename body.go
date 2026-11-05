@@ -231,7 +231,7 @@ func (s *Store) readIncarnation(h string) (uint64, bool, error) {
 		return 0, false, ioErr("read", err, false)
 	}
 	n, err := strconv.ParseUint(string(b), 10, 64)
-	if err != nil || n == 0 {
+	if err != nil || n == 0 || n > maxSafeInteger {
 		return 0, false, fmt.Errorf("%w: incarnation record invalid", ErrStoreInvalid)
 	}
 	return n, true, nil
@@ -286,7 +286,13 @@ func (s *Store) tombstoneFor(h string, length int64, n uint64) (bool, error) {
 
 // PutBody streams r into the store as a content-addressed body and returns
 // its reference and a publication lease. It is idempotent by state: after any
-// error, retry the same call.
+// error, retry the same call. The input is first staged durably in a
+// temporary file, which is not body state. A body longer than 2^53 - 1 bytes
+// is refused while staging; a publication whose incarnation would pass
+// 2^53 - 1 is refused after staging. Both refusals are a determinate ErrSchema
+// that changes no body state, and the staged file is removed. If that removal
+// fails, the error also carries an unlink IOError and the file remains as a
+// tmp leftover that Verify reports.
 func (s *Store) PutBody(ctx context.Context, r io.Reader, mediaType string) (BodyRef, PublicationLease, error) {
 	if !reMediaType.MatchString(mediaType) {
 		return BodyRef{}, PublicationLease{}, fmt.Errorf("%w: media type", ErrSchema)
@@ -299,11 +305,6 @@ func (s *Store) PutBody(ctx context.Context, r io.Reader, mediaType string) (Bod
 		return BodyRef{}, PublicationLease{}, err
 	}
 	staged := true
-	defer func() {
-		if staged {
-			s.root.Remove(tmp)
-		}
-	}()
 
 	var lease PublicationLease
 	// progressed is set once the operation may have changed durable state;
@@ -316,6 +317,9 @@ func (s *Store) PutBody(ctx context.Context, r io.Reader, mediaType string) (Bod
 		}
 		if st.kind == stateCorrupt || st.kind == stateInconsistent {
 			return errBodyConflict
+		}
+		if st.kind != stateLive && st.kind != statePublishing && st.incarnation >= maxSafeInteger {
+			return fmt.Errorf("%w: body incarnation exhausted", ErrSchema)
 		}
 		progressed = true
 		n := st.incarnation
@@ -345,9 +349,29 @@ func (s *Store) PutBody(ctx context.Context, r io.Reader, mediaType string) (Bod
 		return err
 	})
 	if err != nil {
-		return BodyRef{}, PublicationLease{}, s.bodyErr(err, progressed, h, length)
+		err = s.bodyErr(err, progressed, h, length)
+		if staged {
+			err = s.discardStaged(tmp, err)
+		}
+		return BodyRef{}, PublicationLease{}, err
+	}
+	if staged {
+		// The body's bytes were already in place; the staged copy is
+		// redundant. A failed removal leaves a tmp leftover for Verify and
+		// does not fail the publication.
+		s.root.Remove(tmp)
 	}
 	return BodyRef{Digest: "sha256:" + h, Length: length, MediaType: mediaType}, lease, nil
+}
+
+// discardStaged removes a staged temporary file after err. A removal failure
+// is joined to err as an unlink IOError with err's own determinacy, and the
+// file stays as a tmp leftover that Verify reports.
+func (s *Store) discardStaged(name string, err error) error {
+	if rerr := s.root.Remove(name); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+		return errors.Join(err, ioErr("unlink", rerr, IsIndeterminate(err)))
+	}
+	return err
 }
 
 // stage streams r into an exclusive temporary file, computing its digest and
@@ -364,8 +388,7 @@ func (s *Store) stage(ctx context.Context, r io.Reader) (name, h string, length 
 	}
 	fail := func(e error) (string, string, int64, error) {
 		f.Close()
-		s.root.Remove(name)
-		return "", "", 0, e
+		return "", "", 0, s.discardStaged(name, e)
 	}
 	if err := s.fault("body.tmp_created"); err != nil {
 		return fail(err)
@@ -378,6 +401,9 @@ func (s *Store) stage(ctx context.Context, r io.Reader) (name, h string, length 
 		}
 		k, rerr := r.Read(buf)
 		if k > 0 {
+			if length+int64(k) > maxBodyLength {
+				return fail(fmt.Errorf("%w: body length exceeds %d bytes", ErrSchema, maxBodyLength))
+			}
 			sum.Write(buf[:k])
 			if _, err := f.Write(buf[:k]); err != nil {
 				return fail(ioErr("write", err, false))
@@ -398,12 +424,10 @@ func (s *Store) stage(ctx context.Context, r io.Reader) (name, h string, length 
 		return fail(ioErr("fsync", err, false))
 	}
 	if err := f.Close(); err != nil {
-		s.root.Remove(name)
-		return "", "", 0, ioErr("close", err, false)
+		return "", "", 0, s.discardStaged(name, ioErr("close", err, false))
 	}
 	if err := s.fault("body.tmp_fsynced"); err != nil {
-		s.root.Remove(name)
-		return "", "", 0, err
+		return "", "", 0, s.discardStaged(name, err)
 	}
 	return name, hex.EncodeToString(sum.Sum(nil)), length, nil
 }
@@ -528,10 +552,15 @@ func (s *Store) bodyErr(err error, progressed bool, h string, length int64) erro
 
 // RemoveBody removes a body's bytes when nothing protects them. Every outcome
 // is a result; incomplete durable progress returns ErrBodyIncomplete and is
-// completed by retrying the same call.
+// completed by retrying the same call. A length, drop-set revision or
+// CompleteIncarnation outside the durable-record integer domain (incarnations
+// and revisions 1 to 2^53 - 1, lengths 0 to 2^53 - 1) is refused with ErrSchema.
 func (s *Store) RemoveBody(ctx context.Context, req RemoveBodyRequest) (RemoveBodyResult, error) {
-	if !reDigest.MatchString(req.Digest) || req.Length < 0 {
+	if !reDigest.MatchString(req.Digest) || req.Length < 0 || req.Length > maxSafeInteger {
 		return RemoveBodyResult{}, fmt.Errorf("%w: digest or length", ErrSchema)
+	}
+	if c := req.CompleteIncarnation; c != nil && (*c < 1 || *c > maxSafeInteger) {
+		return RemoveBodyResult{}, fmt.Errorf("%w: complete incarnation", ErrSchema)
 	}
 	dropHash, err := dropSetHash(req.DropSet)
 	if err != nil {
@@ -683,7 +712,7 @@ func dropSetHash(pins []Pin) (string, error) {
 	}
 	w := make([]wirePin, 0, len(pins))
 	for _, p := range pins {
-		if !reStream.MatchString(p.Stream) || !reRecordID.MatchString(p.RecordID) || p.Revision < 1 || !reDigest.MatchString(p.Digest) {
+		if !reStream.MatchString(p.Stream) || !reRecordID.MatchString(p.RecordID) || p.Revision < 1 || p.Revision > maxSafeInteger || !reDigest.MatchString(p.Digest) {
 			return "", fmt.Errorf("%w: drop set pin", ErrSchema)
 		}
 		w = append(w, wirePin{p.Digest, p.RecordID, p.Revision, p.Stream})
