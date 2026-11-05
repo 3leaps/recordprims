@@ -13,6 +13,7 @@ surfaces: [library, cli]
 bindings:
   go: planned           # the first implementation (0.0.x)
   rust: planned         # the twin; operating by 0.1.x
-  typescript: planned   # from the Rust tree (napi-rs)
-  python: planned       # from the Rust tree (PyO3/maturin)
+  typescript: planned   # from the Rust tree (napi-rs); docs/decisions/ADR-0001
+  python: planned       # from the Rust tree (PyO3/maturin); docs/decisions/ADR-0001
+target_registries: [go_proxy, crates_io, npm, pypi]
 extensions: []
