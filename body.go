@@ -305,6 +305,15 @@ func (s *Store) PutBody(ctx context.Context, r io.Reader, mediaType string) (Bod
 		return BodyRef{}, PublicationLease{}, err
 	}
 	staged := true
+	// completed is set on every return below; a panic before then (in a
+	// hook or under the lock) still removes a staged file that was never
+	// linked into place, and the panic continues.
+	completed := false
+	defer func() {
+		if !completed && staged {
+			s.root.Remove(tmp)
+		}
+	}()
 
 	var lease PublicationLease
 	// progressed is set once the operation may have changed durable state;
@@ -348,6 +357,7 @@ func (s *Store) PutBody(ctx context.Context, r io.Reader, mediaType string) (Bod
 		lease, err = s.writeLease(h, n)
 		return err
 	})
+	completed = true
 	if err != nil {
 		err = s.bodyErr(err, progressed, h, length)
 		if staged {
@@ -386,7 +396,18 @@ func (s *Store) stage(ctx context.Context, r io.Reader) (name, h string, length 
 	if err != nil {
 		return "", "", 0, ioErr("create", err, false)
 	}
+	// finished is set on every return below; a panic while staging (a
+	// reader that panics, for instance) still closes and removes the file,
+	// and the panic continues.
+	finished := false
+	defer func() {
+		if !finished {
+			f.Close()
+			s.root.Remove(name)
+		}
+	}()
 	fail := func(e error) (string, string, int64, error) {
+		finished = true
 		f.Close()
 		return "", "", 0, s.discardStaged(name, e)
 	}
@@ -424,11 +445,14 @@ func (s *Store) stage(ctx context.Context, r io.Reader) (name, h string, length 
 		return fail(ioErr("fsync", err, false))
 	}
 	if err := f.Close(); err != nil {
+		finished = true
 		return "", "", 0, s.discardStaged(name, ioErr("close", err, false))
 	}
 	if err := s.fault("body.tmp_fsynced"); err != nil {
+		finished = true
 		return "", "", 0, s.discardStaged(name, err)
 	}
+	finished = true
 	return name, hex.EncodeToString(sum.Sum(nil)), length, nil
 }
 

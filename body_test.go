@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -564,5 +565,78 @@ func TestPutBodyRefusesLengthAboveCeiling(t *testing.T) {
 	}
 	if names, _ := s.root.ReadDirNames(dirBodyTmp, s.fso); len(names) != 0 {
 		t.Fatalf("staged files left: %v", names)
+	}
+}
+
+// panicReader returns n bytes and then panics.
+type panicReader struct{ n int }
+
+func (r *panicReader) Read(p []byte) (int, error) {
+	if r.n <= 0 {
+		panic("reader panic")
+	}
+	k := min(len(p), r.n)
+	for i := range p[:k] {
+		p[i] = 'x'
+	}
+	r.n -= k
+	return k, nil
+}
+
+// putRecover runs PutBody and returns the value it panicked with, if any.
+func putRecover(s *Store, r io.Reader) (v any) {
+	defer func() { v = recover() }()
+	s.PutBody(ctx, r, "application/octet-stream")
+	return nil
+}
+
+// A panic while staging or under the lock propagates unchanged, leaves no
+// staged file behind, and leaves the store usable.
+func TestPutBodyPanicRemovesStagedFile(t *testing.T) {
+	b := []byte("panic body")
+	panicAt := func(phase string) func(s *Store) {
+		return func(s *Store) {
+			s.hook = func(p string) error {
+				if p == phase {
+					panic("hook panic")
+				}
+				return nil
+			}
+		}
+	}
+	cases := []struct {
+		name  string
+		setup func(s *Store)
+		input func() io.Reader
+		want  any
+	}{
+		{"reader after a full buffer", nil, func() io.Reader { return &panicReader{n: 100 << 10} }, "reader panic"},
+		{"tmp_written", panicAt("body.tmp_written"), func() io.Reader { return bytes.NewReader(b) }, "hook panic"},
+		{"tmp_fsynced, file closed", panicAt("body.tmp_fsynced"), func() io.Reader { return bytes.NewReader(b) }, "hook panic"},
+		{"under the lock, before link", panicAt("body.incarnation_written"), func() io.Reader { return bytes.NewReader(b) }, "hook panic"},
+		{"under the lock, after link", panicAt("body.renamed"), func() io.Reader { return bytes.NewReader(b) }, "hook panic"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, _, _ := openBodyStore(t)
+			if c.setup != nil {
+				c.setup(s)
+			}
+			if got := putRecover(s, c.input()); got != c.want {
+				t.Fatalf("panic value %v, want %v", got, c.want)
+			}
+			s.hook = nil
+			names, err := s.root.ReadDirNames(dirBodyTmp, s.fso)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(names) != 0 {
+				t.Fatalf("staged files left after panic: %v", names)
+			}
+			put(t, s, b)
+			if got := state(t, s, b); got != stateLive {
+				t.Fatalf("state %s after retry, want live", got)
+			}
+		})
 	}
 }

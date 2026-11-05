@@ -9,6 +9,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - ADR-0001 records the Profile B language plan: pure-Go and Rust twins under
   one contract, TypeScript (napi-rs) and Python (PyO3) from the Rust tree
+- A panic while `PutBody` stages a body (for example from the input reader) or
+  holds the store lock no longer leaves the staged temporary file behind
 - `LICENSE-APACHE` and `LICENSE-MIT` are the verbatim license texts; the
   dual-license statement and project name notice move to a new `NOTICE` file
 
