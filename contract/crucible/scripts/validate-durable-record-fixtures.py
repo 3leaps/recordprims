@@ -180,7 +180,7 @@ def _materialize_opaque_num(token: str, where: str) -> int | float:
         val = int(token)
         try:
             _jcs._require_ijson_number(val)
-        except ValueError as e:
+        except (ValueError, OverflowError) as e:
             raise Reject("ingest", f"{where}: {e}") from e
         return val
     # Guard huge positive/negative exponents so float conversion stays bounded and finite.
@@ -276,39 +276,71 @@ PROTOCOL_NUMERIC_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
-def _preflight_node(node: Any, kind: Any, where: str) -> Any:
+def _ingest_opaque_node(node: Any, kind: Any, where: str) -> Any:
+    """Stage 1 (ingest) pass: materialize all non-protocol numbers across the document."""
     if kind == "int":
         if isinstance(node, _RawNum):
-            return parse_safe_int_token(node.token, where)
-        return _preflight_node(node, "opaque", where)
+            return node
+        return _ingest_opaque_node(node, "opaque", where)
     if kind == "opaque":
         if isinstance(node, _RawNum):
             return _materialize_opaque_num(node.token, where)
         if isinstance(node, list):
             return [
-                _preflight_node(x, "opaque", f"{where}[{i}]")
+                _ingest_opaque_node(x, "opaque", f"{where}[{i}]")
                 for i, x in enumerate(node)
             ]
         if isinstance(node, dict):
             return {
-                k: _preflight_node(v, "opaque", f"{where}/{k}") for k, v in node.items()
+                k: _ingest_opaque_node(v, "opaque", f"{where}/{k}")
+                for k, v in node.items()
             }
         return node
     if isinstance(kind, tuple) and kind[0] == "list":
         elem_kind = kind[1]
         if isinstance(node, list):
             return [
-                _preflight_node(x, elem_kind, f"{where}[{i}]")
+                _ingest_opaque_node(x, elem_kind, f"{where}[{i}]")
                 for i, x in enumerate(node)
             ]
-        return _preflight_node(node, "opaque", where)
+        return _ingest_opaque_node(node, "opaque", where)
     spec = PROTOCOL_NUMERIC_SCHEMAS[kind]
     if isinstance(node, dict):
         return {
-            k: _preflight_node(v, spec.get(k, "opaque"), f"{where}/{k}")
+            k: _ingest_opaque_node(v, spec.get(k, "opaque"), f"{where}/{k}")
             for k, v in node.items()
         }
-    return _preflight_node(node, "opaque", where)
+    return _ingest_opaque_node(node, "opaque", where)
+
+
+def _preflight_protocol_ints(node: Any, kind: Any, where: str) -> Any:
+    """Stage 2 (numeric_domain) pass: validate protocol-integer tokens after Stage 1 completes."""
+    if kind == "int":
+        if isinstance(node, _RawNum):
+            return parse_safe_int_token(node.token, where)
+        return node
+    if kind == "opaque":
+        return node
+    if isinstance(kind, tuple) and kind[0] == "list":
+        elem_kind = kind[1]
+        if isinstance(node, list):
+            return [
+                _preflight_protocol_ints(x, elem_kind, f"{where}[{i}]")
+                for i, x in enumerate(node)
+            ]
+        return node
+    spec = PROTOCOL_NUMERIC_SCHEMAS[kind]
+    if isinstance(node, dict):
+        return {
+            k: _preflight_protocol_ints(v, spec.get(k, "opaque"), f"{where}/{k}")
+            for k, v in node.items()
+        }
+    return node
+
+
+def _preflight_node(node: Any, kind: Any, where: str) -> Any:
+    ingested = _ingest_opaque_node(node, kind, where)
+    return _preflight_protocol_ints(ingested, kind, where)
 
 
 def parse_wire(raw: str, kind: str, where: str = "<wire>") -> Any:
@@ -637,9 +669,11 @@ def instant(text: str):
 
 
 def digest(record) -> str:
-    return (
-        "sha256:" + hashlib.sha256(_jcs.jcs_dumps(record).encode("utf-8")).hexdigest()
-    )
+    try:
+        encoded = _jcs.jcs_dumps(record)
+    except (ValueError, OverflowError) as e:
+        raise Reject("ingest", f"record digest canonicalization failed: {e}") from e
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 # --- one-field pairs -------------------------------------------------------
@@ -1308,7 +1342,8 @@ def self_test() -> None:
             expected_py
         )
 
-    # Malformed JSON, duplicate keys, NaN/Infinity, and payload binary64 overflow fail at ingest.
+    # Malformed JSON, duplicate keys, NaN/Infinity, payload binary64 overflow, and
+    # combined Stage 1 + Stage 2 defects (in either member order) fail at ingest.
     for bad_raw in [
         "{",
         '{"v":0,"v":0}',
@@ -1316,6 +1351,14 @@ def self_test() -> None:
         '{"v":Infinity}',
         '{"v":0,"payload":{"x":1e400}}',
         '{"v":0,"payload":{"x":9007199254740993}}',
+        '{"v":0,"payload":{"n":' + ("1" * 308) + "}}",
+        '{"v":0,"payload":{"n":' + ("1" * 309) + "}}",
+        '{"v":0,"payload":{"n":' + ("9" * 309) + "}}",
+        '{"v":0,"payload":{"n":' + ("1" * 310) + "}}",
+        '{"v":0,"payload":{"n":' + ("1" * 316) + "}}",
+        '{"v":0,"revision":1.5,"payload":{"n":1e400}}',
+        '{"v":0,"payload":{"n":1e400},"revision":1.5}',
+        '{"v":0,"revision":1.5,"payload":{"n":' + ("9" * 309) + "}}",
     ]:
         try:
             parse_wire(bad_raw, "record", "self-test-ingest")

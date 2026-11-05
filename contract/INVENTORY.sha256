@@ -117,6 +117,10 @@ f413ab2b8b97b94491df9096208b156255dfbbecb3d4ba8624b64161a3741af5  schemas/durabl
 b156532f1b2ec1c2e82f5636b3eae7ab1e738348ee268c91c6444aee3820c997  schemas/durable-record/v0/rejects/semantic/reject-inconsistent_cut--truncated-group.ndjson
 e58143582fbc41431285dca48adb2284ddcd3f764d26de1d25e448efd091efa2  schemas/durable-record/v0/rejects/semantic/reject-ingest--duplicate-member.ndjson
 a6fb08fda1acb957b6116bd37811a1fe41a01611c0631edbf786d6889a27a55c  schemas/durable-record/v0/rejects/semantic/reject-ingest--malformed-json.ndjson
+adae1fc276ddf322f69900b67629169193e43132106f4e6324555bfdfa4d5092  schemas/durable-record/v0/rejects/semantic/reject-ingest--payload-int-309-nines.ndjson
+4931204c8df0a74ac82e4b5c8ead193a6fbed436094b657eb3acb10ee80b854e  schemas/durable-record/v0/rejects/semantic/reject-ingest--payload-int-310-digits.ndjson
+79b88e392f475379e47c35da6795098df7dadfdbead5b670d432573cfb763980  schemas/durable-record/v0/rejects/semantic/reject-ingest--stage-order-payload-before-revision.ndjson
+7702224ac799977ec77b382d4a58fc65a6877ca6fe1312fdea15e7722b84dd29  schemas/durable-record/v0/rejects/semantic/reject-ingest--stage-order-revision-before-payload.ndjson
 d69af56ccce1cd2eaaca67685aadeb922c44368064913f63bb34b713c050357f  schemas/durable-record/v0/rejects/semantic/reject-mode_violation--revised-in-single-revision-stream.ndjson
 5a96a12c993e6e5fef1b5afefcbdbaff810bb4a07863d0b2d7f563b1830ec2c7  schemas/durable-record/v0/rejects/semantic/reject-numeric_domain--canceled-exponent-above-safe-max.ndjson
 4c868b9da6c93a311f6cc81f600edb7534dd8b92e20de88d079e7190e2df5f38  schemas/durable-record/v0/rejects/semantic/reject-numeric_domain--canceled-exponent-non-integral.ndjson
@@ -151,7 +155,7 @@ d3254e0885ac3c1e260065834bd1f36d0426b9de8ecd18405631e08992ea2359  schemas/durabl
 e469d5b5a38c696e0f80016bbbe2ce0ea41fade67586e02784cbe7030ef1c062  schemas/durable-record/v1/protection-receipt.schema.json
 08f27332899dc30bea3bb4939ed1b2a5bcc847f3c98486100c31606a3c9e2c2b  schemas/durable-record/v1/protection-request.schema.json
 fb714a7e9e2fbf6dfc3b69820feb5590c136ae700fd7dc850426006a8c3e9b59  schemas/durable-record/v1/record.schema.json
-71a23d2b1bfca50117efc71bdc2386426410e9e175e4f478208dc98a4b1de19e  schemas/durable-record/v1/rejects/README.md
+f2c649c2301bc8c0d1f00b405ba7e54382873a73ba87054111d610541a4c2a59  schemas/durable-record/v1/rejects/README.md
 c2a4aff9895c397622ba0da4220dd6f199d1db51157e5b2a17a6f7d859890be8  schemas/durable-record/v1/rejects/schema/reject-body-state-length-above-safe-max.json
 09813b37104a31852c43675031963945cf90a79f8135e75d4cb6080e2adf8187  schemas/durable-record/v1/rejects/schema/reject-export-cut-above-safe-max.json
 0be5f5a4dcc534c2b41c2484428a0560b7ea442bb4e6c96a45c3cb3c4ee83823  schemas/durable-record/v1/rejects/schema/reject-export-purpose.json
@@ -297,6 +301,10 @@ d52ea3d704bc6c3b8020d3190cd8136be6dbd28b7ace3119275a64d1fb1046c1  schemas/durabl
 e81c038629bfb9be84f50ec4b53d563b523eb0302c9aff0f62e3b31a6e28f0db  schemas/durable-record/v1/vectors/ingest-raw-duplicate-member.json
 956dd3ec5832cfc9b1847bb90fe38cb542e029cfa14e3ada1b6f335675b769c6  schemas/durable-record/v1/vectors/ingest-raw-malformed-json.json
 e9283b2546e0d43c84ae31a3e6dc68788dabf3edc869c17550308c8cf012b402  schemas/durable-record/v1/vectors/ingest-raw-nonfinite-payload.json
+d76e3c89aab34a81bc4b5abc999297be666c3cde81c7489b856da0d59d2937a4  schemas/durable-record/v1/vectors/ingest-raw-payload-int-309-nines.json
+076b042103db5b8ed086cce9e41221df6eabb65662b9ae18c27596eedd8e9abb  schemas/durable-record/v1/vectors/ingest-raw-payload-int-310-digits.json
+750633b5d723c9bb61b9a28ffbbf3dfa4322cc4d8203acb0ab74629bc5485f1d  schemas/durable-record/v1/vectors/ingest-raw-stage-order-payload-first.json
+ded03952f2ed7f8dc9d83ec8ad92f7d5d4bae5a2518bda9807be6c49fea17fcf  schemas/durable-record/v1/vectors/ingest-raw-stage-order-revision-first.json
 04b68eb2e912b66fc6a2abbe52556cf6db03cea88248f03ba966ec3d5f20bf79  schemas/durable-record/v1/vectors/inherited-protection.json
 80193965de9fc962d234fcb3ef957a0054c87dcd5f9d070a6b39d678e8683a7e  schemas/durable-record/v1/vectors/instant-hour-24.json
 c726b01a9c3701f4fd78f4a5779afe9e5855d141e9fd29377695c59f607c55db  schemas/durable-record/v1/vectors/instant-impossible-date.json
@@ -402,4 +410,4 @@ d7519d08153d82883fc29cb5c3574bbc8ce09f0e43af6064ef3acf3763a50b33  schemas/durabl
 d0a8c70dff220fc0ec824db341830d20d1a00cb6841c3a5fb88ab40fdb467359  scripts/rfc3339-instant.py
 b3121736b69544c354164041818f007727e32326bbc6d01180dd8a907e044807  scripts/rfc8785-canonicalize.py
 5c2524346233d52fcbb0d1d55828f9f5ea2b02c10502c1aada02de7220b999f3  scripts/test-durable-record-v1-controls.py
-ea25073b8e6a1614f4f12618bfe2167d59951fbde39d6488a31f409f3d309d33  scripts/validate-durable-record-fixtures.py
+8db9b56e0f4792d664fe50dafe80a4f10089c3262e2e92df104880ecf314971c  scripts/validate-durable-record-fixtures.py
