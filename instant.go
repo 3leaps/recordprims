@@ -2,6 +2,7 @@ package recordprims
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 )
 
@@ -16,16 +17,22 @@ func FormatInstant(t time.Time) string {
 	return t.UTC().Truncate(time.Microsecond).Format(instantLayout)
 }
 
-// ParseInstant parses an RFC 3339 instant. An instant with precision finer than
-// a microsecond is rejected unless the extra digits are all zero; it is never
-// rounded.
+// canonicalInstant is the only spelling a v1 instant may have.
+var canonicalInstant = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$`)
+
+// ParseInstant parses an instant in the canonical spelling
+// YYYY-MM-DDTHH:MM:SS.ffffffZ: UTC, a literal Z, and exactly six fractional
+// digits. Any other spelling (an offset, a lowercase t or z, fewer or more
+// fractional digits) is refused, never normalized, and so is a canonical-looking
+// instant that is not a valid date and time (February 30, hour 24, a leap
+// second, year 0000).
 func ParseInstant(s string) (time.Time, error) {
-	t, err := time.Parse(time.RFC3339Nano, s)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("%w: invalid instant", ErrSchema)
+	if !canonicalInstant.MatchString(s) {
+		return time.Time{}, fmt.Errorf("%w: instant spelling", ErrSchema)
 	}
-	if t.Nanosecond()%1000 != 0 {
-		return time.Time{}, fmt.Errorf("%w: instant precision finer than a microsecond", ErrSchema)
+	t, err := time.Parse(instantLayout, s)
+	if err != nil || t.Year() < 1 {
+		return time.Time{}, fmt.Errorf("%w: instant is not a valid date and time", ErrSchema)
 	}
-	return t.UTC(), nil
+	return t, nil
 }

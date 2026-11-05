@@ -178,10 +178,57 @@ func TestInstantCanonicalAndStrict(t *testing.T) {
 	if got := FormatInstant(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); got != "2026-01-01T00:00:00.000000Z" {
 		t.Fatalf("zero fraction = %s", got)
 	}
-	if _, err := ParseInstant("2026-10-25T13:00:00.1234567Z"); !errors.Is(err, ErrSchema) {
-		t.Fatalf("sub-microsecond input must be rejected, got %v", err)
+}
+
+// The canonical v1 spelling is the only one ParseInstant accepts. The table
+// agrees with the contract's reference checker (the vendored v1 interpreter);
+// rows taken from contract vectors name them.
+func TestParseInstantCanonicalSpelling(t *testing.T) {
+	cases := []struct {
+		in  string
+		ok  bool
+		why string
+	}{
+		{"2026-10-20T00:00:01.000000Z", true, "canonical"},
+		{"2026-10-25T13:00:00.123456Z", true, "six fractional digits"},
+		{"2024-02-29T12:00:00.000000Z", true, "leap day"},
+		{"0001-01-01T00:00:00.000000Z", true, "first year"},
+		{"9999-12-31T23:59:59.999999Z", true, "last instant"},
+		{"2026-10-20T00:00:03Z", false, "no fraction (vector instant-journal-at)"},
+		{"2026-10-20T00:00:01.25Z", false, "two fractional digits (vector produced-at-instant-spelling)"},
+		{"2026-10-20T00:00:03.0000000Z", false, "seven digits, trailing zero (vector instant-observed-at-seven-digits)"},
+		{"2026-10-25T13:00:00.1234567Z", false, "seven digits"},
+		{"2026-10-20T00:00:01.000000+00:00", false, "numeric offset (vector instant-stream-opened-offset)"},
+		{"2026-10-20t00:00:01.000000Z", false, "lowercase t"},
+		{"2026-10-20T00:00:01.000000z", false, "lowercase z"},
+		{"2026-10-20 00:00:01.000000Z", false, "space separator"},
+		{"2026-10-20T00:00:01,000000Z", false, "comma fraction"},
+		{" 2026-10-20T00:00:01.000000Z", false, "leading space"},
+		{"2026-10-20T00:00:01.000000Z\n", false, "trailing newline"},
+		{"2026-02-30T00:00:01.000000Z", false, "February 30 (vector instant-impossible-date)"},
+		{"2026-02-29T00:00:01.000000Z", false, "February 29 in a common year"},
+		{"2026-10-20T24:00:00.000000Z", false, "hour 24 (vector instant-hour-24)"},
+		{"2026-10-20T23:60:00.000000Z", false, "minute 60"},
+		{"2026-12-31T23:59:60.000000Z", false, "leap second"},
+		{"2026-13-01T00:00:00.000000Z", false, "month 13"},
+		{"2026-00-01T00:00:00.000000Z", false, "month 00"},
+		{"2026-10-00T00:00:00.000000Z", false, "day 00"},
+		{"0000-01-01T00:00:00.000000Z", false, "year 0000"},
+		{"\uff12026-10-20T00:00:01.000000Z", false, "non-ASCII digit"},
+		{"", false, "empty"},
 	}
-	if _, err := ParseInstant("2026-10-25T13:00:00.1234560Z"); err != nil {
-		t.Fatalf("exactly representable input must parse, got %v", err)
+	for _, c := range cases {
+		got, err := ParseInstant(c.in)
+		if c.ok {
+			if err != nil {
+				t.Errorf("%s: ParseInstant(%q) = %v, want accepted", c.why, c.in, err)
+			} else if FormatInstant(got) != c.in {
+				t.Errorf("%s: round trip %q -> %q", c.why, c.in, FormatInstant(got))
+			}
+			continue
+		}
+		if !errors.Is(err, ErrSchema) {
+			t.Errorf("%s: ParseInstant(%q) = %v, want ErrSchema", c.why, c.in, err)
+		}
 	}
 }
