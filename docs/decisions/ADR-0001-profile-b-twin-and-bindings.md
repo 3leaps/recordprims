@@ -31,8 +31,9 @@ fsync, and publication by rename. Any binding has to keep those guarantees.
    `scripts/deps-check.sh` refuses cgo. No C ABI or cgo binding is planned.
 
 2. **Bootstrap order.** Go is the operating tree while the repository is
-   `profile_status: bootstrapping`, and only it is graded today. The Rust tree
-   is a scaffold. The Rust implementation follows once the Go journal and
+   `profile_status: bootstrapping`; today it is exercised by `make check`, and
+   once the shared conformance suite exists only it is graded against it. The
+   Rust tree is a scaffold. The Rust implementation follows once the Go journal and
    content writes have landed. The repository flips to `profile_status: locked`
    only when both trees pass the shared conformance suite. The flip gets a
    release-notes entry.
@@ -45,8 +46,8 @@ fsync, and publication by rename. Any binding has to keep those guarantees.
    the other wrote, one error-set vector per published error) proves that the
    trees agree, not that they are right: output both trees share must still
    pass the vectors. Byte parity does not qualify crash, durability, locking or
-   ownership behavior. Both trees are held to the same declared platform and
-   failure-model cells.
+   ownership behavior. The platform and failure-model cells both trees are
+   held to will be declared alongside the conformance suite.
 
 4. **TypeScript comes from the Rust tree through napi-rs.** It ships as
    `@3leaps/recordprims` on npm, from an isolated `bindings/typescript`
@@ -61,9 +62,11 @@ fsync, and publication by rename. Any binding has to keep those guarantees.
    on PyPI, an `abi3` wheel built with maturin from an isolated
    `bindings/python` workspace.
 
-6. **Callbacks across a binding boundary.** The store hands frame readers to a
-   caller's callback, revokes them when the callback returns, and refuses
-   reentry from inside the callback. Before a binding's API is fixed, its
+6. **Callbacks across a binding boundary.** The contract has the store hand
+   frame readers to a caller's callback, revoke them when the callback
+   returns, and refuse reentry from inside the callback. The Go API for this
+   has not landed yet; only its error values (`ErrReaderRevoked`,
+   `ErrSinkReentered`) exist. Before a binding's API is fixed, its
    design must state where callbacks run and how reentry is detected there.
    A thread-local marker set on a Rust worker thread does not follow a callback
    dispatched onto the JavaScript main thread or into Python. Each binding is
@@ -75,7 +78,8 @@ fsync, and publication by rename. Any binding has to keep those guarantees.
    denying unsafe code, and that support lives in one module that calls
    `windows-sys`. That module carries the only allowance, has safe
    internal wrappers and stated handle and buffer ownership invariants, and is
-   security-reviewed. A check refuses any other allowance. The module is an
+   security-reviewed. A check added with that module will refuse any other
+   allowance. The module is an
    audit boundary, not permission for unsafe code in its callers. Unix support
    uses safe interfaces.
 
@@ -86,7 +90,10 @@ fsync, and publication by rename. Any binding has to keep those guarantees.
   `planned` until its implementation, conformance and differential receipts
   exist and its package is published.
 - Each tree pins the same canonprims release.
-- The shared conformance suite and the differential check are built before the
-  Rust implementation, so the second tree is graded from its first commit.
+- The shared conformance suite, the declared platform and failure-model
+  cells, and the differential check are built before the Rust implementation,
+  so the second tree is graded from its first commit.
+- The check that refuses any unsafe-code allowance outside the Windows module
+  lands with that module.
 - A capability only one tree can provide is a declared extension with an
   explicit `unsupported` vector, never a silent difference.
