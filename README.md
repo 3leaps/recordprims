@@ -24,7 +24,8 @@ active development; the Rust implementation is held to the same suite before
 | TypeScript | `@3leaps/recordprims` (npm), from the Rust implementation | planned |
 | Python | `recordprims` (PyPI), from the Rust implementation | planned |
 
-The Go module is cgo-free and needs Go 1.26 or newer.
+The Go module is cgo-free and needs Go 1.26 or newer. The language and binding
+plan is recorded in [ADR-0001](docs/decisions/ADR-0001-profile-b-twin-and-bindings.md).
 
 ## Status
 
