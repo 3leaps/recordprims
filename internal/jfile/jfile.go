@@ -61,7 +61,7 @@ func (a *Appender) fault(phase string) error {
 // designated marks the store's body-removal stream, the only stream on which
 // a partial write is rolled back.
 func (a *Appender) Append(name string, cut int64, line []byte, designated bool) error {
-	if len(line) == 0 || line[len(line)-1] != '\n' || bytes.IndexByte(line[:len(line)-1], '\n') >= 0 {
+	if len(line) < 2 || line[len(line)-1] != '\n' || bytes.IndexByte(line[:len(line)-1], '\n') >= 0 {
 		return fmt.Errorf("jfile: line must be one non-empty line ending in a newline")
 	}
 	f, err := a.Root.OpenAppend(name, a.Opts)
@@ -84,7 +84,12 @@ func (a *Appender) Append(name string, cut int64, line []byte, designated bool) 
 		if err := ops.sync(f); err != nil {
 			return fmt.Errorf("%w: fsync: %v", ErrIndeterminate, err)
 		}
-		return a.fault("journal.fsynced")
+		// The entry is durable here; a failure reported now still leaves the
+		// caller unable to tell, so it is indeterminate.
+		if err := a.fault("journal.fsynced"); err != nil {
+			return fmt.Errorf("%w: %v", ErrIndeterminate, err)
+		}
+		return nil
 	}
 	if n < 0 || n >= len(line) {
 		// A full-length write that still reported an error, or a count that

@@ -68,7 +68,7 @@ func TestAppendRefusesAStaleCut(t *testing.T) {
 
 func TestAppendRefusesMalformedLines(t *testing.T) {
 	a, path := newJournal(t, "")
-	for _, line := range []string{"", "{}", "{}\n{}\n", "\n{}\n"} {
+	for _, line := range []string{"", "\n", "{}", "{}\n{}\n", "\n{}\n"} {
 		if err := a.Append("journal.ndjson", 0, []byte(line), true); err == nil {
 			t.Errorf("line %q accepted", line)
 		}
@@ -93,5 +93,23 @@ func TestFailureAfterFullWriteIsIndeterminate(t *testing.T) {
 	}
 	if got := content(t, path); got != "{}\n" {
 		t.Fatalf("journal %q: a fully written line must not be truncated", got)
+	}
+}
+
+// A failure reported after the fsync is still indeterminate: the entry is
+// durable but the caller cannot tell.
+func TestFailureAfterFsyncIsIndeterminate(t *testing.T) {
+	a, path := newJournal(t, "")
+	a.Fault = func(p string) error {
+		if p == "journal.fsynced" {
+			return errors.New("injected")
+		}
+		return nil
+	}
+	if err := a.Append("journal.ndjson", 0, []byte("{}\n"), true); !errors.Is(err, ErrIndeterminate) {
+		t.Fatalf("%v, want ErrIndeterminate", err)
+	}
+	if got := content(t, path); got != "{}\n" {
+		t.Fatalf("journal %q", got)
 	}
 }
