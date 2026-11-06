@@ -136,13 +136,27 @@ func (a *Appender) appendOnce(name string, cut int64, line []byte, designated bo
 	if !designated {
 		return fmt.Errorf("%w: partial write (%d of %d bytes): %v", ErrIndeterminate, n, len(line), werr)
 	}
-	if err := ops.truncate(f, cut); err != nil {
+	// The truncate goes through a second handle opened without O_APPEND
+	// (Windows denies a truncate on an append handle). It must be the same
+	// file as the append handle, so a path swap cannot redirect it, and it
+	// writes nothing.
+	tf, err := a.root.OpenWrite(name, a.opts)
+	if err != nil {
+		return fmt.Errorf("%w: open for truncate: %v", ErrPoisoned, err)
+	}
+	defer tf.Close()
+	afi, aerr := f.Stat()
+	tfi, terr := tf.Stat()
+	if aerr != nil || terr != nil || !os.SameFile(afi, tfi) {
+		return fmt.Errorf("%w: truncate handle is not the journal", ErrPoisoned)
+	}
+	if err := ops.truncate(tf, cut); err != nil {
 		return fmt.Errorf("%w: truncate: %v", ErrPoisoned, err)
 	}
 	if err := a.fault("journal.abort_truncated"); err != nil {
 		return fmt.Errorf("%w: %v", ErrPoisoned, err)
 	}
-	if err := ops.sync(f); err != nil {
+	if err := ops.sync(tf); err != nil {
 		return fmt.Errorf("%w: fsync after truncate: %v", ErrPoisoned, err)
 	}
 	if err := a.fault("journal.abort_fsynced"); err != nil {
