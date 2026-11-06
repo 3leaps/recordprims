@@ -456,6 +456,54 @@
   "valid": false
  },
  {
+  "instance": "[[\"a,sb\",\"c\"],[\"a\",\"b,sc\"]]",
+  "name": "unique-key-prefixes",
+  "schema": {
+   "uniqueItems": true
+  },
+  "valid": true
+ },
+ {
+  "instance": "[{\"a=sb\":\"c\"},{\"a\":\"b=sc\"}]",
+  "name": "unique-key-prefixes",
+  "schema": {
+   "uniqueItems": true
+  },
+  "valid": true
+ },
+ {
+  "instance": "[{\"1:a\":1},{\"1\":{\"a\":1}}]",
+  "name": "unique-key-prefixes",
+  "schema": {
+   "uniqueItems": true
+  },
+  "valid": true
+ },
+ {
+  "instance": "[[\"ab\"],[\"a\",\"b\"]]",
+  "name": "unique-key-prefixes",
+  "schema": {
+   "uniqueItems": true
+  },
+  "valid": true
+ },
+ {
+  "instance": "[{\"a=s6:x\":\"c\"},{\"a\":\"x=s1:c\"}]",
+  "name": "unique-key-prefixes",
+  "schema": {
+   "uniqueItems": true
+  },
+  "valid": true
+ },
+ {
+  "instance": "[[\"x\",\"x\"],[\"x\",\"x\"]]",
+  "name": "unique-key-prefixes",
+  "schema": {
+   "uniqueItems": true
+  },
+  "valid": false
+ },
+ {
   "instance": "\"ab\"",
   "name": "length",
   "schema": {
