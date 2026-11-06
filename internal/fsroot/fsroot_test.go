@@ -103,6 +103,35 @@ func TestCreateExclusiveAndRead(t *testing.T) {
 	g.Close()
 }
 
+// OpenWrite opens an existing verified file without O_APPEND and never
+// creates one.
+func TestOpenWriteExistingOnly(t *testing.T) {
+	_, r := newRoot(t)
+	if _, err := r.OpenWrite("missing", testOpts); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("missing file: %v, want ErrNotExist", err)
+	}
+	if _, err := r.Lstat("missing"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("OpenWrite created the file: %v", err)
+	}
+	f, err := r.CreateExclusive("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write([]byte("hello"))
+	f.Close()
+	w, err := r.OpenWrite("a", testOpts)
+	if err != nil {
+		t.Fatalf("OpenWrite: %v", err)
+	}
+	defer w.Close()
+	if err := w.Truncate(2); err != nil {
+		t.Fatalf("truncate through OpenWrite: %v", err)
+	}
+	if fi, _ := r.Lstat("a"); fi.Size() != 2 {
+		t.Fatalf("size %d, want 2", fi.Size())
+	}
+}
+
 func TestRefusesInRootSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation needs privilege on Windows")

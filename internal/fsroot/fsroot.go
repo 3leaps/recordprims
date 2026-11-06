@@ -205,6 +205,17 @@ func (r *Root) CreateExclusive(name string) (*os.File, error) {
 
 // OpenAppend opens an existing store file for appending, verifying it.
 func (r *Root) OpenAppend(name string, opts Options) (*os.File, error) {
+	return r.openExistingWrite(name, os.O_WRONLY|os.O_APPEND, opts)
+}
+
+// OpenWrite opens an existing store file for writing without O_APPEND,
+// verifying it. It never creates the file. On Windows a truncate needs
+// write access that an append handle does not have.
+func (r *Root) OpenWrite(name string, opts Options) (*os.File, error) {
+	return r.openExistingWrite(name, os.O_WRONLY, opts)
+}
+
+func (r *Root) openExistingWrite(name string, flag int, opts Options) (*os.File, error) {
 	if err := validName(name); err != nil {
 		return nil, err
 	}
@@ -214,7 +225,7 @@ func (r *Root) OpenAppend(name string, opts Options) (*os.File, error) {
 	if _, err := r.checkFinal(name); err != nil {
 		return nil, err
 	}
-	f, err := r.r.OpenFile(name, os.O_WRONLY|os.O_APPEND|oNoFollow, 0)
+	f, err := r.r.OpenFile(name, flag|oNoFollow, 0)
 	if err != nil {
 		return nil, err
 	}
