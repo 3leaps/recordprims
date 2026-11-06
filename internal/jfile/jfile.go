@@ -16,6 +16,12 @@
 //   - The whole line written but the fsync failed: ErrIndeterminate. The
 //     entry may be durable, so it is never truncated.
 //
+// A poisoned or indeterminate designated-stream outcome latches: every later
+// Append to that journal on the same Appender returns ErrPoisoned without
+// touching the file, because neither a retry nor a re-read of the page cache
+// can tell whether the earlier bytes are durable. Only a new Appender, that
+// is a store reopen, clears it. A poisoned ordinary stream latches too.
+//
 // An in-memory cut offset is not recovery evidence after a restart; a crash
 // during an abort falls back to the reopen rule.
 package jfile
@@ -25,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/3leaps/recordprims/internal/fsroot"
 )
@@ -47,6 +54,9 @@ type Appender struct {
 	// Fault, when set, is called at each named phase; an error it returns
 	// fails the operation there. Production stores leave it nil.
 	Fault func(phase string) error
+
+	mu      sync.Mutex
+	latched map[string]error // journal name -> the outcome that latched it
 }
 
 func (a *Appender) fault(phase string) error {
@@ -61,6 +71,25 @@ func (a *Appender) fault(phase string) error {
 // designated marks the store's body-removal stream, the only stream on which
 // a partial write is rolled back.
 func (a *Appender) Append(name string, cut int64, line []byte, designated bool) error {
+	a.mu.Lock()
+	prior := a.latched[name]
+	a.mu.Unlock()
+	if prior != nil {
+		return fmt.Errorf("%w: latched by an earlier outcome (%v); reopen the store", ErrPoisoned, prior)
+	}
+	err := a.appendOnce(name, cut, line, designated)
+	if errors.Is(err, ErrPoisoned) || (designated && errors.Is(err, ErrIndeterminate)) {
+		a.mu.Lock()
+		if a.latched == nil {
+			a.latched = map[string]error{}
+		}
+		a.latched[name] = err
+		a.mu.Unlock()
+	}
+	return err
+}
+
+func (a *Appender) appendOnce(name string, cut int64, line []byte, designated bool) error {
 	if len(line) < 2 || line[len(line)-1] != '\n' || bytes.IndexByte(line[:len(line)-1], '\n') >= 0 {
 		return fmt.Errorf("jfile: line must be one non-empty line ending in a newline")
 	}
