@@ -3,8 +3,11 @@
 package jfile
 
 import (
+	"bytes"
 	"errors"
 	"os"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -57,7 +60,7 @@ func (o *injected) sync(f *os.File) error {
 	return f.Sync()
 }
 
-func with(t *testing.T, o *injected) {
+func with(t *testing.T, o fileOps) {
 	t.Helper()
 	prev := ops
 	ops = o
@@ -194,4 +197,55 @@ func TestLatchIsPerJournal(t *testing.T) {
 		t.Fatalf("the poisoned journal: %v, want latched ErrPoisoned", err)
 	}
 	_ = path
+}
+
+// swapOps writes part of the line, then replaces the journal path with a
+// different file before reporting the short write, so the abort's second
+// handle opens a file that is not the journal.
+type swapOps struct {
+	path      string
+	foreign   []byte
+	renameErr error
+}
+
+func (o *swapOps) write(f *os.File, p []byte) (int, error) {
+	n, _ := f.Write(p[:7])
+	if err := os.Rename(o.path, o.path+".moved"); err != nil {
+		o.renameErr = err
+		return n, err
+	}
+	if err := os.WriteFile(o.path, o.foreign, 0o600); err != nil {
+		return n, err
+	}
+	return n, errors.New("injected short write")
+}
+func (o *swapOps) truncate(f *os.File, size int64) error { return f.Truncate(size) }
+func (o *swapOps) sync(f *os.File) error                 { return f.Sync() }
+
+// A truncate handle that is not the journal (a path swapped mid-append) is
+// refused: the abort poisons and the foreign file is left untouched.
+func TestAbortRefusesASwappedJournal(t *testing.T) {
+	a, path := newJournal(t, prior)
+	foreign := bytes.Repeat([]byte("X"), 200)
+	sw := &swapOps{path: path, foreign: foreign}
+	with(t, sw)
+	err := a.Append("journal.ndjson", int64(len(prior)), line, true)
+	if sw.renameErr != nil {
+		// Windows refuses to rename a file another handle holds open, so this
+		// swap cannot happen there; everywhere else it must succeed.
+		if runtime.GOOS == "windows" {
+			t.Skipf("cannot swap an open journal on Windows: %v", sw.renameErr)
+		}
+		t.Fatalf("swap setup failed: %v", sw.renameErr)
+	}
+	if !errors.Is(err, ErrPoisoned) || !strings.Contains(err.Error(), "truncate handle is not the journal") {
+		t.Fatalf("%v, want ErrPoisoned for a swapped journal", err)
+	}
+	got, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !bytes.Equal(got, foreign) {
+		t.Fatalf("the foreign file was modified: %d bytes", len(got))
+	}
 }
