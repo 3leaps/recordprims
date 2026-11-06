@@ -97,7 +97,7 @@ func TestAbortMatrix(t *testing.T) {
 			o := c.ops
 			with(t, &o)
 			if c.fault != "" {
-				a.Fault = func(p string) error {
+				a.faultHook = func(p string) error {
 					if p == c.fault {
 						return errors.New("injected kill point")
 					}
@@ -111,10 +111,10 @@ func TestAbortMatrix(t *testing.T) {
 			if got := content(t, path); got != c.after {
 				t.Fatalf("journal %q, want %q", got, c.after)
 			}
-			// Poisoned, and indeterminate on the designated stream, latch: the
-			// next Append returns ErrPoisoned and leaves the file byte-identical,
-			// even with healthy file operations and the same cut.
-			latches := errors.Is(c.want, ErrPoisoned) || (c.designated && errors.Is(c.want, ErrIndeterminate))
+			// Poisoned and indeterminate outcomes latch on every stream: the next
+			// Append returns ErrPoisoned and leaves the file byte-identical, even
+			// with healthy file operations and the same cut.
+			latches := errors.Is(c.want, ErrPoisoned) || errors.Is(c.want, ErrIndeterminate)
 			before := content(t, path)
 			ops = realOps{}
 			err = a.Append("journal.ndjson", int64(len(prior)), line, c.designated)
@@ -165,9 +165,33 @@ func TestLatchClearsOnlyOnReopen(t *testing.T) {
 	if err := a.Append("journal.ndjson", int64(len(prior)+7), line, true); !errors.Is(err, ErrPoisoned) {
 		t.Fatalf("retry on the same Appender: %v, want latched ErrPoisoned", err)
 	}
-	fresh := &Appender{Root: a.Root, Opts: a.Opts}
+	fresh := New(a.root, a.opts)
 	if err := fresh.Append("journal.ndjson", int64(len(prior)+7), []byte("{}\n"), true); err != nil {
 		t.Fatalf("a new Appender is not latched: %v", err)
+	}
+	_ = path
+}
+
+// The latch is per journal: a poisoned journal does not block another journal
+// on the same Appender.
+func TestLatchIsPerJournal(t *testing.T) {
+	a, path := newJournal(t, prior)
+	other, err := a.root.CreateExclusive("other.ndjson")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.Close()
+	o := injected{shortWrite: 7, truncateErr: true}
+	with(t, &o)
+	if err := a.Append("journal.ndjson", int64(len(prior)), line, true); !errors.Is(err, ErrPoisoned) {
+		t.Fatalf("%v, want ErrPoisoned", err)
+	}
+	ops = realOps{}
+	if err := a.Append("other.ndjson", 0, line, false); err != nil {
+		t.Fatalf("another journal on the same Appender: %v, want success", err)
+	}
+	if err := a.Append("journal.ndjson", int64(len(prior)+7), line, true); !errors.Is(err, ErrPoisoned) {
+		t.Fatalf("the poisoned journal: %v, want latched ErrPoisoned", err)
 	}
 	_ = path
 }

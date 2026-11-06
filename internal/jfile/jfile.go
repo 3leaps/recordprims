@@ -16,11 +16,12 @@
 //   - The whole line written but the fsync failed: ErrIndeterminate. The
 //     entry may be durable, so it is never truncated.
 //
-// A poisoned or indeterminate designated-stream outcome latches: every later
+// A poisoned or indeterminate outcome latches, on every stream: each later
 // Append to that journal on the same Appender returns ErrPoisoned without
 // touching the file, because neither a retry nor a re-read of the page cache
 // can tell whether the earlier bytes are durable. Only a new Appender, that
-// is a store reopen, clears it. A poisoned ordinary stream latches too.
+// is a store reopen, clears it; a store must hold one Appender per open
+// handle. The latch is per journal: other journals are unaffected.
 //
 // An in-memory cut offset is not recovery evidence after a restart; a crash
 // during an abort falls back to the reopen rule.
@@ -47,23 +48,29 @@ var (
 )
 
 // Appender appends lines to journal files under one verified root. The caller
-// holds the store lock for the whole call.
+// holds the store lock for the whole call. Create it with New, once per open
+// store handle, so the latch persists across operations until reopen.
 type Appender struct {
-	Root *fsroot.Root
-	Opts fsroot.Options
-	// Fault, when set, is called at each named phase; an error it returns
-	// fails the operation there. Production stores leave it nil.
-	Fault func(phase string) error
+	root *fsroot.Root
+	opts fsroot.Options
+	// fault, when set by package tests, is called at each named phase; an
+	// error it returns fails the operation there.
+	faultHook func(phase string) error
 
 	mu      sync.Mutex
 	latched map[string]error // journal name -> the outcome that latched it
 }
 
+// New returns an Appender for journals under root.
+func New(root *fsroot.Root, opts fsroot.Options) *Appender {
+	return &Appender{root: root, opts: opts}
+}
+
 func (a *Appender) fault(phase string) error {
-	if a.Fault == nil {
+	if a.faultHook == nil {
 		return nil
 	}
-	return a.Fault(phase)
+	return a.faultHook(phase)
 }
 
 // Append writes line, which must be one complete JSON line ending in '\n', to
@@ -78,7 +85,7 @@ func (a *Appender) Append(name string, cut int64, line []byte, designated bool) 
 		return fmt.Errorf("%w: latched by an earlier outcome (%v); reopen the store", ErrPoisoned, prior)
 	}
 	err := a.appendOnce(name, cut, line, designated)
-	if errors.Is(err, ErrPoisoned) || (designated && errors.Is(err, ErrIndeterminate)) {
+	if errors.Is(err, ErrPoisoned) || errors.Is(err, ErrIndeterminate) {
 		a.mu.Lock()
 		if a.latched == nil {
 			a.latched = map[string]error{}
@@ -93,7 +100,7 @@ func (a *Appender) appendOnce(name string, cut int64, line []byte, designated bo
 	if len(line) < 2 || line[len(line)-1] != '\n' || bytes.IndexByte(line[:len(line)-1], '\n') >= 0 {
 		return fmt.Errorf("jfile: line must be one non-empty line ending in a newline")
 	}
-	f, err := a.Root.OpenAppend(name, a.Opts)
+	f, err := a.root.OpenAppend(name, a.opts)
 	if err != nil {
 		return err
 	}

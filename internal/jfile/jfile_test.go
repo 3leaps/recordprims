@@ -32,7 +32,7 @@ func newJournal(t *testing.T, initial string) (*Appender, string) {
 		t.Fatal(err)
 	}
 	f.Close()
-	return &Appender{Root: r, Opts: testOpts}, filepath.Join(dir, "journal.ndjson")
+	return New(r, testOpts), filepath.Join(dir, "journal.ndjson")
 }
 
 func content(t *testing.T, path string) string {
@@ -82,7 +82,7 @@ func TestAppendRefusesMalformedLines(t *testing.T) {
 // back: the entry may be durable.
 func TestFailureAfterFullWriteIsIndeterminate(t *testing.T) {
 	a, path := newJournal(t, "")
-	a.Fault = func(p string) error {
+	a.faultHook = func(p string) error {
 		if p == "journal.line_written" {
 			return errors.New("injected")
 		}
@@ -100,7 +100,7 @@ func TestFailureAfterFullWriteIsIndeterminate(t *testing.T) {
 // durable but the caller cannot tell.
 func TestFailureAfterFsyncIsIndeterminate(t *testing.T) {
 	a, path := newJournal(t, "")
-	a.Fault = func(p string) error {
+	a.faultHook = func(p string) error {
 		if p == "journal.fsynced" {
 			return errors.New("injected")
 		}
