@@ -3,6 +3,7 @@ package shape
 import (
 	"fmt"
 	"io/fs"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -12,12 +13,10 @@ import (
 // ReasonShape is the contract refusal code for a schema-invalid document.
 const ReasonShape = "shape"
 
-// Bounds on one validation. Exceeding them is a local limit, never a shape
-// refusal and never a pass.
-const (
-	maxSteps       = 1 << 20 // schema-node visits per document
-	maxUniqueItems = 4096    // array length for a uniqueItems pairwise check
-)
+// maxSteps bounds one validation: schema-node visits plus elements keyed for
+// uniqueItems. Exceeding it is a local limit, never a shape refusal and never
+// a pass. A variable so tests can lower it.
+var maxSteps = 1 << 20
 
 var docs = map[string]*doc{}
 
@@ -194,16 +193,24 @@ func (st *state) check(s *node, x *wire.Node) *failure {
 			}
 		}
 		if s.uniqueItems {
-			if len(x.Elems) > maxUniqueItems {
+			// One canonical key per element in a set: linear in the array, with
+			// the same equality as const and enum. Each element is charged to
+			// the work bound.
+			st.steps += len(x.Elems)
+			if st.steps > maxSteps {
 				st.limit = true
 				return nil
 			}
-			for i := 0; i < len(x.Elems); i++ {
-				for j := i + 1; j < len(x.Elems); j++ {
-					if equal(x.Elems[i], x.Elems[j]) {
-						return fail(s, "uniqueItems")
-					}
+			seen := make(map[string]struct{}, len(x.Elems))
+			var b strings.Builder
+			for _, e := range x.Elems {
+				b.Reset()
+				canonicalKey(&b, e)
+				k := b.String()
+				if _, dup := seen[k]; dup {
+					return fail(s, "uniqueItems")
 				}
+				seen[k] = struct{}{}
 			}
 		}
 	}
@@ -283,6 +290,56 @@ func hasType(x *wire.Node, typ string) bool {
 		return ok && r.isInt()
 	}
 	return false
+}
+
+// canonicalKey writes a key such that two values have equal keys exactly
+// when equal reports them equal: a kind tag, numbers by exact normalised
+// value, strings and arrays length-prefixed, object members sorted by name.
+func canonicalKey(b *strings.Builder, x *wire.Node) {
+	switch x.Kind {
+	case wire.Null:
+		b.WriteString("n")
+	case wire.Bool:
+		if x.Bool {
+			b.WriteString("t")
+		} else {
+			b.WriteString("f")
+		}
+	case wire.String:
+		fmt.Fprintf(b, "s%d:%s", len(x.Str), x.Str)
+	case wire.Number:
+		d, ok := parseDecimal(x.Token)
+		switch {
+		case !ok:
+			fmt.Fprintf(b, "x%d:%s", len(x.Token), x.Token)
+		case d.isZero():
+			b.WriteString("d0")
+		default:
+			sign := "+"
+			if d.neg {
+				sign = "-"
+			}
+			fmt.Fprintf(b, "d%s%s:%s", sign, d.digits, d.pointExp.String())
+		}
+	case wire.Array:
+		fmt.Fprintf(b, "a%d[", len(x.Elems))
+		for _, e := range x.Elems {
+			canonicalKey(b, e)
+			b.WriteString(",")
+		}
+		b.WriteString("]")
+	case wire.Object:
+		ms := make([]wire.Member, len(x.Fields))
+		copy(ms, x.Fields)
+		sort.Slice(ms, func(i, j int) bool { return ms[i].Name < ms[j].Name })
+		fmt.Fprintf(b, "o%d{", len(ms))
+		for _, m := range ms {
+			fmt.Fprintf(b, "%d:%s=", len(m.Name), m.Name)
+			canonicalKey(b, m.Value)
+			b.WriteString(",")
+		}
+		b.WriteString("}")
+	}
 }
 
 // equal is JSON Schema structural equality: type-sensitive (true is not 1),

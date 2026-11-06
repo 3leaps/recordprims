@@ -2,8 +2,10 @@ package shape
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/3leaps/recordprims/internal/wire"
 )
@@ -133,8 +135,10 @@ func TestDiagnosticCarriesNoContent(t *testing.T) {
 }
 
 func TestBoundsAreLocalLimits(t *testing.T) {
+	defer func(n int) { maxSteps = n }(maxSteps)
+	maxSteps = 1000
 	v := compileTest(t, `,"uniqueItems":true`)
-	big := "[" + strings.Repeat("0,", maxUniqueItems) + "0]"
+	big := "[" + strings.Repeat("0,", 2000) + "0]"
 	var r *wire.Reject
 	if err := v(big); !errors.As(err, &r) || r.Reason != wire.ReasonLocalLimit {
 		t.Fatalf("%v, want local_limit", err)
@@ -192,4 +196,28 @@ func TestDecimal(t *testing.T) {
 			t.Errorf("isInt(%s) = %v", tok, !isInt)
 		}
 	}
+}
+
+// uniqueItems is linear: 10,000 distinct pins validate quickly, and the
+// equality semantics are unchanged.
+func TestUniqueItemsIsLinear(t *testing.T) {
+	v := compileTest(t, `,"uniqueItems":true`)
+	var b strings.Builder
+	b.WriteString("[")
+	for i := 0; i < 10000; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"stream":"s","record_id":"r%d","revision":%d,"digest":"sha256:%064d"}`, i, i+1, i)
+	}
+	b.WriteString("]")
+	start := time.Now()
+	if err := v(b.String()); err != nil {
+		t.Fatalf("10,000 distinct pins: %v", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("10,000 pins took %v", d)
+	}
+	expect(t, v, []string{`[1,"1",true,[1],{"a":1}]`, `[0.5,1]`},
+		[]string{`[1,1.0]`, `[1e0,10e-1]`, `[{"a":1,"b":[1,2]},{"b":[1.0,2],"a":1}]`, `[[1,{"x":null}],[1.0,{"x":null}]]`, `[0,-0.0]`})
 }

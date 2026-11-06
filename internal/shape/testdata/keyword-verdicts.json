@@ -600,6 +600,222 @@
   "valid": false
  },
  {
+  "instance": "-1",
+  "name": "minimum-only",
+  "schema": {
+   "minimum": 0
+  },
+  "valid": false
+ },
+ {
+  "instance": "-2",
+  "name": "minimum-only",
+  "schema": {
+   "minimum": 0
+  },
+  "valid": false
+ },
+ {
+  "instance": "0",
+  "name": "minimum-only",
+  "schema": {
+   "minimum": 0
+  },
+  "valid": true
+ },
+ {
+  "instance": "-0.0",
+  "name": "minimum-only",
+  "schema": {
+   "minimum": 0
+  },
+  "valid": true
+ },
+ {
+  "instance": "1",
+  "name": "minimum-only",
+  "schema": {
+   "minimum": 0
+  },
+  "valid": true
+ },
+ {
+  "instance": "-1e-99",
+  "name": "minimum-only",
+  "schema": {
+   "minimum": 0
+  },
+  "valid": false
+ },
+ {
+  "instance": "\"x\"",
+  "name": "minimum-only",
+  "schema": {
+   "minimum": 0
+  },
+  "valid": true
+ },
+ {
+  "instance": "1",
+  "name": "maximum-only",
+  "schema": {
+   "maximum": 0
+  },
+  "valid": false
+ },
+ {
+  "instance": "2",
+  "name": "maximum-only",
+  "schema": {
+   "maximum": 0
+  },
+  "valid": false
+ },
+ {
+  "instance": "-1",
+  "name": "maximum-only",
+  "schema": {
+   "maximum": 0
+  },
+  "valid": true
+ },
+ {
+  "instance": "0",
+  "name": "maximum-only",
+  "schema": {
+   "maximum": 0
+  },
+  "valid": true
+ },
+ {
+  "instance": "1e-99",
+  "name": "maximum-only",
+  "schema": {
+   "maximum": 0
+  },
+  "valid": false
+ },
+ {
+  "instance": "-1e99",
+  "name": "maximum-only",
+  "schema": {
+   "maximum": 0
+  },
+  "valid": true
+ },
+ {
+  "instance": "-6",
+  "name": "minimum-negative",
+  "schema": {
+   "minimum": -5
+  },
+  "valid": false
+ },
+ {
+  "instance": "-5",
+  "name": "minimum-negative",
+  "schema": {
+   "minimum": -5
+  },
+  "valid": true
+ },
+ {
+  "instance": "-4.5",
+  "name": "minimum-negative",
+  "schema": {
+   "minimum": -5
+  },
+  "valid": true
+ },
+ {
+  "instance": "0",
+  "name": "minimum-negative",
+  "schema": {
+   "minimum": -5
+  },
+  "valid": true
+ },
+ {
+  "instance": "-1",
+  "name": "minimum-positive",
+  "schema": {
+   "minimum": 2
+  },
+  "valid": false
+ },
+ {
+  "instance": "-3",
+  "name": "minimum-positive",
+  "schema": {
+   "minimum": 2
+  },
+  "valid": false
+ },
+ {
+  "instance": "-1.5",
+  "name": "minimum-positive",
+  "schema": {
+   "minimum": 2
+  },
+  "valid": false
+ },
+ {
+  "instance": "2",
+  "name": "minimum-positive",
+  "schema": {
+   "minimum": 2
+  },
+  "valid": true
+ },
+ {
+  "instance": "3",
+  "name": "minimum-positive",
+  "schema": {
+   "minimum": 2
+  },
+  "valid": true
+ },
+ {
+  "instance": "1",
+  "name": "maximum-negative",
+  "schema": {
+   "maximum": -2
+  },
+  "valid": false
+ },
+ {
+  "instance": "3",
+  "name": "maximum-negative",
+  "schema": {
+   "maximum": -2
+  },
+  "valid": false
+ },
+ {
+  "instance": "1.5",
+  "name": "maximum-negative",
+  "schema": {
+   "maximum": -2
+  },
+  "valid": false
+ },
+ {
+  "instance": "-2",
+  "name": "maximum-negative",
+  "schema": {
+   "maximum": -2
+  },
+  "valid": true
+ },
+ {
+  "instance": "-3",
+  "name": "maximum-negative",
+  "schema": {
+   "maximum": -2
+  },
+  "valid": true
+ },
+ {
   "instance": "{\"a\":\"x\"}",
   "name": "object",
   "schema": {
