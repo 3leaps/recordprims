@@ -139,10 +139,46 @@ func TestStrictParserRefusals(t *testing.T) {
 		"short unicode escape":     `{"a":"\u12"}`,
 		"signed unicode escape":    `{"a":"\u+123"}`,
 		"empty input":              ``,
-		"too deep":                 strings.Repeat("[", maxDepth+2) + strings.Repeat("]", maxDepth+2),
 	} {
 		if _, err := ParseJSON([]byte(raw)); reason(err) != ReasonIngest {
 			t.Errorf("%s: %v, want ingest", name, err)
+		}
+	}
+}
+
+// Nesting past the local bound is a local limit, not malformed input.
+func TestDepthLimitIsLocal(t *testing.T) {
+	deep := strings.Repeat("[", maxDepth+2) + strings.Repeat("]", maxDepth+2)
+	if _, err := ParseJSON([]byte(deep)); reason(err) != ReasonLocalLimit {
+		t.Fatalf("%v, want local_limit", err)
+	}
+	ok := strings.Repeat("[", maxDepth) + strings.Repeat("]", maxDepth)
+	if _, err := ParseJSON([]byte(ok)); err != nil {
+		t.Fatalf("depth %d refused: %v", maxDepth, err)
+	}
+}
+
+// Every document kind runs both stages: a non-integral protocol integer is
+// numeric_domain, and a non-finite opaque number is ingest, even when both
+// defects are present.
+func TestEveryKindRunsBothStages(t *testing.T) {
+	for kind, intField := range map[string]string{
+		KindJournalEntry:      `"seq":1.5`,
+		KindRecord:            `"revision":1.5`,
+		KindProtectionRequest: `"restores":1.5`,
+		KindProtectionReceipt: `"seq":1.5`,
+		KindWriteReceipt:      `"seq":1.5`,
+		KindExportRequest:     `"current_cut":1.5`,
+		KindExportResult:      `"protection_cut":1.5`,
+		KindBodyStateRequest:  `"body":{"length":1.5}`,
+		KindStratumProfile:    `"runtime":{"idempotency_window_ms":1.5}`,
+	} {
+		if _, err := Ingest([]byte(`{`+intField+`}`), kind); reason(err) != ReasonNumericDomain {
+			t.Errorf("%s: %v, want numeric_domain", kind, err)
+		}
+		both := `{` + intField + `,"zz_opaque":1e400}`
+		if _, err := Ingest([]byte(both), kind); reason(err) != ReasonIngest {
+			t.Errorf("%s: %v, want ingest before numeric_domain", kind, err)
 		}
 	}
 }

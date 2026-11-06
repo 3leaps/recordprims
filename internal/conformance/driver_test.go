@@ -68,14 +68,17 @@ func stageResult(v *wire.Node) (string, error) {
 	}
 	if steps := v.Get("steps"); steps != nil {
 		for _, s := range steps.Elems {
-			for field, kind := range map[string]string{
-				"raw_request":    wire.KindProtectionRequest,
-				"raw_entry":      wire.KindJournalEntry,
-				"raw_body_state": wire.KindBodyStateRequest,
-				"raw_use":        wire.KindExportRequest,
+			// The reference interpreter's order (raw_request, raw_receipt,
+			// raw_entry, raw_body_state, raw_use), fixed so that the first
+			// refusal decides deterministically.
+			for _, fk := range [...]struct{ field, kind string }{
+				{"raw_request", wire.KindProtectionRequest},
+				{"raw_entry", wire.KindJournalEntry},
+				{"raw_body_state", wire.KindBodyStateRequest},
+				{"raw_use", wire.KindExportRequest},
 			} {
-				if raw := s.Get(field); raw != nil {
-					if r := first(raw.Str, kind); r != "" {
+				if raw := s.Get(fk.field); raw != nil {
+					if r := first(raw.Str, fk.kind); r != "" {
 						return r, nil
 					}
 				}
@@ -145,6 +148,12 @@ func TestV1Vectors(t *testing.T) {
 		}
 	}
 	if os.Getenv("RECORDPRIMS_UPDATE_LEDGER") == "1" {
+		// Update mode records progress only: it never lowers a pass.
+		for n, s := range ledger {
+			if s == statusPass && got[n] != statusPass {
+				t.Fatalf("%s: ledger says pass, run gives %q; update mode never lowers a pass", n, got[n])
+			}
+		}
 		writeLedger(t, ledgerPath, got)
 		return
 	}

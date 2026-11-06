@@ -26,7 +26,8 @@ const (
 // protocolInts maps each object kind to the members that are protocol
 // integers or nested protocol objects, across durable-record v0 and v1.
 // Members not named are opaque. It mirrors the contract's reference
-// interpreter; TestProtocolIntsCoverSchemas checks it against the schemas.
+// interpreter; TestProtocolIntsCoverSchemas (internal/conformance) checks it
+// against the vendored schemas.
 var protocolInts = map[string]map[string]string{
 	"pin":            {"revision": posInt},
 	"revision_pin":   {"revision": posInt},
@@ -186,4 +187,20 @@ func intPass(n *Node, kind string) error {
 		}
 	}
 	return nil
+}
+
+// MemberKind reports how stage 2 treats member name of an object of the given
+// kind: "int" for a protocol integer, "opaque", "list:<kind>", or a nested
+// object kind. The conformance suite checks it against the vendored schemas.
+func MemberKind(kind, name string) string {
+	if k, ok := protocolInts[kind][name]; ok {
+		return k
+	}
+	return posOpaque
+}
+
+// IsObjectKind reports whether kind names an object spec.
+func IsObjectKind(kind string) bool {
+	_, ok := protocolInts[kind]
+	return ok
 }

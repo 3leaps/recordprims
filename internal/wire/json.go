@@ -15,10 +15,14 @@ import (
 	"unicode/utf8"
 )
 
-// Reasons are the contract refusal codes this package returns.
+// Reasons this package returns. ReasonIngest and ReasonNumericDomain are
+// contract refusal codes. ReasonLocalLimit is recordprims' own: the document
+// may be valid, but it exceeds a resource bound this implementation imposes
+// (nesting depth), so it must not be reported as malformed.
 const (
 	ReasonIngest        = "ingest"
 	ReasonNumericDomain = "numeric_domain"
+	ReasonLocalLimit    = "local_limit"
 )
 
 // Reject is a refusal with a contract reason code.
@@ -79,7 +83,9 @@ func (n *Node) Get(name string) *Node {
 }
 
 // maxDepth bounds nesting so hostile input cannot exhaust the stack. The
-// contract's documents nest a handful of levels.
+// contract defines no bound and record payloads are arbitrary JSON, so a
+// deeper document is refused as ReasonLocalLimit, not as malformed. The
+// contract's own envelopes nest a handful of levels.
 const maxDepth = 512
 
 // ParseJSON is stage 1's syntax pass: strict RFC 8259 over UTF-8 text, with
@@ -121,7 +127,7 @@ func (p *parser) ws() {
 
 func (p *parser) value(depth int) (*Node, error) {
 	if depth > maxDepth {
-		return nil, ingestf("nesting deeper than %d", maxDepth)
+		return nil, &Reject{Reason: ReasonLocalLimit, Detail: fmt.Sprintf("nesting deeper than %d", maxDepth)}
 	}
 	if p.i >= len(p.s) {
 		return nil, ingestf("unexpected end of input")
