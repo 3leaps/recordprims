@@ -8,7 +8,7 @@ PYTHON ?= python3
 
 .DEFAULT_GOAL := help
 .PHONY: all help check precommit fmt fmt-check lint test test-go test-rust \
-        contract-check contract-oracle deps-check api-scan api-scan-test deny go-standalone surface-scan content-check \
+        contract-check contract-oracle conformance deps-check api-scan api-scan-test deny go-standalone surface-scan content-check \
         surface-tests prepush pr-final workflow-pin release-tooling-test checklist-targets doctor doctor-test \
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
         release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
@@ -21,7 +21,7 @@ all: check
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*## "} /^[a-z][a-z0-9-]*:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-check: fmt-check lint test contract-check contract-oracle deps-check api-scan api-scan-test content-check surface-tests workflow-pin release-tooling-test checklist-targets deny version-check license-check license-check-test ## Everything CI runs on one host
+check: fmt-check lint test contract-check contract-oracle conformance deps-check api-scan api-scan-test content-check surface-tests workflow-pin release-tooling-test checklist-targets deny version-check license-check license-check-test ## Everything CI runs on one host
 
 precommit: fmt-check lint ## Fast pre-commit gate
 
@@ -183,6 +183,10 @@ contract-check: ## Vendored contract matches contract/PIN.md
 contract-oracle: ## Vendored durable-record/v1 interpreter passes its own vectors
 	cd contract/crucible && $(PYTHON) -I -B scripts/test-durable-record-v1-controls.py > /dev/null
 	@echo "[ok] contract-oracle"
+
+conformance: ## The v1 vectors through the implemented stages; the ledger matches the run
+	CGO_ENABLED=0 go vet -tags recordprims_conformance ./internal/conformance
+	CGO_ENABLED=0 go test -count=1 -tags recordprims_conformance ./internal/conformance
 
 deps-check: ## Sibling-prim allow-list; cgo-free Go tree
 	PYTHON=$(PYTHON) scripts/deps-check.sh
