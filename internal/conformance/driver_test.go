@@ -33,6 +33,10 @@ import (
 const (
 	statusPass             = "pass"
 	statusPendingSemantics = "pending:semantics"
+	// statusPassPartial: the vector's refusal matches, but an earlier entry
+	// needed semantics not implemented yet, so an unported check could in
+	// principle have refused first. Tracked exactly, never counted as a pass.
+	statusPassPartial = "pass:partial"
 )
 
 func repoRoot(t *testing.T) string {
@@ -116,9 +120,18 @@ func reasonOf(err error) string {
 // semanticResult replays a vector whose raw inputs passed the wire stages, in
 // the reference interpreter's order (evaluate): the idempotency window, the
 // profile, the journal as a whole, each entry, then the steps. It returns
-// the first refusal, and whether the replay was complete: a vector that
-// observes a source journal, reaches a step other than a journal entry, or
-// ingests an entry whose semantics are not implemented yet is incomplete.
+// the first refusal, and whether the replay up to that point was complete: a
+// vector that observes a source journal, reaches a step other than a journal
+// entry, or has ingested an entry whose semantics are not implemented yet is
+// incomplete, and an incomplete replay never passes a vector, since an
+// unported check might have refused first (a matching refusal is recorded as
+// pass:partial).
+//
+// One known ordering difference: a journal given as JSON (not text) is typed
+// entry by entry before CheckJournal runs, while the reference checks each
+// entry's numeric domain inside check_journal, interleaved with the seq and
+// stream checks. A vector with an early seq_gap and a later numeric_domain
+// entry would differ; none exists.
 func semanticResult(v *wire.Node) (refusal string, journalSize int, complete bool) {
 	st, err := journal.New(v.Get("window_ms"))
 	if err != nil {
@@ -167,7 +180,7 @@ func semanticResult(v *wire.Node) (refusal string, journalSize int, complete boo
 	}
 	for _, e := range entries {
 		if err := st.Ingest(e); err != nil {
-			return reasonOf(err), 0, true
+			return reasonOf(err), 0, !st.Partial()
 		}
 	}
 	if steps := v.Get("steps"); steps != nil {
@@ -181,15 +194,15 @@ func semanticResult(v *wire.Node) (refusal string, journalSize int, complete boo
 				return "", 0, false
 			}
 			if err != nil {
-				return reasonOf(err), 0, true
+				return reasonOf(err), 0, !st.Partial()
 			}
 			if err := st.Ingest(e); err != nil {
-				return reasonOf(err), 0, true
+				return reasonOf(err), 0, !st.Partial()
 			}
 		}
 	}
 	if err := journal.CheckJournal(st.Journal()); err != nil {
-		return reasonOf(err), 0, true
+		return reasonOf(err), 0, !st.Partial()
 	}
 	return "", st.Len(), !st.Partial()
 }
@@ -255,10 +268,12 @@ func TestV1Vectors(t *testing.T) {
 			switch {
 			case strings.HasPrefix(sem, "error"):
 				t.Errorf("%s: %s", name, sem)
-			case sem != "" && sem == want:
-				got[name] = statusPass
+			case !complete && sem != "" && sem == want:
+				got[name] = statusPassPartial
 			case !complete:
 				got[name] = statusPendingSemantics
+			case sem != "" && sem == want:
+				got[name] = statusPass
 			case sem != "":
 				t.Errorf("%s: semantic stage refuses %q, vector expects %q", name, sem, orAccept(want))
 			case want != "":
@@ -309,13 +324,16 @@ func TestV1Vectors(t *testing.T) {
 			t.Errorf("%s: in the ledger but not among the vectors", n)
 		}
 	}
-	pass := 0
+	pass, partial := 0, 0
 	for _, s := range got {
-		if s == statusPass {
+		switch s {
+		case statusPass:
 			pass++
+		case statusPassPartial:
+			partial++
 		}
 	}
-	t.Logf("%d vectors: %d pass, %d pending", len(got), pass, len(got)-pass)
+	t.Logf("%d vectors: %d pass, %d pass:partial, %d pending", len(got), pass, partial, len(got)-pass-partial)
 }
 
 func hasRaw(v *wire.Node) bool {

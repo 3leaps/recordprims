@@ -145,6 +145,10 @@ func TestCheckJournal(t *testing.T) {
 		{"conflicted omitting the head", []string{opened(1), a1, conflict(3, "")}, ReasonConflictCurrent},
 		{"conflicted null current while a head exists", []string{opened(1), a1, conflict(3, "null")}, ReasonConflictCurrent},
 		{"conflicted naming a head that does not exist", []string{opened(1), conflict(2, head1)}, ReasonConflictCurrent},
+		{"conflicted naming the head digest at the next revision", []string{opened(1), a1, conflict(3, fmt.Sprintf(`{"revision":2,"digest":%q}`, digestOf(t, r1)))}, ReasonConflictCurrent},
+		{"conflicted naming the head digest at revision 0", []string{opened(1), a1, conflict(3, fmt.Sprintf(`{"revision":0,"digest":%q}`, digestOf(t, r1)))}, ReasonConflictCurrent},
+		{"conflicted naming the head exactly", []string{opened(1), a1, conflict(3, head1)}, ""},
+		{"group closing seq exactly the safe maximum", []string{opened(1), set(set(a1, "group", "2"), "group_size", "9007199254740990")}, ReasonInconsistentCut},
 		{"conflicted with no head and none named", []string{opened(1), conflict(2, "")}, ""},
 		{"group closing seq above the safe maximum", []string{opened(1), set(set(a1, "group", "2"), "group_size", "9007199254740991")}, wire.ReasonNumericDomain},
 	} {
