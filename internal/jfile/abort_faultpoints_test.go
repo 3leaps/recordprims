@@ -5,20 +5,28 @@ package jfile
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
+
+// writeErr is how a real short write reports errno: wrapped in a PathError.
+func writeErr(errno error) error {
+	return &os.PathError{Op: "write", Path: "journal.ndjson", Err: errno}
+}
 
 // injected is a fileOps that fails the chosen operation and passes the rest
 // to the real calls. A short write really writes its first bytes.
 type injected struct {
-	shortWrite   int  // >= 0: write only this many bytes, then fail
-	shortNoErr   bool // with shortWrite: report the short count with a nil error
-	noopTrunc    bool // truncate reports success without truncating
-	fullWriteErr bool // write everything, then report an error
-	badCount     bool // report more bytes than requested
+	shortWrite   int   // >= 0: write only this many bytes, then fail
+	shortNoErr   bool  // with shortWrite: report the short count with a nil error
+	shortErr     error // with shortWrite: the error reported; nil means the device is full
+	noopTrunc    bool  // truncate reports success without truncating
+	fullWriteErr bool  // write everything, then report an error
+	badCount     bool  // report more bytes than requested
 	truncateErr  bool
 	syncErr      int // fail the n-th sync (1-based); 0 never
 	syncs        int
@@ -37,7 +45,10 @@ func (o *injected) write(f *os.File, p []byte) (int, error) {
 		if o.shortNoErr {
 			return n, nil
 		}
-		return n, errors.New("injected short write")
+		if o.shortErr != nil {
+			return n, o.shortErr
+		}
+		return n, writeErr(spaceErrnos[0])
 	}
 	return f.Write(p)
 }
@@ -94,6 +105,11 @@ func TestAbortMatrix(t *testing.T) {
 		{name: "kill point after abort fsync: poisoned", ops: injected{shortWrite: 7}, designated: true, want: ErrPoisoned, after: prior, fault: "journal.abort_fsynced"},
 		{name: "truncate reports success but the file is not at the cut: poisoned", ops: injected{shortWrite: 7, noopTrunc: true}, designated: true, want: ErrPoisoned, after: prior + string(line[:7])},
 		{name: "short count with a nil error, designated: aborted", ops: injected{shortWrite: 7, shortNoErr: true}, designated: true, want: ErrAborted, after: prior},
+		{name: "short write reporting io.ErrShortWrite, designated: aborted", ops: injected{shortWrite: 7, shortErr: io.ErrShortWrite}, designated: true, want: ErrAborted, after: prior},
+		{name: "short write with an I/O error: never truncated", ops: injected{shortWrite: 7, shortErr: writeErr(syscall.EIO)}, designated: true, want: ErrIndeterminate, after: prior + string(line[:7])},
+		{name: "zero-byte write with an I/O error: never truncated", ops: injected{shortWrite: 0, shortErr: writeErr(syscall.EIO)}, designated: true, want: ErrIndeterminate, after: prior},
+		{name: "short write with an interrupted call: never truncated", ops: injected{shortWrite: 7, shortErr: writeErr(syscall.EINTR)}, designated: true, want: ErrIndeterminate, after: prior + string(line[:7])},
+		{name: "short write with an unclassified error: never truncated", ops: injected{shortWrite: 7, shortErr: errors.New("unknown failure")}, designated: true, want: ErrIndeterminate, after: prior + string(line[:7])},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			a, path := newJournal(t, prior)
@@ -217,7 +233,7 @@ func (o *swapOps) write(f *os.File, p []byte) (int, error) {
 	if err := os.WriteFile(o.path, o.foreign, 0o600); err != nil {
 		return n, err
 	}
-	return n, errors.New("injected short write")
+	return n, writeErr(spaceErrnos[0])
 }
 func (o *swapOps) truncate(f *os.File, size int64) error { return f.Truncate(size) }
 func (o *swapOps) sync(f *os.File) error                 { return f.Sync() }
@@ -247,5 +263,23 @@ func TestAbortRefusesASwappedJournal(t *testing.T) {
 	}
 	if !bytes.Equal(got, foreign) {
 		t.Fatalf("the foreign file was modified: %d bytes", len(got))
+	}
+}
+
+// Every out-of-space or out-of-quota errno the platform reports is a proven
+// partial write: the designated stream is rolled back to the cut.
+func TestAbortOnEverySpaceErrno(t *testing.T) {
+	for _, errno := range spaceErrnos {
+		t.Run(errno.Error(), func(t *testing.T) {
+			a, path := newJournal(t, prior)
+			o := injected{shortWrite: 7, shortErr: writeErr(errno)}
+			with(t, &o)
+			if err := a.Append("journal.ndjson", int64(len(prior)), line, true); !errors.Is(err, ErrAborted) {
+				t.Fatalf("%v, want ErrAborted", err)
+			}
+			if got := content(t, path); got != prior {
+				t.Fatalf("journal %q, want %q", got, prior)
+			}
+		})
 	}
 }

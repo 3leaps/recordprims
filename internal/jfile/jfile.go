@@ -6,13 +6,17 @@
 // body-removal stream for the whole store:
 //
 //   - The file is not at the verified cut: ErrCutMismatch, nothing written.
-//   - A write that provably did not complete the line (short or zero-byte):
-//     on the designated stream, the writer still holds the lock and knows the
+//   - A write that provably did not complete the line (short or zero-byte)
+//     and failed for lack of space or quota, or reported a short count with
+//     no error: on the designated stream, the writer still holds the lock and knows the
 //     cut, so it truncates back to it and fsyncs. If that succeeds the result
 //     is ErrAborted, determinate: nothing was appended. If the truncate or its
 //     fsync fails, ErrPoisoned. On an ordinary stream there is no abort; the
 //     result is ErrIndeterminate and the damaged tail is left for the stream's
 //     own recovery.
+//   - A short write with any other error (an I/O error, an interrupted or
+//     unknown failure): ErrIndeterminate, never truncated, because the device
+//     state behind the reported count is unknown.
 //   - The whole line written but the fsync failed: ErrIndeterminate. The
 //     entry may be durable, so it is never truncated.
 //
@@ -31,6 +35,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -131,6 +136,12 @@ func (a *Appender) appendOnce(name string, cut int64, line []byte, designated bo
 		// A full-length write that still reported an error, or a count that
 		// cannot be trusted: not a proven partial write, so never truncated.
 		return fmt.Errorf("%w: write reported %d of %d bytes: %v", ErrIndeterminate, n, len(line), werr)
+	}
+	// A short count is proof of an incomplete line only when the failure is
+	// the device or quota refusing more bytes, or no failure at all; any
+	// other error leaves the media state unknown.
+	if werr != nil && !errors.Is(werr, io.ErrShortWrite) && !outOfSpace(werr) {
+		return fmt.Errorf("%w: write failed after %d of %d bytes: %v", ErrIndeterminate, n, len(line), werr)
 	}
 	// A write that provably did not complete the line.
 	if !designated {
