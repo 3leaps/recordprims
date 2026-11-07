@@ -2,8 +2,9 @@ package recordprims
 
 import (
 	"fmt"
-	"regexp"
 	"time"
+
+	"github.com/3leaps/recordprims/internal/journal"
 )
 
 // instantLayout is the canonical emitted spelling for every instant: UTC, a
@@ -17,9 +18,6 @@ func FormatInstant(t time.Time) string {
 	return t.UTC().Truncate(time.Microsecond).Format(instantLayout)
 }
 
-// canonicalInstant is the only spelling a v1 instant may have.
-var canonicalInstant = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$`)
-
 // ParseInstant parses an instant in the canonical spelling
 // YYYY-MM-DDTHH:MM:SS.ffffffZ: UTC, a literal Z, and exactly six fractional
 // digits. Any other spelling (an offset, a lowercase t or z, fewer or more
@@ -27,11 +25,11 @@ var canonicalInstant = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:
 // instant that is not a valid date and time (February 30, hour 24, a leap
 // second, year 0000).
 func ParseInstant(s string) (time.Time, error) {
-	if !canonicalInstant.MatchString(s) {
+	if !journal.CanonicalSpelling(s) {
 		return time.Time{}, fmt.Errorf("%w: instant spelling", ErrSchema)
 	}
-	t, err := time.Parse(instantLayout, s)
-	if err != nil || t.Year() < 1 {
+	t, ok := journal.ParseInstant(s)
+	if !ok {
 		return time.Time{}, fmt.Errorf("%w: instant is not a valid date and time", ErrSchema)
 	}
 	return t, nil
