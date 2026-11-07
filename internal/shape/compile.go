@@ -73,8 +73,11 @@ var (
 	}
 	metadataKeywords = map[string]bool{
 		"$schema": true, "$id": true, "$defs": true, "title": true, "description": true,
-		"format": true, "$comment": true,
+		"format": true,
 	}
+	// refSiblings are the only keywords admitted beside $ref; the root-only
+	// $schema, $id and $defs are admitted there too, at the root.
+	refSiblings   = map[string]bool{"title": true, "description": true}
 	admittedTypes = map[string]bool{
 		"object": true, "array": true, "string": true, "integer": true, "boolean": true, "null": true,
 	}
@@ -181,7 +184,7 @@ func (c *compiler) compile(s *wire.Node, path string, isRoot bool) *node {
 		case assertionKeywords[k]:
 		case metadataKeywords[k]:
 			switch k {
-			case "$schema", "$defs":
+			case "$schema", "$id", "$defs":
 				if !isRoot {
 					c.fail(path, "%s is admitted only at the document root", k)
 				}
@@ -326,14 +329,19 @@ func (c *compiler) compile(s *wire.Node, path string, isRoot bool) *node {
 		}
 	}
 	// Draft 2020-12 applies keywords beside a $ref; the reference validator
-	// (draft 7 semantics) ignores them. The pinned schemas have none, and a
-	// pin that adds one must be decided deliberately, so admission refuses it.
+	// (draft 7 semantics) ignores them. The contract admits only annotations
+	// beside a $ref (and the root-only keywords at the root): constraints
+	// belong on the $defs target or inside allOf.
 	if nd.ref != "" {
 		for _, m := range s.Fields {
-			if m.Name != "$ref" && assertionKeywords[m.Name] {
-				c.fail(path, "$ref with sibling %q: draft 2020-12 and the reference validator disagree", m.Name)
-				break
+			if m.Name == "$ref" || refSiblings[m.Name] {
+				continue
 			}
+			if isRoot && (m.Name == "$schema" || m.Name == "$id" || m.Name == "$defs") {
+				continue
+			}
+			c.fail(path, "$ref with sibling %q: only title and description may accompany a $ref", m.Name)
+			break
 		}
 	}
 	return nd

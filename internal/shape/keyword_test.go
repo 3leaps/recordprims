@@ -156,6 +156,12 @@ func TestAdmissionRefusals(t *testing.T) {
 		"non-local ref":                 `,"$ref":"https://example.com/s.json"`,
 		"unresolved ref":                `,"$ref":"#/$defs/missing"`,
 		"ref with assertion sibling":    `,"$ref":"#/$defs/a","type":"object","$defs":{"a":{}}`,
+		"ref with format sibling":       `,"properties":{"x":{"$ref":"#/$defs/a","format":"date-time"}},"$defs":{"a":{}}`,
+		"ref with maxLength sibling":    `,"properties":{"x":{"$ref":"#/$defs/a","maxLength":10}},"$defs":{"a":{}}`,
+		"ref with $comment sibling":     `,"properties":{"x":{"$ref":"#/$defs/a","$comment":"c"}},"$defs":{"a":{}}`,
+		"$comment":                      `,"$comment":"c"`,
+		"$id below the root":            `,"properties":{"a":{"$id":"x"}}`,
+		"$schema below the root":        `,"properties":{"a":{"$schema":"` + draft202012 + `"}}`,
 		"ref-only cycle":                `,"$ref":"#/$defs/a","$defs":{"a":{"$ref":"#/$defs/b"},"b":{"allOf":[{"$ref":"#/$defs/a"}]}}`,
 		"boolean schema":                `,"not":true`,
 		"object additionalProperties":   `,"additionalProperties":{"type":"string"}`,
@@ -168,6 +174,15 @@ func TestAdmissionRefusals(t *testing.T) {
 		raw := `{"$schema":"` + draft202012 + `"` + body + `}`
 		if _, err := compileDoc("test.schema.json", []byte(raw)); err == nil {
 			t.Errorf("%s: admitted", name)
+		}
+	}
+	for name, body := range map[string]string{
+		"ref with title and description": `,"properties":{"x":{"$ref":"#/$defs/a","title":"t","description":"d"}},"$defs":{"a":{}}`,
+		"root ref with $id and $defs":    `,"$id":"x","$ref":"#/$defs/a","$defs":{"a":{}}`,
+	} {
+		raw := `{"$schema":"` + draft202012 + `"` + body + `}`
+		if _, err := compileDoc("test.schema.json", []byte(raw)); err != nil {
+			t.Errorf("%s: refused: %v", name, err)
 		}
 	}
 	if _, err := compileDoc("t", []byte(`{"$schema":"http://json-schema.org/draft-07/schema#"}`)); err == nil {
