@@ -24,14 +24,16 @@ import re
 import sys
 from datetime import datetime, timedelta, timezone
 
-# Extended RFC 3339 date-time only. Seconds are required. Numeric
-# offsets must include a colon. Fraction uses a period, not a comma.
+# Extended RFC 3339 date-time only (ASCII digits 0-9 only). Seconds are
+# required. Numeric offsets must include a colon. Fraction uses a period,
+# not a comma.
 _RFC3339 = re.compile(
-    r"^(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})"
+    r"^(?P<year>[0-9]{4})-(?P<month>[0-9]{2})-(?P<day>[0-9]{2})"
     r"[Tt]"
-    r"(?P<hour>\d{2}):(?P<minute>\d{2}):(?P<second>\d{2})"
-    r"(?P<frac>\.\d+)?"
-    r"(?:(?P<zulu>[Zz])|(?P<sign>[+-])(?P<off_h>\d{2}):(?P<off_m>\d{2}))$"
+    r"(?P<hour>[0-9]{2}):(?P<minute>[0-9]{2}):(?P<second>[0-9]{2})"
+    r"(?P<frac>\.[0-9]+)?"
+    r"(?:(?P<zulu>[Zz])|(?P<sign>[+-])(?P<off_h>[0-9]{2}):(?P<off_m>[0-9]{2}))$",
+    re.ASCII,
 )
 
 
@@ -48,7 +50,7 @@ def parse_rfc3339(text: str) -> datetime:
     hour = int(match.group("hour"))
     minute = int(match.group("minute"))
     second = int(match.group("second"))
-    if hour > 23 or minute > 59:
+    if not (1 <= year <= 9999) or hour > 23 or minute > 59:
         raise ValueError(f"unparseable RFC3339 timestamp: {text!r}")
     if second == 60:
         raise ValueError(f"leap second is not admitted: {text!r}")
@@ -77,9 +79,9 @@ def parse_rfc3339(text: str) -> datetime:
         parsed = datetime(
             year, month, day, hour, minute, second, microsecond, tzinfo=tzinfo
         )
-    except ValueError as exc:
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError) as exc:
         raise ValueError(f"unparseable RFC3339 timestamp: {text!r}") from exc
-    return parsed.astimezone(timezone.utc)
 
 
 def epoch_seconds(text: str) -> int:
@@ -128,10 +130,20 @@ def self_test() -> None:
     expect_reject("hour-24", "2026-08-15T24:00:00Z")
     expect_reject("leap-second-utc", "2016-12-31T23:59:60Z")
     expect_reject("leap-second-offset", "2016-12-31T23:59:60+00:00")
+    expect_reject("year-0000", "0000-01-01T00:00:00Z")
+    expect_reject("year-0001-utc-underflow", "0001-01-01T00:00:00+01:00")
+    expect_reject("year-9999-utc-overflow", "9999-12-31T23:59:59-01:00")
+    expect_reject("non-ascii-year", "\uff12\uff10\uff12\uff16-08-15T17:00:00Z")
+    expect_reject("non-ascii-hour", "2026-08-15T\uff11\uff17:00:00Z")
+    expect_reject("non-ascii-fraction", "2026-08-15T17:00:00.\uff11\uff12\uff13Z")
+    expect_reject("non-ascii-offset", "2026-08-15T17:00:00+\uff10\uff10:00")
 
     expect_accept("zulu", "2026-08-15T17:00:00Z")
+    expect_accept("year-0001-min", "0001-01-01T00:00:00Z")
+    expect_accept("year-9999-max", "9999-12-31T23:59:59.999999Z")
     expect_accept("lowercase", "2026-08-15t17:00:00z")
     expect_accept("numeric-offset", "2026-08-15T17:00:00+00:00")
+    expect_accept("unknown-local-offset-minus-zero", "2026-08-15T17:00:00-00:00")
     expect_accept("negative-offset", "2026-08-15T13:00:00-04:00")
     expect_accept("fractional-seconds", "2026-08-15T17:00:00.123Z")
 

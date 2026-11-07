@@ -7,9 +7,16 @@ Schemas: [`schemas/durable-record/v1`](../../schemas/durable-record/v1/).
 
 This family adds `tombstoned` and `untombstoned` journal entries. Adding entry
 types is a breaking change under the [v0 standard](durable-record-contract.md),
-so this is v1. The v0 schemas and semantics remain unchanged. Repository release
-numbers and contract versions are independent; an experimental v1 contract does
-not imply a stable implementation.
+so this is v1. `contract: durable-record/v0` is deprecated (`"status": "deprecated"`,
+`"superseded_by": "contract: durable-record/v1"` in
+[`schemas/durable-record/v0/contract.json`](../../schemas/durable-record/v0/contract.json))
+for new stream production; new durable-record producers MUST target
+`contract: durable-record/v1`. The v0 schemas, fixtures, and validator checks
+remain in the repository because v1 stream continuations (`continues`,
+`imported_from`) and multi-version store readers still verify historical v0
+source streams and ancestor journals. Repository release numbers and contract
+versions are independent; an experimental v1 contract does not imply a stable
+implementation.
 
 The record's `v` denotes its envelope version, not the contract-family
 version. A v1 journal carries **record envelope `v: 1`**: the v0 envelope with
@@ -98,7 +105,13 @@ wire ceiling at API, import and journal boundaries before emitting, hashing or
 incrementing; counter or atomic-group exhaustion (`seq`, `revision`,
 `incarnation`, `group + group_size - 1`) refuses without wraparound.
 
-Evaluation follows the four-stage order: strict JSON ingestion (`ingest`) ->
+Evaluation follows the four-stage order: strict JSON ingestion (`ingest`,
+including NDJSON line framing where every serialized entry line of byte length
+`L` including its terminating LF `0x0A` MUST end with a single `0x0A` without
+CR `0x0D`; any partial line write `0 <= k < L` — including `k = L - 1` missing
+only the trailing `0x0A` — or any blank line refuses as `ingest`; forbidding
+`0x0D` across all `v0` and `v1` NDJSON inputs is an explicit framing tightening
+in this revision) ->
 exact protocol-integer raw-token preflight (`numeric_domain`, bounded without
 expanding huge exponents; accepting `12`, `12.0`, `1.2e1`, `0.0`, `-0.0` where
 `minimum` permits; rejecting fractional tails such as `12.0000000000000001`,
@@ -106,9 +119,21 @@ underflow `1e-400`, and magnitudes above `9007199254740991`; passing non-numeric
 types and safe negative integers through to field `type`/`minimum` checks) ->
 schema validation (`shape`) -> logical semantics. Direct typed APIs enforce the
 same permitted range, while raw-byte checks certify wire tokens before binary64
-conversion. An observed source or ancestor journal failing any of these four
-stages supplies no restriction state and refuses the relying continuation as
-`continuation`.
+conversion. An observed v0 or v1 source or ancestor journal failing any of these
+four stages (including v0 Stage 4 `timestamp` validation on every entry `at` in
+the full observed journal, whether at or beyond `cut_seq`) supplies no
+restriction state and refuses the relying continuation as `continuation`.
+
+Because the pinned schema validator (`goneat`) does not implement arbitrary
+JSON Schema Draft 2020-12 vocabularies or sibling assertions alongside `$ref`,
+`durable-record` schemas are restricted to a finite Draft 2020-12 keyword subset
+enforced at schema qualification: `$ref` targets only local `#/$defs/<name>`
+definitions and carries no sibling assertion keywords (`pattern`, `minLength`,
+`maxLength`, `format`, `enum`, `const`, `minimum`, `maximum`, etc. alongside
+`$ref` are forbidden; constraints belong on the `$defs` target or inside
+`allOf`), and `format` is restricted to `"date-time"`. This subset admission
+qualifies schema structure; exact `format: "date-time"` and Stage 4 timestamp
+staging are pinned by the per-position stage trace table below.
 
 ## Production time, instants and ordering
 
@@ -124,15 +149,47 @@ acceptance. Store acceptance time is the journal entry's `at`, outside the
 record digest.
 
 Every instant on the v1 wire is spelled `YYYY-MM-DDTHH:MM:SS.ffffffZ`: UTC,
-`Z`, exactly six fractional digits, and a valid RFC 3339 date and time (no
-February 30, no hour 24, no leap second). This covers journal `at`, `observed_at`,
-`produced_at.instant`, reconciliation `attempted_at` and coverage endpoints.
-Emitters MUST use this spelling. Readers MUST refuse any other spelling, and any
-canonical-looking instant that is not a valid date and time, as
-`instant_spelling` and MUST NOT normalize it: a digest covers the bytes the
-producer wrote, so a store that rewrote `observed_at` or `produced_at.instant`
-would invalidate the caller's digest. An instant that is not exactly
-representable at microseconds is refused, never rounded.
+uppercase `T` and `Z`, ASCII digits `0`–`9` (`0x30`–`0x39`) only, four-digit
+year `0001` through `9999` inclusive (`0000` is refused), month `01` through
+`12`, proleptic Gregorian day-of-month valid for `(year, month)` (February `29`
+valid only when `year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)`), hour
+`00` through `23`, minute `00` through `59`, second `00` through `59` (`:60`
+leap seconds are unconditionally refused), period `.`, and exactly six
+fractional digits (`000000` through `999999`). This covers journal `at`,
+`observed_at` (in both `protection-request.schema.json` and embedded
+`journal-entry.schema.json`), `produced_at.instant` (in both
+`record.schema.json` and embedded `journal-entry.schema.json`), reconciliation
+`attempted_at`, and reconciliation coverage endpoints (`window_covers_from`,
+`window_covers_until`). Emitters MUST use this spelling, and readers MUST NOT
+normalize non-canonical spellings: a digest covers the bytes the producer wrote,
+so a store that rewrote `observed_at` or `produced_at.instant` would invalidate
+the caller's digest. An instant that is not exactly representable at
+microseconds is refused, never rounded. In protection request evaluation,
+`observed_at` is checked at Stage 4 before operation-level target, hold, or
+sequence checks.
+
+Under the repository's qualified validator profile (`goneat` `v0.6.5`–`v0.6.7`,
+Draft 2020-12 with `$defs/instant` carrying both
+`pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"`
+and `format: "date-time"`, verified on every run by
+`scripts/validate-durable-record-fixtures.py` and
+`scripts/test-durable-record-v1-controls.py`, followed by the Stage 4 semantic
+evaluator), each timestamp position has a deterministic refusal stage:
+
+| Timestamp position | Non-string, wrong length/fraction width, lowercase `t`/`z`, numeric offset (`+00:00`/`-00:00`), or non-ASCII digits (`２０２６-...`) | Impossible calendar date (`2026-02-30T12:00:00.000000Z`) or leap second (`2016-12-31T23:59:60.000000Z`) | Year zero (`0000-01-01T00:00:00.000000Z`) |
+| --- | --- | --- | --- |
+| Destination `v1` schema-gated input (`journal-entry.at`, `record.produced_at.instant`, `protection-request.observed_at`, `reconciliation.attempted_at`, `reconciliation.window_covers_from`, `reconciliation.window_covers_until`) | Stage 3 `shape` (`pattern` and `format: "date-time"`; Stage 4 `instant_spelling` as defense-in-depth) | Stage 3 `shape` under qualified `goneat` `format: "date-time"`; Stage 4 `instant_spelling` in direct semantic/logical vectors and pattern-only fallback controls | Passes qualified `goneat` Stage 3 `shape`; refused at Stage 4 as `instant_spelling` |
+| Observed `v1` continuation source or ancestor journal (`at`, `record.produced_at.instant`, `request.observed_at`) | Refuses relying continuation as `continuation` (Stage 3 `shape`; Stage 4 `instant_spelling` as defense-in-depth) | Refuses relying continuation as `continuation` (Stage 3 `shape` / Stage 4 `instant_spelling`) | Refuses relying continuation as `continuation` (Stage 4 `instant_spelling`) |
+| Observed `v0` continuation source or ancestor journal (`at` across `1..end`, including entries beyond `cut_seq`) | Refuses relying continuation as `continuation` (Stage 3 `shape` for non-string or non-ASCII digits under qualified `goneat` `format: "date-time"`; Stage 4 `timestamp` for bare date, comma fraction, 1-digit hour, bad offset, `>6` fractional digits, or UTC year underflow/overflow, plus non-ASCII digits as defense-in-depth) | Refuses relying continuation as `continuation` (Stage 3 `shape` / Stage 4 `timestamp`) | Refuses relying continuation as `continuation` (Stage 4 `timestamp`) |
+
+Stage 4 independently enforces the complete ASCII-only `instant_spelling`
+grammar, proleptic Gregorian calendar, year `0001`..`9999`, and `:60` refusal on
+every `v1` position (including received reconciliation `attempted_at`,
+`window_covers_from`, and `window_covers_until`) as defense-in-depth, and the
+control suites include explicit Stage 3 + Stage 4 fallback controls proving
+that `:60`, impossible calendar dates, and non-ASCII digits are rejected at
+Stage 3 by qualified `goneat` (`v0.6.5`–`v0.6.7`) and never pass through to
+acceptance if a schema engine omits `format: "date-time"` or uses Unicode `\d`.
 
 `seq` orders one stream's journal. It is a store artifact and is not portable:
 it changes when content is re-recorded into another stream. Portable ordering
@@ -508,6 +565,145 @@ No cross-stream order is required between `body_published` and the content
 entries that reference the body. Lifecycle does not change any restriction: a
 removed body does not retire, release or restrict a record, and no
 `full_content` export may succeed without every required body.
+
+**Incomplete-append abort and torn-tail boundary.** A single-writer store MAY
+abort a provably incomplete lifecycle append in-process only when every
+requirement of the completion gate below holds:
+
+1. **NDJSON trailing-newline completeness rule:** Every serialized NDJSON
+   journal entry line MUST be terminated by `\n` (`0x0A`) with no `\r` (`0x0D`).
+   Let `k` be the number of bytes written in an append attempt and `L` be the
+   serialized entry's byte length including its mandatory trailing `\n`. Stage 1
+   (`ingest`) owns raw NDJSON line framing as well as strict RFC 8259 JSON
+   syntax. A final line without a trailing `\n` — including a write of
+   `k = L - 1` bytes that wrote the closing `}` of the JSON object but omitted
+   `\n` — is an **incomplete entry** and MUST be refused as `ingest` on reopen
+   if not truncated (a reader MUST NOT accept an unterminated final line as
+   `cut_seq + 1`).
+2. **Continuous reader-and-writer exclusion & prior-cut recording:** The store
+   MUST hold continuous exclusion across **all** observers (concurrent readers
+   as well as writers), caches, and dependent actions from before the append
+   attempt through the abort decision, the truncate, the file and namespace
+   sync, the `fstat` size check, and the re-validation of the prior complete
+   cut. A concurrent reader MUST observe only the verified prior cut or
+   refuse — never uncommitted bytes. A lost lock or broken exclusion at any
+   point during the attempt makes the outcome indeterminate and poisons the
+   stream. Before writing, the writer records the exact byte offset and
+   `cut_seq` of the **verified complete prior cut** (`1..cut_seq`).
+3. **Closed `(bytes_written k, errno)` abortability rule:**
+   - **Abortable (provably incomplete write):** `0 <= k < L` (including
+     `k = L - 1` missing only the trailing `\n`) where the append call failed
+     before writing the complete `\n`-terminated entry (for example `ENOSPC`,
+     `EDQUOT`, or a short write with known byte count `k`) and no media/device
+     corruption error (`EIO`) or lost exclusion occurred.
+   - **Must poison / stay fail-closed (indeterminate commit — MUST NOT
+     truncate):**
+     - A **full-length write (`k == L`) followed by a failed `fsync`** (an
+       indeterminate commit: lack of a returned receipt does not establish
+       abortability, and the store MUST poison without truncating);
+     - An **uncertain write count**, an I/O error (`EIO`) where underlying media
+       state is indeterminate, or **lost exclusion**;
+     - Any damaged or incomplete tail (including `k = L - 1` without trailing
+       `\n`) discovered on **reopen / restart** (an in-memory prior offset does
+       not survive restart and MUST NOT be used as repair authority; this
+       specification defines no reopen tail-truncation recovery protocol).
+4. **Full abort completion gate:**
+   - **Same-file truncate identity:** The truncate MUST act on the journal file
+     itself, proven at abort time (when an OS such as Windows denies `truncate`
+     on an `O_APPEND` descriptor and requires a second non-append handle, the
+     store MUST verify `SameFile` identity between the append handle and the
+     truncate handle before truncating, writing nothing on the second handle).
+   - **Truncate and durable sync:** Truncate **only** this attempt's `k` bytes
+     back to the recorded prior-cut byte offset, `fsync` the journal file, and
+     `fsync` the parent directory if the namespace changed.
+   - **Same-file re-stat:** Verify via `fstat` on the journal handle that the
+     post-truncate byte length equals the recorded prior-cut offset; any
+     mismatch immediately poisons the stream (never attempt a second truncate).
+   - **Re-establish and validate the prior complete cut:** Before accepting any
+     subsequent operation or unlocking into normal service, re-read and
+     re-validate the prior complete cut (`1..cut_seq`). Failed re-validation
+     poisons the stream just as a failed `truncate` or `fsync` does.
+5. **In-process poison latch & restart semantics:**
+   - **In-process poison latch:** Any indeterminate commit (`k == L` + failed
+     `fsync`) or any failure during the abort completion gate MUST latch the
+     journal as poisoned in-process; the store MUST refuse **all** further
+     appends and dependent body operations (reads, state derivations, unlinks,
+     and exports) until reopen/recovery.
+   - **Restart semantics:** On restart, ordinary journal validation applies: if
+     an in-process rollback completed and synced cleanly before a later crash,
+     the resulting clean verified prefix (`1..cut_seq`) validates normally on
+     reopen and is not permanently poisoned; if a crash occurred before the
+     rollback's truncate and sync completed, any remaining damaged or
+     unterminated tail cannot use the lost in-memory offset as repair authority
+     and fails closed (`ingest`) on reopen. Consequently, kill points around
+     `truncate` and its `fsync` satisfy the **disjunctive oracle**: on reopen,
+     the store MUST either accept the exact verified prior cut (`seq == cut_seq`)
+     or refuse the journal as damaged (`ingest`) — never any intermediate or
+     `cut_seq + 1` state.
+
+**Incarnation allocation policy (`runtime.incarnation_allocation`).** Never
+unlink bytes on an aborted `body_removal_started(n)`. Pre-existing durable body
+placement on disk before an aborted `body_published(n)` remains a separately
+reconciled physical state (`publishing`), never proof of publication, and no
+existing bytes are deleted. Only `body_published` allocates a new incarnation
+`n` in the per-body `(digest, length)` store-wide domain (`1 .. 2^53 - 1`);
+both `body_removal_started(n)` and `body_removed(n)` reference the existing
+published incarnation `n`, so aborting a short write of `body_removal_started(n)`
+or `body_removed(n)` neither allocates nor burns an incarnation, and a retry
+acts on the same published incarnation `n`.
+
+When `deletion.external_bodies` is `"supported"`, a stratum profile MAY declare
+`runtime.incarnation_allocation` as either `"effect_dependent"` or
+`"prewrite_durable_ledger"` (the field is forbidden when
+`deletion.external_bodies != "supported"`; when omitted on an existing profile
+with `deletion.external_bodies == "supported"`, the baseline
+`"effect_dependent"` rule applies):
+
+- `"effect_dependent"` (baseline `v1` without designated-stream recovery): an
+  aborted `body_published(n)` incarnation number `n` MUST NOT be reused if
+  **any physical effect, reversible or irreversible durable body placement, or
+  external handle/fence** could rely on `n`. Reuse of `n` after an aborted
+  `body_published(n)` is permissible **only** when the store proves under
+  continuous exclusion that zero physical effects or handles ever relied on
+  `n`. Across `abort -> clean restart -> republish`, the new incarnation `n'`
+  MUST satisfy `n' > max(committed_max, effect_relied_on_max)`.
+- `"prewrite_durable_ledger"` (unconditional burn): no incarnation `n` for
+  which a `body_published(n)` write was attempted is **ever** reused, even on a
+  zero-byte or short write with no prior physical effect. Because a completed
+  rollback leaves no trace of `n` in the journal bytes, a volatile counter
+  cannot satisfy this rule: the store **MUST** persist and sync `n` in its
+  pre-write durable allocation ledger before attempting the `body_published(n)`
+  journal write. Across `abort -> clean restart -> republish`, the new
+  incarnation `n'` MUST satisfy `n' > burned_ledger_max` (`>= n + 1`).
+  Declaring `"prewrite_durable_ledger"` states the store's pre-write
+  incarnation burn invariant; it does **not** imply support for
+  designated-stream recovery (which is not part of this contract revision).
+
+In both modes, incarnation sequences permit gaps (`n' > bound` does not mandate
+`prior + 1`), and counter exhaustion at `2^53 - 1` (`9007199254740991`) MUST
+refuse as `numeric_domain` without wraparound.
+
+| Faultpoint (designated stream with `stream_opened` committed at `seq = 1`) | Pre-fault committed cut (`1..cut_seq`) | Physical body bytes | Required post-fault journal, poison & reader state | Next retry / reopen rule |
+| --- | --- | --- | --- | --- |
+| Short write (`0 < k < L - 1`) or zero-byte write (`k == 0`, `ENOSPC`/`EDQUOT`) on `body_published(n)` under continuous exclusion | `1..cut_seq` (e.g. `stream_opened` at `cut_seq = 1`) | present | Completion gate truncates `k` bytes, syncs, `fstat`-verifies size, and re-validates `1..cut_seq`; reader observes `publishing` | Next accepted append has `seq = cut_seq + 1` (`2`); retried `body_published(n')` satisfies mode bound (`n' > max(committed_max, effect_relied_on_max)` in `effect_dependent`, `n' > burned_ledger_max` in `prewrite_durable_ledger`; gaps permitted) |
+| Unterminated final line (`k = L - 1`, missing only trailing `\n`): (a) in-process `ENOSPC` under continuous exclusion; (b) process kill before truncate | `1..cut_seq` | present | (a) Clean rollback to `1..cut_seq` (`publishing`); (b) on reopen, unterminated final line refuses at Stage 1 as `ingest` (never accepted as `cut_seq + 1`) | (a) Retry commits at `seq = cut_seq + 1`; (b) stream remains fail-closed on reopen (in-memory prior offset is never used as reopen repair authority) |
+| Short write (`0 <= k < L`) on `body_removal_started(n)` (no unlink performed) or on `body_removed(n)` (after committed `body_removal_started(n)` and completed unlink) | `body_published(n)` (`cut_seq = 2`) or `body_removal_started(n)` (`cut_seq = 3`) | present (`body_removal_started` abort) or absent (`body_removed` abort) | Clean rollback to `1..cut_seq`; reader observes `available` (`cut_seq = 2`) or `removal_pending` (`cut_seq = 3`) | Retry commits at `seq = cut_seq + 1` (`3` or `4`) referencing the **same** published incarnation `n` |
+| Physical body placement or handle/fence relying on `n` -> aborted `body_published(n)` -> clean restart -> republish | `1..cut_seq` (`committed_max < n`) | present | Clean rollback to `1..cut_seq` before restart; `effect_relied_on_max >= n` persists across restart | Republish requires `n' > max(committed_max, effect_relied_on_max)` with `max(committed_max, effect_relied_on_max) >= n` (therefore `n' >= n + 1`) in **both** modes (`n` is never reused); exhaustion at `2^53 - 1` refuses as `numeric_domain` |
+| Attempted `body_published(n)` with zero physical effect (`k == 0`) -> aborted -> clean restart -> republish | `1..cut_seq` (`committed_max < n`) | present | Clean rollback to `1..cut_seq` before restart | In `prewrite_durable_ledger` mode, durable pre-write ledger forces `n' > max(committed_max, burned_ledger_max)` with `max(committed_max, burned_ledger_max) >= n` (therefore `n' >= n + 1`; reusing `n` is refused); in `effect_dependent` mode with proven zero effect/handle reliance under continuous exclusion, reuse is permitted and gaps `n' > n` are also valid |
+| Zero-byte or short write with `EIO`, uncertain byte count, or lost exclusion | `1..cut_seq` | any | Indeterminate state: MUST NOT truncate; latches in-process poison | All subsequent appends and dependent body operations (`body_state`, `use`, unlink) are refused |
+| Full write (`k == L`) followed by failed `fsync` | `1..cut_seq` | any | Indeterminate commit: MUST NOT truncate; latches in-process poison | All subsequent appends and dependent body operations are refused |
+| Abort completion-gate failure (`SameFile` mismatch on truncate handle, `truncate` error, post-truncate `fstat` size mismatch, `fsync` error, or failed prior-cut `1..cut_seq` re-validation) | `1..cut_seq` | any | Latches in-process poison (never attempts a second truncate) | All subsequent appends and dependent body operations are refused |
+| Kill points immediately before and after `truncate` and its `fsync` | `1..cut_seq` | any | Disjunctive reopen oracle: reopen either accepts exact verified prior cut `1..cut_seq` or refuses damaged/unterminated tail at Stage 1 as `ingest` | Never yields an intermediate cut, `cut_seq + 1`, lost earlier receipt, or stale removal action |
+
+The repository's logical control suite (`scripts/test-durable-record-v1-controls.py`)
+verifies the Stage 1 NDJSON `k = L - 1` framing refusal, the
+`runtime.incarnation_allocation` schema and mode bounds (`effect_dependent` vs.
+`prewrite_durable_ledger`, including `effect_relied_on_max`, `burned_ledger_max`,
+permitted gaps, and `numeric_domain` exhaustion), and the logical abort,
+completion-gate, poison-latch, and disjunctive-reopen state transitions with AST
+mutation controls; OS/storage-level fault injection (`O_APPEND` `SameFile`
+descriptor identity, physical `fsync`/`fstat` syscalls, and concurrent lock
+exclusion) is an implementation-level store qualification obligation.
 
 ## Serving, reuse and export
 

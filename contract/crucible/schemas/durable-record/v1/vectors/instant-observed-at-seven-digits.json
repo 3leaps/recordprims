@@ -81,7 +81,7 @@
     {
       "request": {
         "v": 1,
-        "stream": "records.example",
+        "stream": "other.stream",
         "idempotency_key": "hold-1",
         "action": "tombstone",
         "target": {

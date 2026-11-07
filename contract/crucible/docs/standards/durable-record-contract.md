@@ -2,15 +2,16 @@
 title: "Portable Durable Record Contract"
 description: "Proposed engine-neutral record and journal semantics: stable record identity, exact revisions, digest-bound bodies, provenance, retention intent, keyed idempotent writes, revision conflict detection, typed receipts, and a stratum profile that declares durability and supported deletion scope"
 category: "standards"
-status: "draft"
+status: "deprecated"
 version: "0.0.0"
-lastUpdated: "2026-10-30"
+lastUpdated: "2026-11-06"
 maintainer: "core-standards"
 reviewers: ["architecture", "security", "data-engineering"]
 approvers: ["lead-maintainer"]
 tags: ["records", "journal", "storage", "contract", "provenance", "retention", "interoperability"]
 content_license: "CC0"
 relatedDocs:
+  - "docs/standards/durable-record-v1-contract.md"
   - "docs/standards/data-artifact-contract.md"
   - "docs/standards/segmented-snapshot-contract.md"
   - "docs/standards/durable-queue-contract.md"
@@ -24,7 +25,15 @@ audience: "implementers"
 
 ## Maturity and scope
 
-This is the **proposed experimental contract** `contract: durable-record/v0`.
+> **Status: Deprecated for new stream production** (superseded by
+> [`contract: durable-record/v1`](durable-record-v1-contract.md)). New
+> producers and new streams MUST use `contract: durable-record/v1`. The `v0`
+> schemas, fixtures, and validation rules remain normative for reading and
+> verifying historical `v0` streams and for `v1` continuation chains whose
+> `continues.capability` or `imported_from.capability` names
+> `contract: durable-record/v0`.
+
+This document specifies `contract: durable-record/v0`.
 It defines what a durable record store promises to writers and readers: how a
 record is identified, how revisions are bound to exact bytes, how a body held
 outside the record is referenced, what an append receipt means, and how a
@@ -126,7 +135,15 @@ Wire readers and conformance gates evaluate inputs in four ordered stages:
 
 1. **Strict JSON ingestion (`ingest`)** — valid UTF-8 RFC 8259 syntax, unique
    object member names at every nesting depth, no lone surrogates, and no
-   non-JSON or non-finite IEEE 754 numbers;
+   non-JSON or non-finite IEEE 754 numbers. For NDJSON journals, let `L` be the
+   byte length of a serialized entry line including its terminating `0x0A`
+   (`\n`), and `k` be the number of bytes written for that line: every entry
+   line (including the final line of the file) MUST be terminated by a single
+   `0x0A` (`\n`) with no `0x0D` (`\r`). A non-empty final line missing its
+   trailing `0x0A` (including `k = L - 1` bytes that close the JSON object `{...}`
+   without `\n`) is an incomplete append and fails at `ingest`. Forbidding
+   `0x0D` (`\r`) across all `v0` and `v1` NDJSON inputs is an explicit framing
+   tightening in this revision;
 2. **Exact numeric-domain preflight (`numeric_domain`)** — at protocol integer
    schema paths only (never inside `record.payload`), raw JSON numeric tokens
    are checked before binary64 conversion using bounded decimal/exponent
@@ -142,11 +159,50 @@ Wire readers and conformance gates evaluate inputs in four ordered stages:
 3. **Schema validation (`shape`)** — JSON Schema Draft 2020-12 validation
    yielding a structured validity verdict (`true`, or `false` with validation
    diagnostics; parser, range or tool failures are infrastructure errors, never
-   schema rejections);
-4. **Logical semantics** — stream, group, digest, revision-chain, receipt,
-   coverage and profile invariants. Direct typed APIs enforce the same
+   schema rejections). Because the pinned validator (`goneat`) does not
+   implement arbitrary Draft 2020-12 vocabularies or sibling assertions
+   alongside `$ref`, durable-record schemas are restricted to a finite Draft
+   2020-12 keyword subset enforced at schema qualification (`$schema`, `$id`,
+   `$defs`, `$ref`, `title`, `description`, `type`, `const`, `enum`,
+   `properties`, `required`, `additionalProperties`, `items`, `contains`,
+   `minItems`, `maxItems`, `uniqueItems`, `minLength`, `maxLength`, `pattern`,
+   `format`, `minimum`, `maximum`, `allOf`, `anyOf`, `oneOf`, `not`, `if`,
+   `then`, `else`). Every `$ref` targets a local `#/$defs/<name>` definition
+   and MUST NOT be combined with sibling assertion keywords (`maxLength`,
+   `type`, `pattern`, etc.); `format: "date-time"` is the only admitted
+   `format` attribute;
+4. **Logical semantics** — stream, group, digest, revision-chain, timestamp,
+   receipt, coverage and profile invariants. Direct typed APIs enforce the same
    `[minimum, 9007199254740991]` range, though an already-parsed float cannot
    certify the original wire token.
+
+### Timestamp validation profile (`v0`)
+
+Every `v0` timestamp position (`journal-entry.schema.json#/properties/at` and
+`write-receipt.schema.json#/$defs/reconciliation` `attempted_at` across all
+three reconciliation results `found`, `not_found`, and `unknown`, plus
+`window_covers_from` and `window_covers_until` when `result` is `not_found`)
+is validated against the `v0` RFC 3339 profile:
+
+- **Lexical grammar:** `YYYY-MM-DD('T'|'t')HH:MM:SS(.d+)?('Z'|'z'|[+-]HH:MM)`
+  (ASCII digits `0`–`9` `0x30`–`0x39` only; Unicode non-ASCII digits such as
+  `U+FF10..U+FF19` are refused; period `.` fractional separator when present;
+  2-digit fields; offset hours `00`–`23`, minutes `00`–`59`; `-00:00` is
+  accepted in `v0` per RFC 3339 Section 4.3 as UTC epoch-equivalent alongside
+  `Z`, `z`, and `+00:00`);
+- **Calendar & year bounds:** proleptic Gregorian month/day validity (leap year
+  iff `year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)`), with both the
+  written local year and the UTC-normalized year in `0001`–`9999` (`0000`,
+  `0001-01-01T00:00:00+01:00`, and `9999-12-31T23:59:59-01:00` are refused);
+- **Unconditional leap-second refusal:** `second == 60` (`:60`) is refused at
+  every timestamp position regardless of date, month, or offset;
+- **Microsecond precision ceiling:** fractional seconds with any nonzero digit
+  beyond the 6th fractional place (sub-microsecond precision) fail closed as
+  `timestamp` rather than truncating.
+
+| `v0` position | Non-string / bad type, impossible calendar date (`2026-02-30...`), leap second (`:60`), or non-ASCII digits (`２０２６-...`) | Bare date (`2026-10-12`), comma fraction, 1-digit hour, bad offset (`+24:00`), year `0000`, UTC year underflow/overflow, or `>6` nonzero fractional digits |
+| --- | --- | --- |
+| `journal-entry.at`, `reconciliation.attempted_at`, `reconciliation.window_covers_from`, `reconciliation.window_covers_until` (end-to-end staged gate under qualified `goneat` `v0.6.5`–`v0.6.7`, Draft 2020-12 with `format: "date-time"` assertion enabled, verified by `scripts/validate-durable-record-fixtures.py`) | Stage 3 `shape` (and Stage 4 `timestamp` if invoked directly or under a Stage 3 engine without `format: "date-time"`) | Passes `goneat` `format: "date-time"`; refused at Stage 4 as `timestamp` (or `continuation` when observed as a `v1` continuation source/ancestor) |
 
 ## Governed objects
 

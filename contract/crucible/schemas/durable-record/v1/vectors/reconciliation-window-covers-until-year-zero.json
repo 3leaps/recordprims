@@ -1,0 +1,33 @@
+{
+  "window_ms": 60000,
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "stream_opened",
+      "at": "0001-01-01T00:00:01.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss"
+    }
+  ],
+  "steps": [
+    {
+      "receipt": {
+        "v": 1,
+        "kind": "reconciliation",
+        "stream": "records.example",
+        "idempotency_key": "write-first-1",
+        "attempted_at": "0001-01-01T00:00:02.000000Z",
+        "result": "not_found",
+        "window_covers_from": "0001-01-01T00:00:01.000000Z",
+        "window_covers_until": "0000-01-01T00:00:03.000000Z"
+      }
+    }
+  ],
+  "expected": {
+    "refusal": "instant_spelling"
+  }
+}
