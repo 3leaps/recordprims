@@ -1,0 +1,58 @@
+{
+  "window_ms": 60000,
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "stream_opened",
+      "at": "0001-01-01T00:00:00.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss"
+    },
+    {
+      "v": 1,
+      "seq": 2,
+      "group": 2,
+      "group_size": 1,
+      "stream": "records.example",
+      "type": "appended",
+      "at": "9999-12-31T23:59:59.999999Z",
+      "record": {
+        "v": 1,
+        "stream": "records.example",
+        "record_id": "first",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8,
+          "media_type": "text/plain"
+        },
+        "produced_at": {
+          "instant": "9999-12-31T23:59:59.999999Z",
+          "source": "producer_clock"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "digest": "sha256:ca913d1bccc4b817cf95ce733d22f3127ff0bcc01c3e1b9b1d42c4f7c2069069",
+      "idempotency_key": "write-first-1",
+      "body_status": "verified"
+    }
+  ],
+  "steps": [],
+  "expected": {
+    "results": [],
+    "active_holds": [],
+    "journal_size": 2
+  }
+}

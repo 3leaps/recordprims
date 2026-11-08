@@ -358,18 +358,33 @@ def load_wire(path: str | Path, kind: str) -> Any:
     return parse_wire(raw, kind, str(p))
 
 
+def parse_wire_lines(
+    text: str, where: str = "<wire-ndjson>", kind: str = "journal_entry"
+) -> list[Any]:
+    if not isinstance(text, str):
+        raise Reject("ingest", f"{where}: wire input must be UTF-8 text")
+    if "\r" in text:
+        raise Reject("ingest", f"{where}: CR byte in NDJSON framing")
+    if text and not text.endswith("\n"):
+        raise Reject(
+            "ingest",
+            f"{where}: final NDJSON line missing terminating newline (incomplete append)",
+        )
+    out = []
+    for i, ln in enumerate(text.split("\n")[:-1], start=1):
+        if not ln.strip():
+            continue
+        out.append(parse_wire(ln, kind, f"{where}:{i}"))
+    return out
+
+
 def load_wire_lines(path: str | Path, kind: str = "journal_entry") -> list[Any]:
     p = Path(path)
     try:
-        text = p.read_text(encoding="utf-8")
+        text = p.read_bytes().decode("utf-8")
     except UnicodeDecodeError as e:
         raise Reject("ingest", f"{p}: invalid UTF-8: {e}") from e
-    out = []
-    for i, ln in enumerate(text.splitlines(), start=1):
-        if not ln.strip():
-            continue
-        out.append(parse_wire(ln, kind, f"{p}:{i}"))
-    return out
+    return parse_wire_lines(text, str(p), kind)
 
 
 def check_typed_domain(node: Any, kind: Any, where: str) -> None:
@@ -468,6 +483,126 @@ def _extract_json_report(stdout: str, stderr: str) -> dict[str, Any]:
     )
 
 
+ADMITTED_SCHEMA_KEYWORDS = frozenset(
+    {
+        "$schema",
+        "$id",
+        "$defs",
+        "$ref",
+        "title",
+        "description",
+        "type",
+        "const",
+        "enum",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "contains",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "format",
+        "minimum",
+        "maximum",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "not",
+        "if",
+        "then",
+        "else",
+    }
+)
+_ROOT_ONLY_SCHEMA_KEYWORDS = frozenset({"$schema", "$id", "$defs"})
+_REF_ALLOWED_SIBLINGS = frozenset({"$schema", "$id", "$defs", "title", "description"})
+
+
+def check_schema_subset_admission(schema_doc: Any, where: str) -> None:
+    """Enforce the finite JSON Schema Draft 2020-12 subset admitted by durable-record."""
+    if not isinstance(schema_doc, dict):
+        raise RuntimeError(f"{where}: schema root must be a JSON object")
+    if schema_doc.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
+        raise RuntimeError(
+            f"{where}: $schema must be 'https://json-schema.org/draft/2020-12/schema', got {schema_doc.get('$schema')!r}"
+        )
+    defs = schema_doc.get("$defs", {})
+    if not isinstance(defs, dict):
+        raise RuntimeError(f"{where}: $defs must be an object")
+
+    def _walk(node: Any, path: str, *, is_root: bool = False) -> None:
+        if not isinstance(node, dict):
+            raise RuntimeError(f"{where}{path}: subschema must be a JSON object")
+        for k in node:
+            if k not in ADMITTED_SCHEMA_KEYWORDS:
+                raise RuntimeError(
+                    f"{where}{path}: unsupported JSON Schema keyword {k!r} outside finite durable-record subset"
+                )
+            if not is_root and k in _ROOT_ONLY_SCHEMA_KEYWORDS:
+                raise RuntimeError(
+                    f"{where}{path}: root-only keyword {k!r} is not admitted in nested subschemas"
+                )
+        if "$ref" in node:
+            ref = node["$ref"]
+            if not isinstance(ref, str) or not ref.startswith("#/$defs/"):
+                raise RuntimeError(
+                    f"{where}{path}: $ref must target a local #/$defs/<name>, got {ref!r}"
+                )
+            target = ref.removeprefix("#/$defs/")
+            if not target or "/" in target or target not in defs:
+                raise RuntimeError(
+                    f"{where}{path}: $ref target {ref!r} does not resolve in root $defs"
+                )
+            allowed = (
+                _REF_ALLOWED_SIBLINGS
+                if is_root
+                else frozenset({"title", "description"})
+            )
+            siblings = sorted(set(node) - ({"$ref"} | allowed))
+            if siblings:
+                raise RuntimeError(
+                    f"{where}{path}: $ref must not be combined with assertion sibling keywords {siblings}"
+                )
+        if "format" in node and node["format"] != "date-time":
+            raise RuntimeError(
+                f"{where}{path}: unsupported format {node['format']!r}; only 'date-time' is admitted"
+            )
+        if is_root and "$defs" in node:
+            for dname, dsub in defs.items():
+                _walk(dsub, f"/$defs/{dname}")
+        if "properties" in node:
+            props = node["properties"]
+            if not isinstance(props, dict):
+                raise RuntimeError(f"{where}{path}/properties: must be an object")
+            for pname, psub in props.items():
+                _walk(psub, f"{path}/properties/{pname}")
+        if "additionalProperties" in node:
+            ap = node["additionalProperties"]
+            if isinstance(ap, dict):
+                _walk(ap, f"{path}/additionalProperties")
+            elif not isinstance(ap, bool):
+                raise RuntimeError(
+                    f"{where}{path}/additionalProperties: must be boolean or subschema object"
+                )
+        for single_kw in ("items", "contains", "not", "if", "then", "else"):
+            if single_kw in node:
+                _walk(node[single_kw], f"{path}/{single_kw}")
+        for list_kw in ("allOf", "anyOf", "oneOf"):
+            if list_kw in node:
+                arr = node[list_kw]
+                if not isinstance(arr, list) or not arr:
+                    raise RuntimeError(
+                        f"{where}{path}/{list_kw}: must be a non-empty list"
+                    )
+                for i, sub in enumerate(arr):
+                    _walk(sub, f"{path}/{list_kw}[{i}]")
+
+    _walk(schema_doc, "", is_root=True)
+
+
 def shape_suite(
     items: list[tuple[str, str | Path, str]],
     *,
@@ -510,6 +645,13 @@ def shape_suite(
             if not src_schema_path.is_file():
                 raise RuntimeError(f"missing schema file: {src_schema_path}")
             if schema_rel not in schema_keys:
+                try:
+                    schema_doc = json.loads(src_schema_path.read_text(encoding="utf-8"))
+                except Exception as e:
+                    raise RuntimeError(
+                        f"failed to parse schema {src_schema_path}: {e}"
+                    ) from e
+                check_schema_subset_admission(schema_doc, str(src_schema_path))
                 key = schema_rel.replace("/", "__").removesuffix(".schema.json")
                 schema_keys[schema_rel] = key
                 dst_schema_path = tmp / "schemas" / schema_rel
@@ -650,10 +792,12 @@ def verify_suite_report(
 # --- timestamps & JCS digest ------------------------------------------------
 
 
-_FRACTION = re.compile(r"[Tt]\d{2}:\d{2}:\d{2}\.(\d+)")
+_FRACTION = re.compile(r"[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}\.([0-9]+)", re.ASCII)
 
 
-def instant(text: str):
+def instant(text: Any):
+    if not isinstance(text, str):
+        raise Reject("timestamp", f"{text!r}: timestamp must be a string")
     # The shared helper resolves to microseconds. This checker fails closed on
     # any fraction it cannot represent exactly (non-zero digits beyond six)
     # rather than truncating, so a sub-microsecond ordering cannot pass.
@@ -743,7 +887,7 @@ def check_record(rec, where: str) -> None:
         raise Reject("supersedes_revision", where)
 
 
-def check_entry(e, where: str) -> None:
+def check_entry(e, where: str, *, check_at: bool = True) -> None:
     check_typed_domain(e, "journal_entry", where)
     if isinstance(e.get("group"), int) and isinstance(e.get("group_size"), int):
         if e["group"] + e["group_size"] - 1 > MAX_SAFE_INTEGER:
@@ -751,6 +895,8 @@ def check_entry(e, where: str) -> None:
                 "numeric_domain",
                 f"{where}: atomic group closing seq exceeds {MAX_SAFE_INTEGER}",
             )
+    if check_at:
+        instant(e.get("at"))
     if e.get("type") in ("appended", "revised"):
         rec = e["record"]
         if rec.get("stream") != e.get("stream"):
@@ -764,7 +910,7 @@ def check_entry(e, where: str) -> None:
             raise Reject("supersedes_revision", where)
 
 
-def check_journal(lines: list, label: str) -> dict:
+def check_journal(lines: list, label: str, *, check_entry_at: bool = True) -> dict:
     """Validate a journal; return facts used by receipt checks."""
     if not lines:
         raise Reject("empty", label)
@@ -802,7 +948,7 @@ def check_journal(lines: list, label: str) -> dict:
         elif e["group"] != i:
             raise Reject("group", f"{where}: a new group must start at its own seq")
         open_group = g
-        check_entry(e, where)
+        check_entry(e, where, check_at=check_entry_at)
         if e["type"] in ("appended", "revised"):
             rec = e["record"]
             rid = rec["record_id"]
@@ -887,6 +1033,7 @@ def check_receipt_doc(doc, facts: dict, where: str) -> None:
             raise Reject(
                 "receipt_mismatch", f"{where}: lookup stream is not the journal stream"
             )
+        att = instant(doc.get("attempted_at"))
         if doc["result"] == "found":
             inner = doc["receipt"]
             if (
@@ -908,12 +1055,9 @@ def check_receipt_doc(doc, facts: dict, where: str) -> None:
             # Zero-skew interval arithmetic on parsed instants. With a profile
             # bound B, [attempted_at - B, attempted_at + B] must lie within the
             # coverage interval; this fixture check has no profile, so B = 0.
-            att = instant(doc["attempted_at"])
-            if not (
-                instant(doc["window_covers_from"])
-                <= att
-                <= instant(doc["window_covers_until"])
-            ):
+            frm = instant(doc.get("window_covers_from"))
+            until = instant(doc.get("window_covers_until"))
+            if not (frm <= att <= until):
                 raise Reject(
                     "coverage",
                     f"{where}: coverage interval does not contain attempted_at",
@@ -1489,6 +1633,278 @@ def self_test() -> None:
         else:
             raise SystemExit(
                 f"[!!] self-test {bad_report_label}: verify_suite_report did not fail"
+            )
+
+    # v0 timestamp position coverage & year/leap-second/calendar/lexical boundary controls.
+    base_entry = {
+        "v": 0,
+        "stream": "s",
+        "seq": 1,
+        "group": 1,
+        "group_size": 1,
+        "at": "2026-10-12T12:00:00Z",
+        "type": "stream_opened",
+        "mode": "single_revision",
+        "failure_model": "none",
+    }
+    for ok_ts in [
+        "0001-01-01T00:00:00Z",
+        "9999-12-31T23:59:59.999999Z",
+        "2026-10-12T12:00:00+00:00",
+        "2026-10-12T12:00:00.123456Z",
+    ]:
+        check_entry({**base_entry, "at": ok_ts}, f"entry-ok:{ok_ts}")
+        check_journal([{**base_entry, "at": ok_ts}], f"journal-ok:{ok_ts}")
+
+    for bad_ts in [
+        "0000-01-01T00:00:00Z",
+        "0000-12-31T23:59:59.999999Z",
+        "0001-01-01T00:00:00+01:00",
+        "9999-12-31T23:59:59-01:00",
+        "2016-12-31T23:59:60Z",
+        "2026-06-30T23:59:60Z",
+        "2026-10-12T12:00:00.0000001Z",
+        "2026-10-12",
+        "2026-10-12T12:00:00,123Z",
+        "2026-10-12T7:00:00Z",
+        "2026-10-12T12:00:00+24:00",
+        "2026-10-12T12:00:00+00:60",
+        "2026-02-29T12:00:00Z",
+        "2026-04-31T12:00:00Z",
+        "\uff12\uff10\uff12\uff16-10-12T12:00:00Z",
+        "2026-\uff11\uff10-12T12:00:00Z",
+        "2026-10-12T\uff11\uff12:00:00Z",
+        "2026-10-12T12:00:00.\uff11\uff12\uff13Z",
+        "2026-10-12T12:00:00.000000\uff11Z",
+        12345,
+        None,
+    ]:
+        for pos_label, fn in [
+            (
+                "entry.at",
+                lambda ts=bad_ts: check_entry({**base_entry, "at": ts}, "entry-bad"),
+            ),
+            (
+                "journal.at",
+                lambda ts=bad_ts: check_journal(
+                    [{**base_entry, "at": ts}], "journal-bad"
+                ),
+            ),
+            (
+                "reconcile.found.attempted_at",
+                lambda ts=bad_ts: check_receipt_doc(
+                    {
+                        "kind": "reconciliation",
+                        "stream": "s",
+                        "idempotency_key": "k",
+                        "result": "found",
+                        "attempted_at": ts,
+                        "receipt": {},
+                    },
+                    facts,
+                    "found-bad",
+                ),
+            ),
+            (
+                "reconcile.unknown.attempted_at",
+                lambda ts=bad_ts: check_receipt_doc(
+                    {
+                        "kind": "reconciliation",
+                        "stream": "s",
+                        "idempotency_key": "k",
+                        "result": "unknown",
+                        "attempted_at": ts,
+                    },
+                    facts,
+                    "unknown-bad",
+                ),
+            ),
+            (
+                "reconcile.not_found.attempted_at",
+                lambda ts=bad_ts: check_receipt_doc(
+                    nf("2026-10-12T12:00:00Z", ts, "2026-10-12T13:00:00Z"),
+                    facts,
+                    "nf-att-bad",
+                ),
+            ),
+            (
+                "reconcile.not_found.window_covers_from",
+                lambda ts=bad_ts: check_receipt_doc(
+                    nf(ts, "2026-10-12T12:30:00Z", "2026-10-12T13:00:00Z"),
+                    facts,
+                    "nf-from-bad",
+                ),
+            ),
+            (
+                "reconcile.not_found.window_covers_until",
+                lambda ts=bad_ts: check_receipt_doc(
+                    nf("2026-10-12T14:00:00Z", "2026-10-12T12:30:00Z", ts),
+                    facts,
+                    "nf-until-bad",
+                ),
+            ),
+        ]:
+            try:
+                fn()
+            except Reject as r:
+                if r.reason != "timestamp":
+                    raise SystemExit(
+                        f"[!!] self-test {pos_label} ({bad_ts!r}): rejected as {r.reason}, expected timestamp"
+                    ) from None
+            else:
+                raise SystemExit(
+                    f"[!!] self-test {pos_label} ({bad_ts!r}): accepted invalid timestamp"
+                )
+
+    # NDJSON framing: final line missing terminating newline or containing CR is rejected at ingest.
+    valid_line = json.dumps(base_entry, separators=(",", ":"))
+    assert len(parse_wire_lines(valid_line + "\n", "ndjson-ok")) == 1
+    for ndjson_label, bad_ndjson in [
+        ("missing-trailing-newline", valid_line),
+        ("second-line-missing-newline", valid_line + "\n" + valid_line),
+        ("cr-in-framing", valid_line + "\r\n"),
+    ]:
+        try:
+            parse_wire_lines(bad_ndjson, ndjson_label)
+        except Reject as r:
+            assert r.reason == "ingest", (ndjson_label, r.reason)
+        else:
+            raise SystemExit(
+                f"[!!] self-test {ndjson_label}: accepted incomplete/CR NDJSON"
+            )
+    with tempfile.TemporaryDirectory(prefix="durable-record-ndjson-") as td:
+        unterminated = Path(td) / "unterminated.ndjson"
+        unterminated.write_bytes(valid_line.encode("utf-8"))
+        try:
+            load_wire_lines(unterminated)
+        except Reject as r:
+            assert r.reason == "ingest", r.reason
+        else:
+            raise SystemExit(
+                "[!!] self-test load_wire_lines accepted unterminated NDJSON"
+            )
+
+    # Finite JSON Schema subset admission controls (CRU-020 A.3).
+    for schema_path in sorted(_schemas_root.glob("v*/*.schema.json")):
+        check_schema_subset_admission(
+            json.loads(schema_path.read_text(encoding="utf-8")), str(schema_path)
+        )
+    valid_schema_doc = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {"tok": {"type": "string", "minLength": 1}},
+        "type": "object",
+        "properties": {
+            "x": {"$ref": "#/$defs/tok"},
+            "at": {"type": "string", "format": "date-time"},
+        },
+    }
+    check_schema_subset_admission(valid_schema_doc, "valid-subset")
+    for bad_schema_label, bad_schema_doc in [
+        (
+            "ref_sibling_maxLength",
+            {
+                **valid_schema_doc,
+                "properties": {"x": {"$ref": "#/$defs/tok", "maxLength": 10}},
+            },
+        ),
+        (
+            "unsupported_unevaluatedProperties",
+            {**valid_schema_doc, "unevaluatedProperties": False},
+        ),
+        (
+            "unsupported_dynamicRef",
+            {
+                **valid_schema_doc,
+                "properties": {"x": {"$dynamicRef": "#tok"}},
+            },
+        ),
+        (
+            "unsupported_vocabulary",
+            {**valid_schema_doc, "$vocabulary": {}},
+        ),
+        (
+            "unsupported_format",
+            {
+                **valid_schema_doc,
+                "properties": {"at": {"type": "string", "format": "uri"}},
+            },
+        ),
+        (
+            "bad_meta_schema",
+            {**valid_schema_doc, "$schema": "http://json-schema.org/draft-07/schema#"},
+        ),
+        (
+            "unresolvable_ref",
+            {
+                **valid_schema_doc,
+                "properties": {"x": {"$ref": "#/$defs/missing"}},
+            },
+        ),
+    ]:
+        try:
+            check_schema_subset_admission(bad_schema_doc, bad_schema_label)
+        except RuntimeError:
+            pass
+        else:
+            raise SystemExit(
+                f"[!!] self-test {bad_schema_label}: check_schema_subset_admission did not fail"
+            )
+
+    # 13. v0 stage-trace qualification against the active goneat validator:
+    #     - Stage 3 (shape=False) + Stage 4 defense-in-depth (timestamp):
+    #       non_string, impossible_date, leap_second, non_ascii_digits
+    #     - Stage 3 (shape=True) + Stage 4 refusal (timestamp):
+    #       bare_date, comma_fraction, one_digit_hour, bad_offset_24, year_zero,
+    #       utc_underflow, utc_overflow, seven_frac_digits
+    base_v0_entry = {
+        "v": 0,
+        "seq": 1,
+        "group": 1,
+        "group_size": 1,
+        "stream": "records.example",
+        "type": "stream_opened",
+        "at": "2026-10-12T00:00:00Z",
+        "mode": "revisioned",
+        "failure_model": "survives_power_loss",
+    }
+    stage_trace_cases = [
+        ("non_string", 123, False),
+        ("impossible_date", "2026-02-30T00:00:00Z", False),
+        ("leap_second", "2016-12-31T23:59:60Z", False),
+        ("non_ascii_digits", "２０２６-11-05T12:34:56Z", False),
+        ("bare_date", "2026-10-12", True),
+        ("comma_fraction", "2026-10-12T00:00:00,123456Z", True),
+        ("one_digit_hour", "2026-10-12T0:00:00Z", True),
+        ("bad_offset_24", "2026-10-12T00:00:00+24:00", True),
+        ("year_zero", "0000-01-01T00:00:00Z", True),
+        ("utc_underflow", "0001-01-01T00:00:00+01:00", True),
+        ("utc_overflow", "9999-12-31T23:59:59-01:00", True),
+        ("seven_frac_digits", "2026-10-12T00:00:00.0000001Z", True),
+    ]
+    trace_items = [
+        (
+            label,
+            "v0/journal-entry.schema.json",
+            json.dumps({**base_v0_entry, "at": bad_at}) + "\n",
+        )
+        for label, bad_at, _ in stage_trace_cases
+    ]
+    trace_verdicts = shape_suite(trace_items, default_ver="v0")
+    for label, bad_at, expected_shape in stage_trace_cases:
+        if trace_verdicts.get(label) is not expected_shape:
+            raise SystemExit(
+                f"[!!] self-test v0 stage-trace {label}: expected shape={expected_shape}, got {trace_verdicts.get(label)}"
+            )
+        try:
+            check_entry({**base_v0_entry, "at": bad_at}, f"stage4-{label}")
+        except Reject as r:
+            if r.reason != "timestamp":
+                raise SystemExit(
+                    f"[!!] self-test v0 stage-trace {label}: expected timestamp, got {r.reason}"
+                )
+        else:
+            raise SystemExit(
+                f"[!!] self-test v0 stage-trace {label}: check_entry did not refuse"
             )
 
     print("ok: checker self-test")

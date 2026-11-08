@@ -6,5 +6,6 @@
     "journal_entry": "journal-entry.schema.json",
     "write_receipt": "write-receipt.schema.json"
   },
-  "status": "proposed"
+  "status": "deprecated",
+  "superseded_by": "contract: durable-record/v1"
 }
