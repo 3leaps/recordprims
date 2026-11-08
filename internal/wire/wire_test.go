@@ -163,15 +163,17 @@ func TestDepthLimitIsLocal(t *testing.T) {
 // defects are present.
 func TestEveryKindRunsBothStages(t *testing.T) {
 	for kind, intField := range map[string]string{
-		KindJournalEntry:      `"seq":1.5`,
-		KindRecord:            `"revision":1.5`,
-		KindProtectionRequest: `"restores":1.5`,
-		KindProtectionReceipt: `"seq":1.5`,
-		KindWriteReceipt:      `"seq":1.5`,
-		KindExportRequest:     `"current_cut":1.5`,
-		KindExportResult:      `"protection_cut":1.5`,
-		KindBodyStateRequest:  `"body":{"length":1.5}`,
-		KindStratumProfile:    `"runtime":{"idempotency_window_ms":1.5}`,
+		KindJournalEntry:       `"seq":1.5`,
+		KindRecord:             `"revision":1.5`,
+		KindProtectionRequest:  `"restores":1.5`,
+		KindProtectionReceipt:  `"seq":1.5`,
+		KindWriteReceipt:       `"seq":1.5`,
+		KindExportRequest:      `"current_cut":1.5`,
+		KindExportResult:       `"protection_cut":1.5`,
+		KindBodyStateRequest:   `"body":{"length":1.5}`,
+		KindStratumProfile:     `"runtime":{"idempotency_window_ms":1.5}`,
+		KindStreamSeal:         `"cut_seq":1.5`,
+		KindRemovalEligibility: `"incarnation":1.5`,
 	} {
 		if _, err := Ingest([]byte(`{`+intField+`}`), kind); reason(err) != ReasonNumericDomain {
 			t.Errorf("%s: %v, want numeric_domain", kind, err)
@@ -179,6 +181,32 @@ func TestEveryKindRunsBothStages(t *testing.T) {
 		both := `{` + intField + `,"zz_opaque":1e400}`
 		if _, err := Ingest([]byte(both), kind); reason(err) != ReasonIngest {
 			t.Errorf("%s: %v, want ingest before numeric_domain", kind, err)
+		}
+	}
+}
+
+// The nested protocol objects added with stream recovery, stream seals and
+// removal eligibility are typed down to their leaves.
+func TestNestedProtocolIntegers(t *testing.T) {
+	for _, c := range []struct{ kind, doc string }{
+		{KindJournalEntry, `{"recovery":{"cut_seq":1.5}}`},
+		{KindJournalEntry, `{"recovery":{"reconciled_bodies":[{"floor":1.5}]}}`},
+		{KindJournalEntry, `{"recovery":{"reconciled_bodies":[{"body":{"length":1.5}}]}}`},
+		{KindStreamSeal, `{"v":1.5}`},
+		{KindStreamSeal, `{"cut_seq":1.5}`},
+		{KindStreamSeal, `{"ancestor_seals":[{"cut_seq":1.5}]}`},
+		{KindRemovalEligibility, `{"incarnation":1.5}`},
+		{KindRemovalEligibility, `{"body":{"length":1.5}}`},
+		{KindRemovalEligibility, `{"authorization":{"incarnation":1.5}}`},
+		{KindRemovalEligibility, `{"authorization":{"body":{"length":1.5}}}`},
+		{KindRemovalEligibility, `{"observed_streams":[{"journal":[{"seq":1.5}]}]}`},
+		{KindRemovalEligibility, `{"observed_streams":[{"source_journal":[{"seq":1.5}]}]}`},
+		{KindRemovalEligibility, `{"observed_streams":[{"ancestors":[[{"seq":1.5}]]}]}`},
+		{KindRemovalEligibility, `{"observed_streams":[{"source_seal":{"seal":{"cut_seq":1.5}}}]}`},
+		{KindRemovalEligibility, `{"observed_streams":[{"source_seal":{"ancestor_seal_contexts":[{"seal":{"ancestor_seals":[{"cut_seq":1.5}]}}]}}]}`},
+	} {
+		if _, err := Ingest([]byte(c.doc), c.kind); reason(err) != ReasonNumericDomain {
+			t.Errorf("%s %s: %v, want numeric_domain", c.kind, c.doc, err)
 		}
 	}
 }

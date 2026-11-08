@@ -1,0 +1,93 @@
+{
+  "schema": "journal-entry",
+  "baseline": {
+    "v": 1,
+    "seq": 2,
+    "group": 2,
+    "group_size": 1,
+    "stream": "records.example",
+    "type": "appended",
+    "at": "2026-10-28T00:00:02.000000Z",
+    "record": {
+      "v": 1,
+      "stream": "records.example",
+      "record_id": "rec-1",
+      "revision": 1,
+      "payload_contract": "contract: example/v0",
+      "provenance": {
+        "actor_kind": "human",
+        "actor": "operator"
+      },
+      "classification": {
+        "retention": "standard",
+        "sensitivity": "0-public"
+      },
+      "body": {
+        "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+        "length": 8,
+        "media_type": "text/plain"
+      }
+    },
+    "digest": "sha256:5138a00200d87b7e225398c9cfcc598df75d079e4a2681934f64878a85e46f92",
+    "idempotency_key": "write-records.example-rec-1-2",
+    "body_status": "verified"
+  },
+  "reject": {
+    "v": 1,
+    "seq": 2,
+    "group": 2,
+    "group_size": 1,
+    "stream": "records.example",
+    "type": "appended",
+    "at": "2026-10-28T00:00:02.000000Z",
+    "record": {
+      "v": 1,
+      "stream": "records.example",
+      "record_id": "rec-1",
+      "revision": 1,
+      "payload_contract": "contract: example/v0",
+      "provenance": {
+        "actor_kind": "human",
+        "actor": "operator"
+      },
+      "classification": {
+        "retention": "standard",
+        "sensitivity": "0-public"
+      },
+      "body": {
+        "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+        "length": 8,
+        "media_type": "text/plain"
+      }
+    },
+    "digest": "sha256:5138a00200d87b7e225398c9cfcc598df75d079e4a2681934f64878a85e46f92",
+    "idempotency_key": "write-records.example-rec-1-2",
+    "body_status": "verified",
+    "recovery": {
+      "store": "store.alpha",
+      "previous_stream": "store.bodies.0",
+      "cut_seq": 1,
+      "cut_digest": "sha256:6b28930b181d4a28c9551c594c1e5bb1cb8d99927d15c4403816a1966d577d1e",
+      "quarantined_image_digest": "sha256:7e43805bb1950014b70ef2ce5ccfb197ae16ff3b34f8a4e0a1928072829fb3a6",
+      "reconciled_bodies": [
+        {
+          "body": {
+            "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+            "length": 8
+          },
+          "floor": 0,
+          "activation_observation": "absent",
+          "post_recovery_state": "unpublished"
+        }
+      ],
+      "authorization": {
+        "ref": "policy:recovery-1",
+        "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+      },
+      "provenance": {
+        "actor_kind": "human",
+        "actor": "operator"
+      }
+    }
+  }
+}

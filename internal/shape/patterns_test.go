@@ -23,6 +23,8 @@ var patternSamples = map[string]string{
 	`^[a-z0-9][a-z0-9_-]{0,63}$`:                                          "standard_1",
 	`^[a-z][a-z0-9_]{0,31}$`:                                              "verified",
 	`^contract: [a-z0-9][a-z0-9-]*/v[0-9]+$`:                              "contract: example/v0",
+	`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`:                                  "Ab+1.c-d_e",
+	`^[a-z0-9][a-z0-9._:-]{0,127}$`:                                       "trust:profile.1-a_b",
 	`^sha256:[0-9a-f]{64}$`:                                               "sha256:" + strings.Repeat("ab", 32),
 }
 

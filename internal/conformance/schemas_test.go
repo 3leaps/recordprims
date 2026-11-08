@@ -18,15 +18,17 @@ import (
 // schemaKinds maps each vendored schema file to the wire document kind used
 // to ingest it.
 var schemaKinds = map[string]string{
-	"journal-entry.schema.json":      wire.KindJournalEntry,
-	"record.schema.json":             wire.KindRecord,
-	"write-receipt.schema.json":      wire.KindWriteReceipt,
-	"stratum-profile.schema.json":    wire.KindStratumProfile,
-	"protection-request.schema.json": wire.KindProtectionRequest,
-	"protection-receipt.schema.json": wire.KindProtectionReceipt,
-	"export-request.schema.json":     wire.KindExportRequest,
-	"export-result.schema.json":      wire.KindExportResult,
-	"body-state-request.schema.json": wire.KindBodyStateRequest,
+	"journal-entry.schema.json":               wire.KindJournalEntry,
+	"record.schema.json":                      wire.KindRecord,
+	"write-receipt.schema.json":               wire.KindWriteReceipt,
+	"stratum-profile.schema.json":             wire.KindStratumProfile,
+	"protection-request.schema.json":          wire.KindProtectionRequest,
+	"protection-receipt.schema.json":          wire.KindProtectionReceipt,
+	"export-request.schema.json":              wire.KindExportRequest,
+	"export-result.schema.json":               wire.KindExportResult,
+	"body-state-request.schema.json":          wire.KindBodyStateRequest,
+	"stream-seal.schema.json":                 wire.KindStreamSeal,
+	"removal-eligibility-request.schema.json": wire.KindRemovalEligibility,
 }
 
 // TestProtocolIntsCoverSchemas walks every vendored v0 and v1 schema,

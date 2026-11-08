@@ -9,7 +9,9 @@
     "protection_receipt": "protection-receipt.schema.json",
     "export_request": "export-request.schema.json",
     "export_result": "export-result.schema.json",
-    "body_state_request": "body-state-request.schema.json"
+    "body_state_request": "body-state-request.schema.json",
+    "removal_eligibility_request": "removal-eligibility-request.schema.json",
+    "stream_seal": "stream-seal.schema.json"
   },
   "status": "proposed"
 }

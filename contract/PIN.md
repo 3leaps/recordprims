@@ -6,8 +6,8 @@ immutable identity, never by branch.
 | Field | Value |
 | --- | --- |
 | Repository | `3leaps/crucible` (public) |
-| Commit | `3b0647d2378ee9cf24505dae223418886dd6fc83` (tag `v0.2.8`) |
-| Family tree `schemas/durable-record/v1` | `4a5a8e2400e045ea3d08274bef81c51bbfca72fc` |
+| Commit | `0e1e5f9b1f2e262a72ff166086d9543199b59300` (tag `v0.2.9`) |
+| Family tree `schemas/durable-record/v1` | `ebc490a780d627d3d765879cb473f597b088d67e` |
 | Family tree `schemas/durable-record/v0` | `34b39c49c3feab9910fbba95f0b501c17fc83f40` (v1 reuses the v0 record envelope and helpers) |
 | Status | proposed / experimental (crucible ADR-0019) |
 
@@ -18,21 +18,21 @@ crucible's own relative layout, so the reference interpreter runs unmodified:
 
 | Path | Git blob or tree |
 | --- | --- |
-| `schemas/durable-record/v1/` | tree `4a5a8e2400e045ea3d08274bef81c51bbfca72fc` |
+| `schemas/durable-record/v1/` | tree `ebc490a780d627d3d765879cb473f597b088d67e` |
 | `schemas/durable-record/v0/` | tree `34b39c49c3feab9910fbba95f0b501c17fc83f40` |
-| `docs/standards/durable-record-v1-contract.md` | `13cbb1103fda9dcde253e9167af265828eee7c2e` |
+| `docs/standards/durable-record-v1-contract.md` | `4b6ce8c6076da7685c80bef9a72bcda46ad6e73c` |
 | `docs/standards/durable-record-contract.md` | `d0c9ed2a4d9f56117596e160a0186527ed41fec1` |
 | `docs/decisions/ADR-0019-durable-record-tombstoning.md` | `284445edac42519cff7b4909808edc7a1e4cb62e` |
-| `scripts/test-durable-record-v1-controls.py` | `13383c916d139d2ebd4cbc095f480c85c20fb4fe` |
-| `scripts/validate-durable-record-fixtures.py` | `122378ebb7860eff583ec88ff47902cf58bfa689` |
-| `scripts/rfc8785-canonicalize.py` | `4e09387ced83db97aa6ed7e239296bf5bba27501` |
-| `scripts/rfc3339-instant.py` | `87a69543642c40bc008700961e0935a3496bd0a4` |
+| `scripts/test-durable-record-v1-controls.py` | `6d7573801321e414bbc2996e9d3fa3a91c8d478e` |
+| `scripts/validate-durable-record-fixtures.py` | `65e20f236f1f319fecc25d3f5a199f6db92bec7e` |
+| `scripts/rfc8785-canonicalize.py` | `3fce69cb93ee4cd46cf595f6288cc0d53553e8a1` |
+| `scripts/rfc3339-instant.py` | `1fbb9f09a9ed505c958888f91bc67cafad827a94` |
 
 Archive identity, produced by
-`git archive 3b0647d <the paths above, in table order> | shasum -a 256`:
+`git archive 0e1e5f9 <the paths above, in table order> | shasum -a 256`:
 
 ```text
-96a2a8d228c71fd7f9164ad9fd0007d3beeb029f7627519b9dfbf48b9dcc484d
+266c3aa29025f1b6c74ad3aec5f58ceb8bbebf95884189b9f92fb0dd100da473
 ```
 
 `INVENTORY.sha256` lists the SHA-256 of every vendored file.

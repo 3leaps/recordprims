@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract:durable-record/v1/stream-seal.schema.json",
+  "title": "Durable Record Stream Seal",
+  "description": "Detached canonical RFC 8785 JCS seal artifact binding a closed, write-fenced continuation source cut, its effective restriction manifest digest, and its sealed ancestor chain.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "store",
+    "capability",
+    "stream",
+    "cut_seq",
+    "cut_digest",
+    "effective_restriction_manifest_digest",
+    "ancestor_seals",
+    "trust_profile",
+    "sealed_at",
+    "provenance",
+    "authorization"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "store": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "description": "Store identifier owning the sealed stream; prevents cross-store seal replay."
+    },
+    "capability": {
+      "$ref": "#/$defs/capability"
+    },
+    "stream": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "cut_seq": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "cut_digest": {
+      "$ref": "#/$defs/digest"
+    },
+    "effective_restriction_manifest_digest": {
+      "$ref": "#/$defs/digest"
+    },
+    "ancestor_seals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ancestorSeal"
+      },
+      "description": "Sorted by the RFC 8785 JCS bytes of its member objects with no duplicates; empty when the sealed stream is not itself a continuation."
+    },
+    "trust_profile": {
+      "$ref": "#/$defs/sealTrustProfile"
+    },
+    "sealed_at": {
+      "$ref": "#/$defs/instant"
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "authorization": {
+      "$ref": "#/$defs/authorization"
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "capability": {
+      "enum": [
+        "contract: durable-record/v0",
+        "contract: durable-record/v1"
+      ]
+    },
+    "instant": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$",
+      "description": "Canonical v1 instant: UTC, Z, exactly six fractional digits. Any other spelling is refused, never normalized."
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor_kind",
+        "actor"
+      ],
+      "description": "Who produced this revision. Model and tool describe the producer; they do not own the record.",
+      "properties": {
+        "actor_kind": {
+          "enum": [
+            "human",
+            "agent",
+            "process"
+          ]
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "supervisor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "tool": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "ancestorSeal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "store",
+        "capability",
+        "stream",
+        "cut_seq",
+        "seal_digest"
+      ],
+      "properties": {
+        "store": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "capability": {
+          "$ref": "#/$defs/capability"
+        },
+        "stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "cut_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "seal_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "sealTrustProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+        }
+      }
+    }
+  }
+}

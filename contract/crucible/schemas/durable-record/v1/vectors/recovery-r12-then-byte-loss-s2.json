@@ -1,0 +1,113 @@
+{
+  "window_ms": 60000,
+  "profile": {
+    "capabilities": [
+      "contract: durable-record/v1"
+    ],
+    "origin": "declared",
+    "conformance": "none",
+    "build": {
+      "name": "example-store",
+      "version": "0.1.0",
+      "compiled_strata": [
+        "journal-files"
+      ],
+      "compiled_capabilities": [
+        "revisioned",
+        "body_ref",
+        "export_bundle",
+        "tombstoning"
+      ]
+    },
+    "runtime": {
+      "stratum": "journal-files",
+      "failure_model": "survives_power_loss",
+      "history_policy": "append_only",
+      "enabled_capabilities": [
+        "revisioned",
+        "body_ref",
+        "export_bundle",
+        "tombstoning"
+      ],
+      "idempotency_window_ms": 60000,
+      "deletion": {
+        "live_head": "supported",
+        "retained_history": "unsupported",
+        "managed_replicas": "not_applicable",
+        "external_bodies": "supported",
+        "decryption": "unsupported",
+        "unmanaged_copies": "outside_claim"
+      },
+      "body_removal_stream": "store.bodies.2",
+      "incarnation_allocation": "prewrite_durable_ledger",
+      "quarantined_designated_streams": [
+        "store.bodies.1",
+        "store.bodies.0"
+      ]
+    }
+  },
+  "quarantined_streams": {
+    "store.bodies.0": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"store.bodies.0\",\"type\":\"stream_opened\",\"at\":\"2026-10-28T00:00:01.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_power_loss\"}\n{\"v\":1,\"seq\":2,\"group\":2,\"group_size\":1,\"stream\":\"store.bodies.0\",\"type\":\"body_published\",\"at\":\"2026-10-28T00:00:02.000000Z\",\"body\":{\"digest\":\"sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de\",\"length\":8},\"incarnation\":1}\n{\"v\":1,\"seq\":3,\"group\":3,\"group_size\":1,\"stream\":\"store.bodies.0\",\"type\":\"body_removal_started\",\"at\":\"2026-10-28T00:00:03.000000Z\",\"body\":{\"digest\":\"sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de\",\"length\":8},\"incarnation\":1,\"reason\":\"retention\",\"authorization\":{\"ref\":\"policy:retention\",\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"provenance\":{\"actor_kind\":\"process\",\"actor\":\"sweeper\"}}\n{\"torn\":",
+    "store.bodies.1": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"store.bodies.1\",\"type\":\"stream_opened\",\"at\":\"2026-10-28T00:00:10.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_power_loss\",\"recovery\":{\"store\":\"store.alpha\",\"previous_stream\":\"store.bodies.0\",\"cut_seq\":3,\"cut_digest\":\"sha256:bb43c641f267713ca91c1e1304a2c76dceaa7ab6a02970b9d3c62d484ad2abba\",\"quarantined_image_digest\":\"sha256:c279348784c2850c63206895b4ffa9d5de5d429a1e6d173d62055505ecc03d49\",\"reconciled_bodies\":[{\"body\":{\"digest\":\"sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de\",\"length\":8},\"floor\":1,\"activation_observation\":\"present_valid\",\"post_recovery_state\":\"available\"}],\"authorization\":{\"ref\":\"policy:recovery-1\",\"digest\":\"sha256:9999999999999999999999999999999999999999999999999999999999999999\"},\"provenance\":{\"actor_kind\":\"human\",\"actor\":\"operator\"}}}\n{\"torn_s1\":"
+  },
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "store.bodies.2",
+      "type": "stream_opened",
+      "at": "2026-10-28T00:00:20.000000Z",
+      "mode": "single_revision",
+      "failure_model": "survives_power_loss",
+      "recovery": {
+        "store": "store.alpha",
+        "previous_stream": "store.bodies.1",
+        "cut_seq": 1,
+        "cut_digest": "sha256:bca9e4c291dbf104e24ae69e20b98f58375d23dc3ba985cb6538458481888f5f",
+        "quarantined_image_digest": "sha256:7f9bba602a16b90e1b9714878dec1b7c8945caef64c78b7d88192bd708ba11a2",
+        "reconciled_bodies": [
+          {
+            "body": {
+              "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+              "length": 8
+            },
+            "floor": 1,
+            "activation_observation": "absent",
+            "post_recovery_state": "integrity_loss"
+          }
+        ],
+        "authorization": {
+          "ref": "policy:recovery-1",
+          "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "body_state": {
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8
+        },
+        "present": false
+      }
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "outcome": "body_state",
+        "state": "integrity_loss"
+      }
+    ],
+    "active_holds": [],
+    "journal_size": 1
+  }
+}

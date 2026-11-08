@@ -1,0 +1,390 @@
+{
+  "window_ms": 60000,
+  "source_journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.m3",
+      "type": "stream_opened",
+      "at": "2026-10-28T00:02:01.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss",
+      "continues": {
+        "capability": "contract: durable-record/v1",
+        "stream": "records.m2",
+        "cut_seq": 3,
+        "cut_digest": "sha256:cd556544ba28fd8af39a4e7f0011009861cde9c923623bd02bb4130ab40b5ca1"
+      }
+    },
+    {
+      "v": 1,
+      "seq": 2,
+      "group": 2,
+      "group_size": 1,
+      "stream": "records.m3",
+      "type": "appended",
+      "at": "2026-10-28T00:02:02.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "records.m3",
+        "record_id": "imp-1",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        },
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8,
+          "media_type": "text/plain"
+        }
+      },
+      "digest": "sha256:503e6b7d5b8cad71b7c4e10cc585d1ad481c08b3b916b8dc5294779fffa48839",
+      "idempotency_key": "write-records.m3-imp-1-2",
+      "body_status": "verified",
+      "imported_from": {
+        "capability": "contract: durable-record/v1",
+        "pin": {
+          "stream": "records.m2",
+          "record_id": "imp-1",
+          "revision": 1,
+          "digest": "sha256:e284e80724dda02db88694013335b8766fdc2d081869265a89f11ab6880452cd"
+        }
+      }
+    },
+    {
+      "v": 1,
+      "seq": 3,
+      "group": 3,
+      "group_size": 1,
+      "stream": "records.m3",
+      "type": "restrictions_reviewed",
+      "at": "2026-10-28T00:02:04.000000Z",
+      "source": {
+        "capability": "contract: durable-record/v1",
+        "stream": "records.m2",
+        "cut_seq": 3,
+        "cut_digest": "sha256:cd556544ba28fd8af39a4e7f0011009861cde9c923623bd02bb4130ab40b5ca1"
+      },
+      "source_state_digest": "sha256:9255b0437e4b998de22c66bd6388a50ae5785680507b7c38b30c725bc725e83e",
+      "destination_cut_seq": 2,
+      "destination_applied_state_digest": "sha256:0fcac3330b0dcc2f731b0f96c9498f66c305a5adbf63e268a19c81cffdaf280a",
+      "authorization": {
+        "ref": "policy:review-1",
+        "digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "provenance": {
+        "actor_kind": "process",
+        "actor": "reviewer"
+      }
+    }
+  ],
+  "source_seal": {
+    "seal": {
+      "v": 1,
+      "store": "store.alpha",
+      "capability": "contract: durable-record/v1",
+      "stream": "records.m3",
+      "cut_seq": 3,
+      "cut_digest": "sha256:692e8534d517068cc1d50eeb5b7cb9bab9ff04623eb6284ca6a73f3e58fa6e07",
+      "effective_restriction_manifest_digest": "sha256:2f9c06d280344111b86862118469c71a8da912a4eb1f285d4cd9c24011d10ac0",
+      "ancestor_seals": [
+        {
+          "store": "store.alpha",
+          "capability": "contract: durable-record/v1",
+          "stream": "records.root",
+          "cut_seq": 2,
+          "seal_digest": "sha256:172e84f73db42e1a81e08796c16da1cce128472cbbc6b262948bc198edd2b8ce"
+        },
+        {
+          "store": "store.alpha",
+          "capability": "contract: durable-record/v1",
+          "stream": "records.mid",
+          "cut_seq": 3,
+          "seal_digest": "sha256:d6944a34965199c7e90fa625ed0f8e9247f4b24b8ad630e96542d9b36c5067cf"
+        },
+        {
+          "store": "store.alpha",
+          "capability": "contract: durable-record/v1",
+          "stream": "records.m2",
+          "cut_seq": 3,
+          "seal_digest": "sha256:f1c2c5548aacef6e9e31999869a793b1a266dba83543147992b24fbd37fbfa66"
+        }
+      ],
+      "trust_profile": {
+        "id": "seal-authority",
+        "version": "1"
+      },
+      "sealed_at": "2026-10-28T00:01:00.000000Z",
+      "provenance": {
+        "actor_kind": "process",
+        "actor": "closer"
+      },
+      "authorization": {
+        "ref": "authority:stream-closer",
+        "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+      }
+    },
+    "expected_store": "store.alpha",
+    "accepted_trust_profile": {
+      "id": "seal-authority",
+      "version": "1"
+    },
+    "closer_authenticated": true,
+    "source_write_fenced": true,
+    "ancestor_seal_contexts": [
+      {
+        "seal": {
+          "v": 1,
+          "store": "store.alpha",
+          "capability": "contract: durable-record/v1",
+          "stream": "records.m2",
+          "cut_seq": 3,
+          "cut_digest": "sha256:cd556544ba28fd8af39a4e7f0011009861cde9c923623bd02bb4130ab40b5ca1",
+          "effective_restriction_manifest_digest": "sha256:9255b0437e4b998de22c66bd6388a50ae5785680507b7c38b30c725bc725e83e",
+          "ancestor_seals": [
+            {
+              "store": "store.alpha",
+              "capability": "contract: durable-record/v1",
+              "stream": "records.root",
+              "cut_seq": 2,
+              "seal_digest": "sha256:172e84f73db42e1a81e08796c16da1cce128472cbbc6b262948bc198edd2b8ce"
+            },
+            {
+              "store": "store.alpha",
+              "capability": "contract: durable-record/v1",
+              "stream": "records.mid",
+              "cut_seq": 3,
+              "seal_digest": "sha256:d6944a34965199c7e90fa625ed0f8e9247f4b24b8ad630e96542d9b36c5067cf"
+            }
+          ],
+          "trust_profile": {
+            "id": "seal-authority",
+            "version": "1"
+          },
+          "sealed_at": "2026-10-28T00:01:00.000000Z",
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "closer"
+          },
+          "authorization": {
+            "ref": "authority:stream-closer",
+            "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+          }
+        },
+        "expected_store": "store.alpha",
+        "accepted_trust_profile": {
+          "id": "seal-authority",
+          "version": "1"
+        },
+        "closer_authenticated": true,
+        "source_write_fenced": true
+      },
+      {
+        "seal": {
+          "v": 1,
+          "store": "store.alpha",
+          "capability": "contract: durable-record/v1",
+          "stream": "records.mid",
+          "cut_seq": 3,
+          "cut_digest": "sha256:61eb56d3213dd205308deac97ed91bd3b7b7a850077859a46a91efc9110a18a1",
+          "effective_restriction_manifest_digest": "sha256:4b1ce776399d8847cc9af5c93b4acd87e15d8bd736c65e9d22035bf641faf8ab",
+          "ancestor_seals": [
+            {
+              "store": "store.alpha",
+              "capability": "contract: durable-record/v1",
+              "stream": "records.root",
+              "cut_seq": 2,
+              "seal_digest": "sha256:172e84f73db42e1a81e08796c16da1cce128472cbbc6b262948bc198edd2b8ce"
+            }
+          ],
+          "trust_profile": {
+            "id": "seal-authority",
+            "version": "1"
+          },
+          "sealed_at": "2026-10-28T00:01:00.000000Z",
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "closer"
+          },
+          "authorization": {
+            "ref": "authority:stream-closer",
+            "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+          }
+        },
+        "expected_store": "store.alpha",
+        "accepted_trust_profile": {
+          "id": "seal-authority",
+          "version": "1"
+        },
+        "closer_authenticated": true,
+        "source_write_fenced": true
+      },
+      {
+        "seal": {
+          "v": 1,
+          "store": "store.alpha",
+          "capability": "contract: durable-record/v1",
+          "stream": "records.root",
+          "cut_seq": 2,
+          "cut_digest": "sha256:f62b6aa0377c43d5b251d759d62707edf3684a1925430825c25554a0b4f31278",
+          "effective_restriction_manifest_digest": "sha256:5cb72fd9337154074dc353b97f04c8dc84bba51bf1aa1f73db49a14dd890b93c",
+          "ancestor_seals": [],
+          "trust_profile": {
+            "id": "seal-authority",
+            "version": "1"
+          },
+          "sealed_at": "2026-10-28T00:00:10.000000Z",
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "closer"
+          },
+          "authorization": {
+            "ref": "authority:stream-closer",
+            "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+          }
+        },
+        "expected_store": "store.alpha",
+        "accepted_trust_profile": {
+          "id": "seal-authority",
+          "version": "1"
+        },
+        "closer_authenticated": true,
+        "source_write_fenced": false
+      }
+    ]
+  },
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.dest",
+      "type": "stream_opened",
+      "at": "2026-10-28T00:02:01.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss",
+      "continues": {
+        "capability": "contract: durable-record/v1",
+        "stream": "records.m3",
+        "cut_seq": 3,
+        "cut_digest": "sha256:692e8534d517068cc1d50eeb5b7cb9bab9ff04623eb6284ca6a73f3e58fa6e07"
+      }
+    },
+    {
+      "v": 1,
+      "seq": 2,
+      "group": 2,
+      "group_size": 1,
+      "stream": "records.dest",
+      "type": "appended",
+      "at": "2026-10-28T00:02:02.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "records.dest",
+        "record_id": "imp-1",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        },
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8,
+          "media_type": "text/plain"
+        }
+      },
+      "digest": "sha256:d2a15f600f9d80c16672a0cefd5c26c0a9ba433e2ac18853aa59884c6d04886f",
+      "idempotency_key": "write-records.dest-imp-1-2",
+      "body_status": "verified",
+      "imported_from": {
+        "capability": "contract: durable-record/v1",
+        "pin": {
+          "stream": "records.m3",
+          "record_id": "imp-1",
+          "revision": 1,
+          "digest": "sha256:503e6b7d5b8cad71b7c4e10cc585d1ad481c08b3b916b8dc5294779fffa48839"
+        }
+      }
+    },
+    {
+      "v": 1,
+      "seq": 3,
+      "group": 3,
+      "group_size": 1,
+      "stream": "records.dest",
+      "type": "restrictions_reviewed",
+      "at": "2026-10-28T00:02:04.000000Z",
+      "source": {
+        "capability": "contract: durable-record/v1",
+        "stream": "records.m3",
+        "cut_seq": 3,
+        "cut_digest": "sha256:692e8534d517068cc1d50eeb5b7cb9bab9ff04623eb6284ca6a73f3e58fa6e07"
+      },
+      "source_state_digest": "sha256:2f9c06d280344111b86862118469c71a8da912a4eb1f285d4cd9c24011d10ac0",
+      "destination_cut_seq": 2,
+      "destination_applied_state_digest": "sha256:0fcac3330b0dcc2f731b0f96c9498f66c305a5adbf63e268a19c81cffdaf280a",
+      "authorization": {
+        "ref": "policy:review-1",
+        "digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "provenance": {
+        "actor_kind": "process",
+        "actor": "reviewer"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "use": {
+        "v": 1,
+        "stream": "records.dest",
+        "purpose": "export",
+        "closure": "full_content",
+        "protection_state": "verified",
+        "protection_cut": 3,
+        "current_cut": 3,
+        "inherited_block": false,
+        "source_state_digest": "sha256:2f9c06d280344111b86862118469c71a8da912a4eb1f285d4cd9c24011d10ac0",
+        "selection": [
+          {
+            "stream": "records.dest",
+            "record_id": "imp-1",
+            "revision": 1,
+            "digest": "sha256:d2a15f600f9d80c16672a0cefd5c26c0a9ba433e2ac18853aa59884c6d04886f"
+          }
+        ],
+        "omitted": [],
+        "bodies": [
+          {
+            "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+            "hex": "6578616d706c650a"
+          }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "outcome": "refused",
+        "reason": "protection_unavailable"
+      }
+    ],
+    "active_holds": [],
+    "journal_size": 3
+  }
+}

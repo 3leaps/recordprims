@@ -120,6 +120,10 @@
       "$ref": "#/$defs/sourceCut",
       "description": "Only on stream_opened: the source journal and cut this stream continues."
     },
+    "recovery": {
+      "$ref": "#/$defs/streamRecovery",
+      "description": "Only on stream_opened of the designated body-removal stream: recovery transition from a quarantined predecessor."
+    },
     "imported_from": {
       "$ref": "#/$defs/sourcePin",
       "description": "Only on appended or revised in a continuation: the exact source pin this record re-records."
@@ -641,11 +645,27 @@
           }
         }
       },
-      "then": {},
-      "else": {
+      "then": {
         "not": {
           "required": [
-            "continues"
+            "continues",
+            "recovery"
+          ]
+        }
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "continues"
+              ]
+            },
+            {
+              "required": [
+                "recovery"
+              ]
+            }
           ]
         }
       }
@@ -1521,6 +1541,92 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        }
+      }
+    },
+    "reconciledBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body",
+        "floor",
+        "activation_observation",
+        "post_recovery_state"
+      ],
+      "description": "Durable per-body recovery transition persisted at designated-stream recovery activation.",
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/lifecycleBody"
+        },
+        "floor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Authoritative pre-write durable allocation ledger upper bound at activation (0 when zero incarnations were ever allocated)."
+        },
+        "activation_observation": {
+          "enum": [
+            "present_valid",
+            "absent"
+          ]
+        },
+        "post_recovery_state": {
+          "enum": [
+            "unpublished",
+            "available",
+            "publishing",
+            "removal_pending",
+            "removed",
+            "integrity_loss"
+          ]
+        }
+      }
+    },
+    "streamRecovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "store",
+        "previous_stream",
+        "cut_seq",
+        "cut_digest",
+        "quarantined_image_digest",
+        "reconciled_bodies",
+        "authorization",
+        "provenance"
+      ],
+      "description": "Designated body-removal stream recovery header binding the quarantined predecessor image, longest valid complete-group prefix cut, and reconciled body states.",
+      "properties": {
+        "store": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "previous_stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "cut_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "cut_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "quarantined_image_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "reconciled_bodies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reconciledBody"
+          }
+        },
+        "authorization": {
+          "$ref": "#/$defs/authorization"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
         }
       }
     }

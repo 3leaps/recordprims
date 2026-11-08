@@ -1,0 +1,133 @@
+{
+  "window_ms": 60000,
+  "profile": {
+    "capabilities": [
+      "contract: durable-record/v1"
+    ],
+    "origin": "declared",
+    "conformance": "none",
+    "build": {
+      "name": "example-store",
+      "version": "0.1.0",
+      "compiled_strata": [
+        "journal-files"
+      ],
+      "compiled_capabilities": [
+        "revisioned",
+        "body_ref",
+        "export_bundle",
+        "tombstoning"
+      ]
+    },
+    "runtime": {
+      "stratum": "journal-files",
+      "failure_model": "survives_power_loss",
+      "history_policy": "append_only",
+      "enabled_capabilities": [
+        "revisioned",
+        "body_ref",
+        "export_bundle",
+        "tombstoning"
+      ],
+      "idempotency_window_ms": 60000,
+      "deletion": {
+        "live_head": "supported",
+        "retained_history": "unsupported",
+        "managed_replicas": "not_applicable",
+        "external_bodies": "supported",
+        "decryption": "unsupported",
+        "unmanaged_copies": "outside_claim"
+      },
+      "body_removal_stream": "store.bodies.1",
+      "incarnation_allocation": "prewrite_durable_ledger",
+      "quarantined_designated_streams": [
+        "store.bodies.0"
+      ]
+    }
+  },
+  "quarantined_streams": {
+    "store.bodies.0": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"store.bodies.0\",\"type\":\"stream_opened\",\"at\":\"2026-10-28T00:00:01.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_power_loss\"}\n{\"torn_tail\":"
+  },
+  "recovery_contexts": {
+    "store.bodies.1": {
+      "ledger_floors": [
+        {
+          "body": {
+            "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+            "length": 8
+          },
+          "floor": 0
+        }
+      ],
+      "live_activation_observations": [
+        {
+          "body": {
+            "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+            "length": 8
+          },
+          "observation": "absent"
+        }
+      ]
+    }
+  },
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "store.bodies.1",
+      "type": "stream_opened",
+      "at": "2026-10-28T00:00:10.000000Z",
+      "mode": "single_revision",
+      "failure_model": "survives_power_loss",
+      "recovery": {
+        "store": "store.alpha",
+        "previous_stream": "store.bodies.0",
+        "cut_seq": 1,
+        "cut_digest": "sha256:457950bf771cf5be5baf82945dce5d4f51ab6f95c424d5db307f9d2581c147df",
+        "quarantined_image_digest": "sha256:0e9e289c80a1b9cf97a67550293f0ecbd98f1671b334237275efb03d1fb60f7e",
+        "reconciled_bodies": [
+          {
+            "body": {
+              "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+              "length": 8
+            },
+            "floor": 0,
+            "activation_observation": "absent",
+            "post_recovery_state": "unpublished"
+          }
+        ],
+        "authorization": {
+          "ref": "policy:recovery-1",
+          "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "body_state": {
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8
+        },
+        "present": false
+      }
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "outcome": "body_state",
+        "state": "unpublished"
+      }
+    ],
+    "active_holds": [],
+    "journal_size": 1
+  }
+}

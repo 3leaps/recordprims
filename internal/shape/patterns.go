@@ -19,5 +19,7 @@ var admittedPatterns = map[string]bool{
 	`^[a-z0-9][a-z0-9_-]{0,63}$`:                                          true,
 	`^[a-z][a-z0-9_]{0,31}$`:                                              true,
 	`^contract: [a-z0-9][a-z0-9-]*/v[0-9]+$`:                              true,
+	`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`:                                  true,
+	`^[a-z0-9][a-z0-9._:-]{0,127}$`:                                       true,
 	`^sha256:[0-9a-f]{64}$`:                                               true,
 }
