@@ -48,16 +48,16 @@ func (s *State) SetRemovalStream(name string) {
 }
 
 // Partial reports whether an ingested entry needed semantics this package
-// does not implement yet (content, protection, retirement, body lifecycle or
-// continuation processing). A State that is partial has not checked the
-// stream completely. Partial is set by the entry itself (its type, or a
-// continues on stream_opened), whether or not its group has closed, and an
-// open group does not set it: the journal invariants run only when an entry
-// closes its group, so a State that is not partial may still hold an open
-// last group it has not checked. The caller runs CheckJournal on the whole
-// journal for that. Schema constraints
-// (group_size at least 1, required members such as failure_model) belong to
-// the shape stage and are not rechecked here.
+// does not implement yet (content, protection, retirement, body lifecycle,
+// continuation or recovery processing). A State that is partial has not
+// checked the stream completely. Partial is set by the entry itself (its
+// type, or a continues or recovery on stream_opened), whether or not its
+// group has closed, and an open group does not set it: the journal invariants
+// run only when an entry closes its group, so a State that is not partial may
+// still hold an open last group it has not checked. The caller runs
+// CheckJournal on the whole journal for that. Schema constraints (group_size
+// at least 1, required members such as failure_model) belong to the shape
+// stage and are not rechecked here.
 func (s *State) Partial() bool { return s.partial }
 
 // Len is the number of entries ingested.
@@ -153,7 +153,7 @@ func (s *State) Ingest(e *wire.Node) error {
 	}
 	switch {
 	case typ == "stream_opened":
-		if e.Get("continues") != nil {
+		if e.Get("continues") != nil || e.Get("recovery") != nil {
 			s.partial = true
 		}
 	case typ == "conflicted":

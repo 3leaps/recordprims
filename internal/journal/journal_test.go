@@ -315,6 +315,10 @@ func TestPartial(t *testing.T) {
 	if got := ingestAll(t, c, set(opened(1), "failure_model", `"survives_power_loss","continues":{}`)); got != "" || !c.Partial() {
 		t.Fatalf("continuation: %q partial=%v, want partial", got, c.Partial())
 	}
+	r := window(t)
+	if got := ingestAll(t, r, set(opened(1), "failure_model", `"survives_power_loss","recovery":{}`)); got != "" || !r.Partial() {
+		t.Fatalf("recovery: %q partial=%v, want partial", got, r.Partial())
+	}
 }
 
 func TestCheckProfile(t *testing.T) {

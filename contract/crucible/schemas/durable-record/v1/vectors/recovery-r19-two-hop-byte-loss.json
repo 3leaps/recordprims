@@ -1,0 +1,113 @@
+{
+  "window_ms": 60000,
+  "profile": {
+    "capabilities": [
+      "contract: durable-record/v1"
+    ],
+    "origin": "declared",
+    "conformance": "none",
+    "build": {
+      "name": "example-store",
+      "version": "0.1.0",
+      "compiled_strata": [
+        "journal-files"
+      ],
+      "compiled_capabilities": [
+        "revisioned",
+        "body_ref",
+        "export_bundle",
+        "tombstoning"
+      ]
+    },
+    "runtime": {
+      "stratum": "journal-files",
+      "failure_model": "survives_power_loss",
+      "history_policy": "append_only",
+      "enabled_capabilities": [
+        "revisioned",
+        "body_ref",
+        "export_bundle",
+        "tombstoning"
+      ],
+      "idempotency_window_ms": 60000,
+      "deletion": {
+        "live_head": "supported",
+        "retained_history": "unsupported",
+        "managed_replicas": "not_applicable",
+        "external_bodies": "supported",
+        "decryption": "unsupported",
+        "unmanaged_copies": "outside_claim"
+      },
+      "body_removal_stream": "store.bodies.2",
+      "incarnation_allocation": "prewrite_durable_ledger",
+      "quarantined_designated_streams": [
+        "store.bodies.1",
+        "store.bodies.0"
+      ]
+    }
+  },
+  "quarantined_streams": {
+    "store.bodies.0": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"store.bodies.0\",\"type\":\"stream_opened\",\"at\":\"2026-10-28T00:00:01.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_power_loss\"}\n{\"v\":1,\"seq\":2,\"group\":2,\"group_size\":1,\"stream\":\"store.bodies.0\",\"type\":\"body_published\",\"at\":\"2026-10-28T00:00:02.000000Z\",\"body\":{\"digest\":\"sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de\",\"length\":8},\"incarnation\":1}\n{\"v\":1,\"seq\":3,\"group\":3,\"group_size\":1,\"stream\":\"store.bodies.0\",\"type\":\"body_removal_started\",\"at\":\"2026-10-28T00:00:03.000000Z\",\"body\":{\"digest\":\"sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de\",\"length\":8},\"incarnation\":1,\"reason\":\"retention\",\"authorization\":{\"ref\":\"policy:retention\",\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"provenance\":{\"actor_kind\":\"process\",\"actor\":\"sweeper\"}}\n{\"v\":1,\"seq\":4,\"group\":4,\"group_size\":1,\"stream\":\"store.bodies.0\",\"type\":\"body_removed\",\"at\":\"2026-10-28T00:00:04.000000Z\",\"body\":{\"digest\":\"sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de\",\"length\":8},\"incarnation\":1}\n{\"torn\":",
+    "store.bodies.1": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"store.bodies.1\",\"type\":\"stream_opened\",\"at\":\"2026-10-28T00:00:10.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_power_loss\",\"recovery\":{\"store\":\"store.alpha\",\"previous_stream\":\"store.bodies.0\",\"cut_seq\":4,\"cut_digest\":\"sha256:94439f70d37721a20ece01382c948b2e9b62388dcd9088325ac8d2c9e43099fb\",\"quarantined_image_digest\":\"sha256:8a5e6eab47b13621b3a703c5ff8e5c8045b8ec877c62c8d80189db9529c74340\",\"reconciled_bodies\":[{\"body\":{\"digest\":\"sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de\",\"length\":8},\"floor\":1,\"activation_observation\":\"present_valid\",\"post_recovery_state\":\"publishing\"}],\"authorization\":{\"ref\":\"policy:recovery-1\",\"digest\":\"sha256:9999999999999999999999999999999999999999999999999999999999999999\"},\"provenance\":{\"actor_kind\":\"human\",\"actor\":\"operator\"}}}\n{\"torn_s1\":"
+  },
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "store.bodies.2",
+      "type": "stream_opened",
+      "at": "2026-10-28T00:00:20.000000Z",
+      "mode": "single_revision",
+      "failure_model": "survives_power_loss",
+      "recovery": {
+        "store": "store.alpha",
+        "previous_stream": "store.bodies.1",
+        "cut_seq": 1,
+        "cut_digest": "sha256:c25d52134313d80fef30be38ad1c4281de57785bf2f9e6eecc6322f415234257",
+        "quarantined_image_digest": "sha256:5640ffe233bd33aa895242bc372bc51703e2789b83c6ef1aae9dda5bfe399e9b",
+        "reconciled_bodies": [
+          {
+            "body": {
+              "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+              "length": 8
+            },
+            "floor": 1,
+            "activation_observation": "absent",
+            "post_recovery_state": "integrity_loss"
+          }
+        ],
+        "authorization": {
+          "ref": "policy:recovery-1",
+          "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "body_state": {
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8
+        },
+        "present": false
+      }
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "outcome": "body_state",
+        "state": "integrity_loss"
+      }
+    ],
+    "active_holds": [],
+    "journal_size": 1
+  }
+}

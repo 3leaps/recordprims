@@ -1,0 +1,180 @@
+{
+  "window_ms": 60000,
+  "profile": {
+    "capabilities": [
+      "contract: durable-record/v1"
+    ],
+    "origin": "declared",
+    "conformance": "none",
+    "build": {
+      "name": "example-store",
+      "version": "0.1.0",
+      "compiled_strata": [
+        "journal-files"
+      ],
+      "compiled_capabilities": [
+        "revisioned",
+        "body_ref",
+        "export_bundle",
+        "tombstoning"
+      ]
+    },
+    "runtime": {
+      "stratum": "journal-files",
+      "failure_model": "survives_power_loss",
+      "history_policy": "append_only",
+      "enabled_capabilities": [
+        "revisioned",
+        "body_ref",
+        "export_bundle",
+        "tombstoning"
+      ],
+      "idempotency_window_ms": 60000,
+      "deletion": {
+        "live_head": "supported",
+        "retained_history": "unsupported",
+        "managed_replicas": "not_applicable",
+        "external_bodies": "supported",
+        "decryption": "unsupported",
+        "unmanaged_copies": "outside_claim"
+      },
+      "body_removal_stream": "store.bodies.1",
+      "incarnation_allocation": "prewrite_durable_ledger",
+      "quarantined_designated_streams": [
+        "store.bodies.0"
+      ]
+    }
+  },
+  "quarantined_streams": {
+    "store.bodies.0": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"store.bodies.0\",\"type\":\"stream_opened\",\"at\":\"2026-10-28T00:00:01.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_power_loss\"}\n{\"v\":1,\"seq\":2,\"group\":2,\"group_size\":1,\"stream\":\"store.bodies.0\",\"type\":\"body_published\",\"at\":\"2026-10-28T00:00:02.000000Z\",\"body\":{\"digest\":\"sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de\",\"length\":8},\"incarnation\":1}\n{\"torn_tail\":"
+  },
+  "recovery_contexts": {
+    "store.bodies.1": {
+      "ledger_floors": [
+        {
+          "body": {
+            "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+            "length": 8
+          },
+          "floor": 1
+        }
+      ],
+      "live_activation_observations": [
+        {
+          "body": {
+            "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+            "length": 8
+          },
+          "observation": "absent"
+        }
+      ]
+    }
+  },
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "store.bodies.1",
+      "type": "stream_opened",
+      "at": "2026-10-28T00:00:10.000000Z",
+      "mode": "single_revision",
+      "failure_model": "survives_power_loss",
+      "recovery": {
+        "store": "store.alpha",
+        "previous_stream": "store.bodies.0",
+        "cut_seq": 2,
+        "cut_digest": "sha256:fa4490281efcced87057a40efe9f68039b87e8ec06e86250ea0c9e31a04ce657",
+        "quarantined_image_digest": "sha256:8ddc35bd3135e4126021f710b8ec33684959bb4aee8d044c1a7bd9e8e3319a6a",
+        "reconciled_bodies": [
+          {
+            "body": {
+              "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+              "length": 8
+            },
+            "floor": 1,
+            "activation_observation": "absent",
+            "post_recovery_state": "integrity_loss"
+          }
+        ],
+        "authorization": {
+          "ref": "policy:recovery-1",
+          "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "body_state": {
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8
+        },
+        "present": false
+      }
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "outcome": "body_state",
+        "state": "integrity_loss"
+      }
+    ],
+    "active_holds": [],
+    "journal_size": 1
+  },
+  "sharing_streams": [
+    [
+      {
+        "v": 1,
+        "seq": 1,
+        "group": 1,
+        "group_size": 1,
+        "stream": "records.sharing",
+        "type": "stream_opened",
+        "at": "2026-10-28T00:00:01.000000Z",
+        "mode": "revisioned",
+        "failure_model": "survives_power_loss"
+      },
+      {
+        "v": 1,
+        "seq": 2,
+        "group": 2,
+        "group_size": 1,
+        "stream": "records.sharing",
+        "type": "appended",
+        "at": "2026-10-28T00:00:02.000000Z",
+        "record": {
+          "v": 1,
+          "stream": "records.sharing",
+          "record_id": "rec-1",
+          "revision": 1,
+          "payload_contract": "contract: example/v0",
+          "provenance": {
+            "actor_kind": "human",
+            "actor": "operator"
+          },
+          "classification": {
+            "retention": "standard",
+            "sensitivity": "0-public"
+          },
+          "body": {
+            "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+            "length": 8,
+            "media_type": "text/plain"
+          }
+        },
+        "digest": "sha256:cc7e099a23f5c20df85f8dd404d1a4c09d9f89e1fbc577d3ac939748ec41b083",
+        "idempotency_key": "write-records.sharing-rec-1-2",
+        "body_status": "verified"
+      }
+    ]
+  ]
+}

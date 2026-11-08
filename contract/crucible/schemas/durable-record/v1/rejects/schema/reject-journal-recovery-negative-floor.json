@@ -1,0 +1,77 @@
+{
+  "schema": "journal-entry",
+  "baseline": {
+    "v": 1,
+    "seq": 1,
+    "group": 1,
+    "group_size": 1,
+    "stream": "store.bodies.1",
+    "type": "stream_opened",
+    "at": "2026-10-28T00:00:01.000000Z",
+    "mode": "single_revision",
+    "failure_model": "survives_power_loss",
+    "recovery": {
+      "store": "store.alpha",
+      "previous_stream": "store.bodies.0",
+      "cut_seq": 1,
+      "cut_digest": "sha256:6b28930b181d4a28c9551c594c1e5bb1cb8d99927d15c4403816a1966d577d1e",
+      "quarantined_image_digest": "sha256:7e43805bb1950014b70ef2ce5ccfb197ae16ff3b34f8a4e0a1928072829fb3a6",
+      "reconciled_bodies": [
+        {
+          "body": {
+            "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+            "length": 8
+          },
+          "floor": 0,
+          "activation_observation": "absent",
+          "post_recovery_state": "unpublished"
+        }
+      ],
+      "authorization": {
+        "ref": "policy:recovery-1",
+        "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+      },
+      "provenance": {
+        "actor_kind": "human",
+        "actor": "operator"
+      }
+    }
+  },
+  "reject": {
+    "v": 1,
+    "seq": 1,
+    "group": 1,
+    "group_size": 1,
+    "stream": "store.bodies.1",
+    "type": "stream_opened",
+    "at": "2026-10-28T00:00:01.000000Z",
+    "mode": "single_revision",
+    "failure_model": "survives_power_loss",
+    "recovery": {
+      "store": "store.alpha",
+      "previous_stream": "store.bodies.0",
+      "cut_seq": 1,
+      "cut_digest": "sha256:6b28930b181d4a28c9551c594c1e5bb1cb8d99927d15c4403816a1966d577d1e",
+      "quarantined_image_digest": "sha256:7e43805bb1950014b70ef2ce5ccfb197ae16ff3b34f8a4e0a1928072829fb3a6",
+      "reconciled_bodies": [
+        {
+          "body": {
+            "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+            "length": 8
+          },
+          "floor": -1,
+          "activation_observation": "absent",
+          "post_recovery_state": "unpublished"
+        }
+      ],
+      "authorization": {
+        "ref": "policy:recovery-1",
+        "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+      },
+      "provenance": {
+        "actor_kind": "human",
+        "actor": "operator"
+      }
+    }
+  }
+}

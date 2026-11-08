@@ -4,15 +4,17 @@ import "strings"
 
 // Document kinds accepted by Ingest.
 const (
-	KindJournalEntry      = "journal_entry"
-	KindRecord            = "record"
-	KindProtectionRequest = "protection_request"
-	KindProtectionReceipt = "protection_receipt"
-	KindWriteReceipt      = "write_receipt"
-	KindExportRequest     = "export_request"
-	KindExportResult      = "export_result"
-	KindBodyStateRequest  = "body_state_request"
-	KindStratumProfile    = "stratum_profile"
+	KindJournalEntry       = "journal_entry"
+	KindRecord             = "record"
+	KindProtectionRequest  = "protection_request"
+	KindProtectionReceipt  = "protection_receipt"
+	KindWriteReceipt       = "write_receipt"
+	KindExportRequest      = "export_request"
+	KindExportResult       = "export_result"
+	KindBodyStateRequest   = "body_state_request"
+	KindStratumProfile     = "stratum_profile"
+	KindStreamSeal         = "stream_seal"
+	KindRemovalEligibility = "removal_eligibility"
 )
 
 // Position kinds: "int" is a protocol integer, "opaque" is free JSON (a record
@@ -29,13 +31,20 @@ const (
 // interpreter; TestProtocolIntsCoverSchemas (internal/conformance) checks it
 // against the vendored schemas.
 var protocolInts = map[string]map[string]string{
-	"pin":            {"revision": posInt},
-	"revision_pin":   {"revision": posInt},
-	"body_ref":       {"length": posInt},
-	"lifecycle_body": {"length": posInt},
-	"link":           {"revision": posInt},
-	"source_cut":     {"cut_seq": posInt},
-	"source_pin":     {"pin": "pin"},
+	"pin":             {"revision": posInt},
+	"revision_pin":    {"revision": posInt},
+	"body_ref":        {"length": posInt},
+	"lifecycle_body":  {"length": posInt},
+	"link":            {"revision": posInt},
+	"source_cut":      {"cut_seq": posInt},
+	"source_pin":      {"pin": "pin"},
+	"reconciled_body": {"body": "lifecycle_body", "floor": posInt},
+	"stream_recovery": {"cut_seq": posInt, "reconciled_bodies": "list:reconciled_body"},
+	"ancestor_seal":   {"cut_seq": posInt},
+	KindStreamSeal: {
+		"v": posInt, "cut_seq": posInt, "ancestor_seals": "list:ancestor_seal",
+	},
+	"seal_context": {"seal": KindStreamSeal, "ancestor_seal_contexts": "list:seal_context"},
 	KindRecord: {
 		"v": posInt, "revision": posInt, "supersedes": "revision_pin",
 		"body": "body_ref", "links": "list:link", "payload": posOpaque,
@@ -49,6 +58,7 @@ var protocolInts = map[string]map[string]string{
 		"record": KindRecord, "presented": "revision_pin", "current": "revision_pin",
 		"request": KindProtectionRequest, "continues": "source_cut",
 		"source": "source_cut", "imported_from": "source_pin", "body": "lifecycle_body",
+		"recovery": "stream_recovery",
 	},
 	KindProtectionReceipt: {"v": posInt, "seq": posInt},
 	KindWriteReceipt: {
@@ -63,6 +73,15 @@ var protocolInts = map[string]map[string]string{
 		"protection_cut": posInt, "selection": "list:pin", "omitted": "list:pin",
 	},
 	KindBodyStateRequest: {"body": "lifecycle_body"},
+	"observed_sharing_stream": {
+		"journal": "list:" + KindJournalEntry, "source_journal": "list:" + KindJournalEntry,
+		"ancestors": "list:list:" + KindJournalEntry, "source_seal": "seal_context",
+	},
+	"removal_authorization": {"body": "lifecycle_body", "incarnation": posInt},
+	KindRemovalEligibility: {
+		"body": "lifecycle_body", "incarnation": posInt,
+		"observed_streams": "list:observed_sharing_stream", "authorization": "removal_authorization",
+	},
 	"profile_runtime": {
 		"clock_skew_bound_ms": posInt, "idempotency_window_ms": posInt,
 	},

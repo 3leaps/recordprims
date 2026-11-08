@@ -236,9 +236,30 @@ PROTOCOL_NUMERIC_SCHEMAS: dict[str, dict[str, Any]] = {
         "current": "revision_pin",
         "request": "protection_request",
         "continues": "source_cut",
+        "recovery": "stream_recovery",
         "source": "source_cut",
         "imported_from": "source_pin",
         "body": "lifecycle_body",
+    },
+    "reconciled_body": {
+        "body": "lifecycle_body",
+        "floor": "int",
+    },
+    "stream_recovery": {
+        "cut_seq": "int",
+        "reconciled_bodies": ("list", "reconciled_body"),
+    },
+    "ancestor_seal": {
+        "cut_seq": "int",
+    },
+    "stream_seal": {
+        "v": "int",
+        "cut_seq": "int",
+        "ancestor_seals": ("list", "ancestor_seal"),
+    },
+    "seal_context": {
+        "seal": "stream_seal",
+        "ancestor_seal_contexts": ("list", "seal_context"),
     },
     "protection_receipt": {
         "v": "int",
@@ -265,6 +286,22 @@ PROTOCOL_NUMERIC_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "body_state_request": {
         "body": "lifecycle_body",
+    },
+    "observed_sharing_stream": {
+        "journal": ("list", "journal_entry"),
+        "source_journal": ("list", "journal_entry"),
+        "ancestors": ("list", ("list", "journal_entry")),
+        "source_seal": "seal_context",
+    },
+    "removal_authorization": {
+        "body": "lifecycle_body",
+        "incarnation": "int",
+    },
+    "removal_eligibility": {
+        "body": "lifecycle_body",
+        "incarnation": "int",
+        "observed_streams": ("list", "observed_sharing_stream"),
+        "authorization": "removal_authorization",
     },
     "profile_runtime": {
         "clock_skew_bound_ms": "int",
@@ -792,22 +829,13 @@ def verify_suite_report(
 # --- timestamps & JCS digest ------------------------------------------------
 
 
-_FRACTION = re.compile(r"[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}\.([0-9]+)", re.ASCII)
-
-
 def instant(text: Any):
     if not isinstance(text, str):
         raise Reject("timestamp", f"{text!r}: timestamp must be a string")
-    # The shared helper resolves to microseconds. This checker fails closed on
-    # any fraction it cannot represent exactly (non-zero digits beyond six)
-    # rather than truncating, so a sub-microsecond ordering cannot pass.
-    m = _FRACTION.search(text)
-    if m and len(m.group(1)) > 6 and m.group(1)[6:].strip("0"):
-        raise Reject(
-            "timestamp", f"{text!r}: precision beyond microseconds is not representable"
-        )
+    # The shared helper resolves to microseconds; pass reject_submicrosecond_nonzero=True
+    # so non-zero digits beyond the 6th fractional place fail closed rather than truncating.
     try:
-        return _rfc3339.parse_rfc3339(text)
+        return _rfc3339.parse_rfc3339(text, reject_submicrosecond_nonzero=True)
     except ValueError as e:
         raise Reject("timestamp", f"{text!r}: {e}") from e
 

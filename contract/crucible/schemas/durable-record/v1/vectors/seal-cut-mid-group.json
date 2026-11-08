@@ -1,0 +1,132 @@
+{
+  "window_ms": 60000,
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "records.dest",
+      "type": "stream_opened",
+      "at": "2026-10-28T00:00:01.000000Z",
+      "mode": "revisioned",
+      "failure_model": "survives_power_loss"
+    }
+  ],
+  "steps": [
+    {
+      "verify_seal": {
+        "seal": {
+          "v": 1,
+          "store": "store.alpha",
+          "capability": "contract: durable-record/v1",
+          "stream": "records.src",
+          "cut_seq": 2,
+          "cut_digest": "sha256:1ce2154d9f2250fee91dc464936b41c4eb18aff890d6e07b57a67061774ddc48",
+          "effective_restriction_manifest_digest": "sha256:5cb72fd9337154074dc353b97f04c8dc84bba51bf1aa1f73db49a14dd890b93c",
+          "ancestor_seals": [],
+          "trust_profile": {
+            "id": "seal-authority",
+            "version": "1"
+          },
+          "sealed_at": "2026-10-28T00:01:00.000000Z",
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "closer"
+          },
+          "authorization": {
+            "ref": "authority:stream-closer",
+            "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+          }
+        },
+        "expected_store": "store.alpha",
+        "accepted_trust_profile": {
+          "id": "seal-authority",
+          "version": "1"
+        },
+        "closer_authenticated": true,
+        "source_write_fenced": false,
+        "journal": [
+          {
+            "v": 1,
+            "seq": 1,
+            "group": 1,
+            "group_size": 1,
+            "stream": "records.src",
+            "type": "stream_opened",
+            "at": "2026-10-28T00:00:01.000000Z",
+            "mode": "revisioned",
+            "failure_model": "survives_power_loss"
+          },
+          {
+            "v": 1,
+            "seq": 2,
+            "group": 2,
+            "group_size": 2,
+            "stream": "records.src",
+            "type": "appended",
+            "at": "2026-10-28T00:00:02.000000Z",
+            "record": {
+              "v": 1,
+              "stream": "records.src",
+              "record_id": "rec-1",
+              "revision": 1,
+              "payload_contract": "contract: example/v0",
+              "provenance": {
+                "actor_kind": "human",
+                "actor": "operator"
+              },
+              "classification": {
+                "retention": "standard",
+                "sensitivity": "0-public"
+              },
+              "body": {
+                "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+                "length": 8,
+                "media_type": "text/plain"
+              }
+            },
+            "digest": "sha256:c8af42b586438b02bac4d19a183789ba76b0b3e3ea6a962238ddfc4fb7ef96a8",
+            "idempotency_key": "write-records.src-rec-1-2",
+            "body_status": "verified"
+          },
+          {
+            "v": 1,
+            "seq": 3,
+            "group": 2,
+            "group_size": 2,
+            "stream": "records.src",
+            "type": "appended",
+            "at": "2026-10-28T00:00:02.000000Z",
+            "record": {
+              "v": 1,
+              "stream": "records.src",
+              "record_id": "rec-2",
+              "revision": 1,
+              "payload_contract": "contract: example/v0",
+              "provenance": {
+                "actor_kind": "human",
+                "actor": "operator"
+              },
+              "classification": {
+                "retention": "standard",
+                "sensitivity": "0-public"
+              },
+              "body": {
+                "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+                "length": 8,
+                "media_type": "text/plain"
+              }
+            },
+            "digest": "sha256:9a103bd8a8dbffb06217069ea8fc5bb400232e022624431f27729af291eda607",
+            "idempotency_key": "write-records.src-rec-2-3",
+            "body_status": "verified"
+          }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "refusal": "continuation"
+  }
+}

@@ -1,0 +1,280 @@
+{
+  "window_ms": 60000,
+  "profile": {
+    "capabilities": [
+      "contract: durable-record/v1"
+    ],
+    "origin": "declared",
+    "conformance": "none",
+    "build": {
+      "name": "example-store",
+      "version": "0.1.0",
+      "compiled_strata": [
+        "journal-files"
+      ],
+      "compiled_capabilities": [
+        "revisioned",
+        "body_ref",
+        "export_bundle",
+        "tombstoning"
+      ]
+    },
+    "runtime": {
+      "stratum": "journal-files",
+      "failure_model": "survives_power_loss",
+      "history_policy": "append_only",
+      "enabled_capabilities": [
+        "revisioned",
+        "body_ref",
+        "export_bundle",
+        "tombstoning"
+      ],
+      "idempotency_window_ms": 60000,
+      "deletion": {
+        "live_head": "supported",
+        "retained_history": "unsupported",
+        "managed_replicas": "not_applicable",
+        "external_bodies": "supported",
+        "decryption": "unsupported",
+        "unmanaged_copies": "outside_claim"
+      },
+      "body_removal_stream": "store.bodies.1",
+      "incarnation_allocation": "prewrite_durable_ledger",
+      "quarantined_designated_streams": [
+        "store.bodies.0"
+      ]
+    }
+  },
+  "quarantined_streams": {
+    "store.bodies.0": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"store.bodies.0\",\"type\":\"stream_opened\",\"at\":\"2026-10-28T00:00:01.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_power_loss\"}\n{\"v\":1,\"seq\":2,\"group\":2,\"group_size\":1,\"stream\":\"store.bodies.0\",\"type\":\"body_published\",\"at\":\"2026-10-28T00:00:02.000000Z\",\"body\":{\"digest\":\"sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de\",\"length\":8},\"incarnation\":1}\n{\"torn\":"
+  },
+  "journal": [
+    {
+      "v": 1,
+      "seq": 1,
+      "group": 1,
+      "group_size": 1,
+      "stream": "store.bodies.1",
+      "type": "stream_opened",
+      "at": "2026-10-28T00:00:10.000000Z",
+      "mode": "single_revision",
+      "failure_model": "survives_power_loss",
+      "recovery": {
+        "store": "store.alpha",
+        "previous_stream": "store.bodies.0",
+        "cut_seq": 2,
+        "cut_digest": "sha256:fa4490281efcced87057a40efe9f68039b87e8ec06e86250ea0c9e31a04ce657",
+        "quarantined_image_digest": "sha256:e9265d5a09b17ee504643bd2413dab549bf1900848ecb53fd4d81c76ec87aa7a",
+        "reconciled_bodies": [
+          {
+            "body": {
+              "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+              "length": 8
+            },
+            "floor": 1,
+            "activation_observation": "present_valid",
+            "post_recovery_state": "available"
+          }
+        ],
+        "authorization": {
+          "ref": "policy:recovery-1",
+          "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+        },
+        "provenance": {
+          "actor_kind": "human",
+          "actor": "operator"
+        }
+      }
+    },
+    {
+      "v": 1,
+      "seq": 2,
+      "group": 2,
+      "group_size": 1,
+      "stream": "store.bodies.1",
+      "type": "body_published",
+      "at": "2026-10-28T00:00:11.000000Z",
+      "body": {
+        "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+        "length": 8
+      },
+      "incarnation": 2
+    }
+  ],
+  "steps": [
+    {
+      "removal_eligibility": {
+        "store": "store.alpha",
+        "store_streams": [
+          "store.bodies.1",
+          "store.bodies.0",
+          "records.a"
+        ],
+        "quarantined_designated_streams": [
+          "store.bodies.0"
+        ],
+        "observed_streams": [
+          {
+            "stream": "records.a",
+            "journal": [
+              {
+                "v": 1,
+                "seq": 1,
+                "group": 1,
+                "group_size": 1,
+                "stream": "records.a",
+                "type": "stream_opened",
+                "at": "2026-10-28T00:00:01.000000Z",
+                "mode": "revisioned",
+                "failure_model": "survives_power_loss"
+              },
+              {
+                "v": 1,
+                "seq": 2,
+                "group": 2,
+                "group_size": 1,
+                "stream": "records.a",
+                "type": "appended",
+                "at": "2026-10-28T00:00:02.000000Z",
+                "record": {
+                  "v": 1,
+                  "stream": "records.a",
+                  "record_id": "rec-1",
+                  "revision": 1,
+                  "payload_contract": "contract: example/v0",
+                  "provenance": {
+                    "actor_kind": "human",
+                    "actor": "operator"
+                  },
+                  "classification": {
+                    "retention": "standard",
+                    "sensitivity": "0-public"
+                  },
+                  "body": {
+                    "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+                    "length": 8,
+                    "media_type": "text/plain"
+                  }
+                },
+                "digest": "sha256:c7adf01b39ecb98770fb96856a11d08eee4b97b82ac1cd8be5372e21620085ed",
+                "idempotency_key": "write-records.a-rec-1-2",
+                "body_status": "verified"
+              },
+              {
+                "v": 1,
+                "seq": 3,
+                "group": 3,
+                "group_size": 1,
+                "stream": "records.a",
+                "type": "retired",
+                "at": "2026-10-28T00:00:03.000000Z",
+                "record_id": "rec-1",
+                "reason": "retention period elapsed"
+              }
+            ]
+          },
+          {
+            "stream": "store.bodies.0",
+            "journal": [
+              {
+                "v": 1,
+                "seq": 1,
+                "group": 1,
+                "group_size": 1,
+                "stream": "store.bodies.0",
+                "type": "stream_opened",
+                "at": "2026-10-28T00:00:01.000000Z",
+                "mode": "revisioned",
+                "failure_model": "survives_power_loss"
+              },
+              {
+                "v": 1,
+                "seq": 2,
+                "group": 2,
+                "group_size": 1,
+                "stream": "store.bodies.0",
+                "type": "appended",
+                "at": "2026-10-28T00:00:02.000000Z",
+                "record": {
+                  "v": 1,
+                  "stream": "store.bodies.0",
+                  "record_id": "rec-1",
+                  "revision": 1,
+                  "payload_contract": "contract: example/v0",
+                  "provenance": {
+                    "actor_kind": "human",
+                    "actor": "operator"
+                  },
+                  "classification": {
+                    "retention": "standard",
+                    "sensitivity": "0-public"
+                  },
+                  "body": {
+                    "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+                    "length": 8,
+                    "media_type": "text/plain"
+                  }
+                },
+                "digest": "sha256:6c1140310fdfb9e699d531520d33aa5dac1745e63716c40f717e5706c88c0c46",
+                "idempotency_key": "write-store.bodies.0-rec-1-2",
+                "body_status": "verified"
+              },
+              {
+                "v": 1,
+                "seq": 3,
+                "group": 3,
+                "group_size": 1,
+                "stream": "store.bodies.0",
+                "type": "retired",
+                "at": "2026-10-28T00:00:03.000000Z",
+                "record_id": "rec-1",
+                "reason": "retention period elapsed"
+              }
+            ]
+          }
+        ],
+        "body": {
+          "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+          "length": 8
+        },
+        "incarnation": 2,
+        "mode": "start",
+        "reason": "retention",
+        "expected_policy": {
+          "id": "all-retired",
+          "version": "1"
+        },
+        "decision_time": "2026-10-28T00:05:00.000000Z",
+        "authorization": {
+          "ref": "auth:rem-1",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "store": "store.alpha",
+          "body": {
+            "digest": "sha256:13550350a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de",
+            "length": 8
+          },
+          "incarnation": 2,
+          "policy": {
+            "id": "all-retired",
+            "version": "1"
+          },
+          "action": "remove_body",
+          "scope_verified": true,
+          "not_before": "2026-10-28T00:00:00.000000Z",
+          "expires_at": "2026-10-28T01:00:00.000000Z"
+        }
+      }
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "outcome": "removal_eligibility",
+        "verdict": "refused",
+        "reason": "protection_unavailable"
+      }
+    ],
+    "active_holds": [],
+    "journal_size": 2
+  }
+}
