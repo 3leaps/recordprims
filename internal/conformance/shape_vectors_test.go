@@ -64,6 +64,13 @@ func TestVectorShapes(t *testing.T) {
 				invalid[int(x)] = true
 			}
 		}
+		invalidReceipts := map[int]bool{}
+		if l := v.Get("invalid_receipt_steps"); l != nil {
+			for _, e := range l.Elems {
+				x, _ := wire.SafeInt(e.Token)
+				invalidReceipts[int(x)] = true
+			}
+		}
 		check := func(doc *wire.Node, schema string, want bool, where string) {
 			checked++
 			err := shape.Validate(schema, doc)
@@ -95,21 +102,57 @@ func TestVectorShapes(t *testing.T) {
 			check(p, "v1/stratum-profile.schema.json", true, "profile")
 		}
 		if j := v.Get("raw_journal"); j != nil {
+			aborted := false
 			for i, line := range j.Elems {
 				n := ingest(line.Str, wire.KindJournalEntry)
 				if n == nil {
+					aborted = true
 					break
 				}
 				check(n, "v1/journal-entry.schema.json", !invalid[i], "raw_journal entry")
+			}
+			if aborted {
+				continue
 			}
 		} else if j := v.Get("journal"); j != nil {
 			for i, e := range j.Elems {
 				check(e, "v1/journal-entry.schema.json", !invalid[i], "journal entry")
 			}
 		}
+		if steps := v.Get("steps"); steps != nil {
+			for i, s := range steps.Elems {
+				switch {
+				case s.Get("raw_receipt") != nil:
+					n, err := wire.IngestReceipt([]byte(s.Get("raw_receipt").Str))
+					if err != nil {
+						goto nextVector
+					}
+					check(n, receiptSchema(n), !invalidReceipts[i], "raw_receipt step")
+				case s.Get("receipt") != nil:
+					r := s.Get("receipt")
+					check(r, receiptSchema(r), !invalidReceipts[i], "receipt step")
+				case s.Get("raw_entry") != nil:
+					n := ingest(s.Get("raw_entry").Str, wire.KindJournalEntry)
+					if n == nil {
+						goto nextVector
+					}
+					check(n, "v1/journal-entry.schema.json", true, "raw_entry step")
+				case s.Get("entry") != nil:
+					check(s.Get("entry"), "v1/journal-entry.schema.json", true, "entry step")
+				}
+			}
+		}
+	nextVector:
 	}
 	if checked < 500 {
 		t.Fatalf("only %d documents checked", checked)
 	}
 	t.Logf("%d vector documents checked", checked)
+}
+
+func receiptSchema(n *wire.Node) string {
+	if wire.ReceiptKind(n) == wire.KindWriteReceipt {
+		return "v1/write-receipt.schema.json"
+	}
+	return "v1/protection-receipt.schema.json"
 }

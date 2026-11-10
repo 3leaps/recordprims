@@ -308,8 +308,14 @@ func TestPartial(t *testing.T) {
 	if got := ingestAll(t, s, opened(1)); got != "" || s.Partial() {
 		t.Fatalf("stream_opened alone: %q partial=%v", got, s.Partial())
 	}
-	if got := ingestAll(t, s, content(t, "appended", 2, record("a", 1, ""))); got != "" || !s.Partial() {
-		t.Fatalf("appended: %q partial=%v, want partial", got, s.Partial())
+	r1 := record("a", 1, "")
+	if got := ingestAll(t, s, content(t, "appended", 2, r1)); got != "" || s.Partial() {
+		t.Fatalf("appended without imported_from: %q partial=%v, want false", got, s.Partial())
+	}
+	imp := window(t)
+	aImp := set(content(t, "appended", 2, r1), "idempotency_key", `"k2","imported_from":{"source":{"capability":"contract: durable-record/v1","stream":"src","cut_seq":1,"cut_digest":"sha256:`+strings.Repeat("0", 64)+`"},"pin":{"stream":"src","record_id":"a","revision":1,"digest":`+fmt.Sprintf("%q", digestOf(t, r1))+`}}`)
+	if got := ingestAll(t, imp, opened(1), aImp); got != "" || !imp.Partial() {
+		t.Fatalf("appended with imported_from: %q partial=%v, want partial", got, imp.Partial())
 	}
 	c := window(t)
 	if got := ingestAll(t, c, set(opened(1), "failure_model", `"survives_power_loss","continues":{}`)); got != "" || !c.Partial() {
@@ -318,6 +324,178 @@ func TestPartial(t *testing.T) {
 	r := window(t)
 	if got := ingestAll(t, r, set(opened(1), "failure_model", `"survives_power_loss","recovery":{}`)); got != "" || !r.Partial() {
 		t.Fatalf("recovery: %q partial=%v, want partial", got, r.Partial())
+	}
+}
+
+func TestIngestContentAndKeys(t *testing.T) {
+	r1 := record("a", 1, "")
+	head1 := fmt.Sprintf(`{"revision":1,"digest":%q}`, digestOf(t, r1))
+	r2 := record("a", 2, head1)
+	rb := record("b", 1, "")
+	dedup := func(seq int, atStr, rid, key string) string {
+		return fmt.Sprintf(`{"v":1,"seq":%d,"group":%d,"group_size":1,"stream":%q,"type":"deduplicated","at":%q,"record_id":%q,"idempotency_key":%q}`, seq, seq, stream, atStr, rid, key)
+	}
+	a1At := func(seq int, atStr, rec, key string) string {
+		return set(set(content(t, "appended", seq, rec), "at", fmt.Sprintf("%q", atStr)), "idempotency_key", fmt.Sprintf("%q", key))
+	}
+	revAt := func(seq int, atStr, rec, key string) string {
+		return set(set(content(t, "revised", seq, rec), "at", fmt.Sprintf("%q", atStr)), "idempotency_key", fmt.Sprintf("%q", key))
+	}
+	for _, c := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"append and revise accepted", []string{opened(1), content(t, "appended", 2, r1), content(t, "revised", 3, r2)}, ""},
+		{"live key reuse on append", []string{opened(1), a1At(2, "2026-10-20T00:00:02.000000Z", r1, "k"), a1At(3, "2026-10-20T00:01:01.999999Z", rb, "k")}, ReasonAcceptedKeyReuse},
+		{"live key reuse on revise", []string{opened(1), a1At(2, "2026-10-20T00:00:02.000000Z", r1, "k"), revAt(3, "2026-10-20T00:00:03.000000Z", r2, "k")}, ReasonAcceptedKeyReuse},
+		{"key reuse at exact window expiry", []string{opened(1), a1At(2, "2026-10-20T00:00:02.000000Z", r1, "k"), a1At(3, "2026-10-20T00:01:02.000000Z", rb, "k")}, ""},
+		{"dedup live content key", []string{opened(1), a1At(2, "2026-10-20T00:00:02.000000Z", r1, "k"), dedup(3, "2026-10-20T00:01:01.999999Z", "a", "k")}, ""},
+		{"dedup absent key", []string{opened(1), content(t, "appended", 2, r1), dedup(3, at(3), "a", "missing")}, ReasonInvalidDeduplication},
+		{"dedup expired key at exact boundary", []string{opened(1), a1At(2, "2026-10-20T00:00:02.000000Z", r1, "k"), dedup(3, "2026-10-20T00:01:02.000000Z", "a", "k")}, ReasonInvalidDeduplication},
+		{"dedup wrong record_id", []string{opened(1), a1At(2, "2026-10-20T00:00:02.000000Z", r1, "k"), dedup(3, at(3), "b", "k")}, ReasonInvalidDeduplication},
+		{"dedup does not slide the window", []string{
+			opened(1),
+			a1At(2, "2026-10-20T00:00:02.000000Z", r1, "k"),
+			dedup(3, "2026-10-20T00:00:32.000000Z", "a", "k"),
+			dedup(4, "2026-10-20T00:01:02.000000Z", "a", "k"),
+		}, ReasonInvalidDeduplication},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ingestAll(t, window(t), c.lines...); got != c.want {
+				t.Fatalf("%q, want %q", got, c.want)
+			}
+		})
+	}
+
+	// Records map holds both revisions keyed by Pin.
+	s := window(t)
+	if got := ingestAll(t, s, opened(1), content(t, "appended", 2, r1), content(t, "revised", 3, r2)); got != "" {
+		t.Fatal(got)
+	}
+	recs := s.Records()
+	p1 := Pin{Stream: stream, RecordID: "a", Revision: 1, Digest: digestOf(t, r1)}
+	p2 := Pin{Stream: stream, RecordID: "a", Revision: 2, Digest: digestOf(t, r2)}
+	if len(recs) != 2 || recs[p1] == nil || recs[p2] == nil {
+		t.Fatalf("records map: got %d entries, want p1 and p2", len(recs))
+	}
+
+	// Retired record check refuses a content write to a retired record_id.
+	s.retired["z"] = true
+	if got := ingestAll(t, s, content(t, "appended", 4, record("z", 1, ""))); got != ReasonRetiredRecord {
+		t.Fatalf("retired record write: %q, want %q", got, ReasonRetiredRecord)
+	}
+}
+
+func TestReconcile(t *testing.T) {
+	r1 := record("a", 1, "")
+	a1 := set(content(t, "appended", 2, r1), "idempotency_key", `"k2","body_status":"verified"`)
+	s := window(t)
+	if got := ingestAll(t, s, opened(1), a1); got != "" {
+		t.Fatal(got)
+	}
+	found, err := s.Reconcile("k2", "2026-10-20T00:01:01.999999Z", "2026-10-20T00:00:05.000000Z")
+	if err != nil {
+		t.Fatalf("found reconcile: %v", err)
+	}
+	wantFound := node(t, wire.KindWriteReceipt, fmt.Sprintf(`{"v":1,"kind":"reconciliation","stream":%q,"idempotency_key":"k2","attempted_at":"2026-10-20T00:00:05.000000Z","result":"found","receipt":{"v":1,"kind":"receipt","stream":%q,"idempotency_key":"k2","outcome":"appended","pin":{"stream":%q,"record_id":"a","revision":1,"digest":%q},"seq":2,"failure_model":"survives_power_loss","body_status":"verified"}}`, stream, stream, stream, digestOf(t, r1)))
+	if !Equal(found, wantFound) {
+		t.Fatalf("found reconcile mismatch: got %s", wire.Encode(found))
+	}
+
+	unk, err := s.Reconcile("k2", "2026-10-20T00:01:02.000000Z", "2026-10-20T00:00:05.000000Z")
+	if err != nil {
+		t.Fatalf("expired reconcile: %v", err)
+	}
+	wantUnk := node(t, wire.KindWriteReceipt, fmt.Sprintf(`{"v":1,"kind":"reconciliation","stream":%q,"idempotency_key":"k2","attempted_at":"2026-10-20T00:00:05.000000Z","result":"unknown","reason":"coverage_unprovable"}`, stream))
+	if !Equal(unk, wantUnk) {
+		t.Fatalf("expired reconcile mismatch: got %s", wire.Encode(unk))
+	}
+
+	if _, err := s.Reconcile("k2", "2026-10-20T00:00:01.999999Z", "2026-10-20T00:00:02.000000Z"); reasonOf(err) != ReasonJournalTime {
+		t.Fatalf("reconcile before journal: %q, want %q", reasonOf(err), ReasonJournalTime)
+	}
+	if _, err := s.Reconcile("k2", "2026-10-20T00:00:02Z", "2026-10-20T00:00:02.000000Z"); reasonOf(err) != ReasonInstantSpelling {
+		t.Fatalf("reconcile noncanonical at: %q, want %q", reasonOf(err), ReasonInstantSpelling)
+	}
+	if _, err := s.Reconcile("k2", "2026-10-20T00:00:02.000000Z", "0000-01-01T00:00:00.000000Z"); reasonOf(err) != ReasonInstantSpelling {
+		t.Fatalf("reconcile year-zero attempted_at: %q, want %q", reasonOf(err), ReasonInstantSpelling)
+	}
+}
+
+func TestVerifyReceipt(t *testing.T) {
+	r1 := record("a", 1, "")
+	d1 := digestOf(t, r1)
+	req := fmt.Sprintf(`{"v":1,"stream":%q,"idempotency_key":"hold-1","action":"tombstone","scope":"revision","target":{"stream":%q,"record_id":"a","revision":1,"digest":%q},"reason":"legal","observed_at":"2026-10-20T00:00:02.000000Z"}`, stream, stream, d1)
+	reqDig := digestOf(t, req)
+	tomb := fmt.Sprintf(`{"v":1,"seq":3,"group":3,"group_size":1,"stream":%q,"type":"tombstoned","at":%q,"request":%s,"request_digest":%q}`, stream, at(3), req, reqDig)
+	retReq := fmt.Sprintf(`{"stream":%q,"record_id":"a","reason":"retention_expired","idempotency_key":"ret-1"}`, stream)
+	retDig := digestOf(t, retReq)
+	ret := fmt.Sprintf(`{"v":1,"seq":4,"group":4,"group_size":1,"stream":%q,"type":"retired","at":%q,"record_id":"a","reason":"retention_expired","idempotency_key":"ret-1","request_digest":%q}`, stream, at(4), retDig)
+
+	s := window(t)
+	if got := ingestAll(t, s, opened(1), content(t, "appended", 2, r1), tomb, ret); got != "" {
+		t.Fatal(got)
+	}
+
+	validProt := fmt.Sprintf(`{"v":1,"stream":%q,"idempotency_key":"hold-1","outcome":"tombstoned","seq":3,"request_digest":%q,"failure_model":"survives_power_loss"}`, stream, reqDig)
+	if _, err := s.VerifyReceipt(node(t, wire.KindProtectionReceipt, validProt)); err != nil {
+		t.Fatalf("valid protection receipt: %v", err)
+	}
+	if _, err := s.VerifyReceipt(node(t, wire.KindProtectionReceipt, set(validProt, "seq", "2"))); reasonOf(err) != ReasonReceiptMismatch {
+		t.Fatalf("wrong seq protection receipt: %q", reasonOf(err))
+	}
+
+	validRet := fmt.Sprintf(`{"v":1,"kind":"receipt","stream":%q,"idempotency_key":"ret-1","outcome":"retired","seq":4,"record_id":"a","request_digest":%q,"failure_model":"survives_power_loss"}`, stream, retDig)
+	if _, err := s.VerifyReceipt(node(t, wire.KindWriteReceipt, validRet)); err != nil {
+		t.Fatalf("valid retirement receipt: %v", err)
+	}
+	if _, err := s.VerifyReceipt(node(t, wire.KindWriteReceipt, set(validRet, "failure_model", `"none"`))); reasonOf(err) != ReasonReceiptMismatch {
+		t.Fatalf("wrong failure_model retirement receipt: %q", reasonOf(err))
+	}
+
+	validRec := fmt.Sprintf(`{"v":1,"kind":"reconciliation","stream":%q,"idempotency_key":"k","attempted_at":"2026-10-20T00:00:05.000000Z","result":"not_found","window_covers_from":"2026-10-20T00:00:01.000000Z","window_covers_until":"2026-10-20T00:00:06.000000Z"}`, stream)
+	if _, err := s.VerifyReceipt(node(t, wire.KindWriteReceipt, validRec)); err != nil {
+		t.Fatalf("valid reconciliation: %v", err)
+	}
+	if _, err := s.VerifyReceipt(node(t, wire.KindWriteReceipt, set(validRec, "window_covers_from", `"2026-02-30T00:00:01.000000Z"`))); reasonOf(err) != ReasonInstantSpelling {
+		t.Fatalf("impossible window_covers_from: %q", reasonOf(err))
+	}
+}
+
+func TestCheckReceipt(t *testing.T) {
+	r1 := record("a", 1, "")
+	d1 := digestOf(t, r1)
+	a1 := content(t, "appended", 2, r1)
+	lines := entries(t, opened(1), a1)
+
+	base := fmt.Sprintf(`{"v":1,"kind":"receipt","stream":%q,"idempotency_key":"k2","outcome":"appended","pin":{"stream":%q,"record_id":"a","revision":1,"digest":%q},"seq":2,"failure_model":"survives_power_loss"}`, stream, stream, d1)
+	found := fmt.Sprintf(`{"v":1,"kind":"reconciliation","stream":%q,"idempotency_key":"k2","attempted_at":"2026-10-20T00:00:03.000000Z","result":"found","receipt":%s}`, stream, base)
+	notFound := fmt.Sprintf(`{"v":1,"kind":"reconciliation","stream":%q,"idempotency_key":"absent","attempted_at":"2026-10-20T00:00:03.000000Z","result":"not_found","window_covers_from":"2026-10-20T00:00:01.000000Z","window_covers_until":"2026-10-20T00:00:05.000000Z"}`, stream)
+	conflict := fmt.Sprintf(`{"v":1,"kind":"receipt","stream":%q,"idempotency_key":"k3","outcome":"revision_conflict","current":{"stream":%q,"record_id":"a","revision":1,"digest":%q}}`, stream, stream, d1)
+
+	for _, c := range []struct{ name, doc, want string }{
+		{"valid accepted receipt", base, ""},
+		{"valid found reconciliation", found, ""},
+		{"valid not_found reconciliation", notFound, ""},
+		{"valid revision_conflict receipt", conflict, ""},
+		{"found reconciliation with non-accepted outcome", set(found, "outcome", `"no_head"`), ReasonReceiptNotAccepted},
+		{"seq not accepted", set(base, "seq", "1"), ReasonReceiptSeq},
+		{"wrong stream", set(base, "stream", `"other"`), ReasonReceiptMismatch},
+		{"wrong idempotency_key", set(base, "idempotency_key", `"other"`), ReasonReceiptMismatch},
+		{"wrong failure_model", set(base, "failure_model", `"none"`), ReasonReceiptMismatch},
+		{"invented body_status", set(base, "failure_model", `"survives_power_loss","body_status":"verified"`), ReasonReceiptMismatch},
+		{"conflict current not an accepted head", set(conflict, "current", fmt.Sprintf(`{"stream":%q,"record_id":"a","revision":2,"digest":%q}`, stream, d1)), ReasonReceiptMismatch},
+		{"found embedded key mismatch", set(found, "idempotency_key", `"other"`), ReasonReconciliationMismatch},
+		{"not_found for an accepted key", set(notFound, "idempotency_key", `"k2"`), ReasonReconciliationMismatch},
+		{"coverage start after attempt", set(notFound, "window_covers_from", `"2026-10-20T00:00:03.000001Z"`), ReasonCoverage},
+		{"coverage until before attempt", set(notFound, "window_covers_until", `"2026-10-20T00:00:02.999999Z"`), ReasonCoverage},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := reasonOf(CheckReceipt(node(t, wire.KindWriteReceipt, c.doc), lines)); got != c.want {
+				t.Fatalf("%q, want %q", got, c.want)
+			}
+		})
 	}
 }
 

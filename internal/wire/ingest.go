@@ -110,6 +110,36 @@ func Ingest(raw []byte, kind string) (*Node, error) {
 	return n, nil
 }
 
+// ReceiptKind returns KindWriteReceipt for an object whose "kind" member is
+// "receipt" or "reconciliation", and KindProtectionReceipt otherwise, matching
+// the reference interpreter's receipt-step dispatch.
+func ReceiptKind(n *Node) string {
+	if n != nil && n.Kind == Object {
+		if k := n.Get("kind"); k != nil && k.Kind == String && (k.Str == "receipt" || k.Str == "reconciliation") {
+			return KindWriteReceipt
+		}
+	}
+	return KindProtectionReceipt
+}
+
+// IngestReceipt runs stage 1 and stage 2 on a raw receipt step, selecting
+// KindWriteReceipt or KindProtectionReceipt from the parsed root's "kind"
+// member.
+func IngestReceipt(raw []byte) (*Node, error) {
+	n, err := ParseJSON(raw)
+	if err != nil {
+		return nil, err
+	}
+	kind := ReceiptKind(n)
+	if err := opaquePass(n, kind); err != nil {
+		return nil, err
+	}
+	if err := intPass(n, kind); err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
 // opaquePass is the rest of stage 1: every number outside a protocol-integer
 // position must be a finite binary64 value. Protocol-integer tokens are left
 // for stage 2.
