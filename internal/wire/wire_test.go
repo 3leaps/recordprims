@@ -223,3 +223,21 @@ func TestStrictParserAccepts(t *testing.T) {
 		t.Fatalf("number token %q, want the raw spelling", got)
 	}
 }
+
+func TestIngestReceipt(t *testing.T) {
+	if _, err := IngestReceipt([]byte(`{"kind":"receipt","pin":{"revision":1.5}}`)); reason(err) != ReasonNumericDomain {
+		t.Fatalf("write receipt pin.revision: %v, want numeric_domain", err)
+	}
+	if _, err := IngestReceipt([]byte(`{"kind":"reconciliation","receipt":{"seq":1.5}}`)); reason(err) != ReasonNumericDomain {
+		t.Fatalf("reconciliation embedded seq: %v, want numeric_domain", err)
+	}
+	if _, err := IngestReceipt([]byte(`{"seq":1.5}`)); reason(err) != ReasonNumericDomain {
+		t.Fatalf("protection receipt seq: %v, want numeric_domain", err)
+	}
+	// A protection receipt has no "pin" protocol integer; only "kind":"receipt"
+	// or "kind":"reconciliation" selects KindWriteReceipt.
+	n, err := IngestReceipt([]byte(`{"v":1,"seq":2,"pin":{"revision":1.5}}`))
+	if err != nil || ReceiptKind(n) != KindProtectionReceipt {
+		t.Fatalf("protection receipt dispatch: kind=%s err=%v", ReceiptKind(n), err)
+	}
+}

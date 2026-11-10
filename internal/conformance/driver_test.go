@@ -18,7 +18,6 @@ package conformance
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -80,6 +79,8 @@ func stageResult(v *wire.Node) (string, error) {
 				{"raw_request", wire.KindProtectionRequest},
 				{"raw_entry", wire.KindJournalEntry},
 				{"raw_body_state", wire.KindBodyStateRequest},
+				{"raw_removal_eligibility", wire.KindRemovalEligibility},
+				{"raw_verify_seal", "seal_context"},
 				{"raw_use", wire.KindExportRequest},
 			} {
 				if raw := s.Get(fk.field); raw != nil {
@@ -88,8 +89,14 @@ func stageResult(v *wire.Node) (string, error) {
 					}
 				}
 			}
-			if s.Get("raw_receipt") != nil {
-				return "", fmt.Errorf("raw_receipt steps are not driven yet")
+			if raw := s.Get("raw_receipt"); raw != nil {
+				if _, err := wire.IngestReceipt([]byte(raw.Str)); err != nil {
+					var r *wire.Reject
+					if errors.As(err, &r) {
+						return r.Reason, nil
+					}
+					return "", err
+				}
 			}
 		}
 	}
@@ -132,10 +139,10 @@ func reasonOf(err error) string {
 // entry's numeric domain inside check_journal, interleaved with the seq and
 // stream checks. A vector with an early seq_gap and a later numeric_domain
 // entry would differ; none exists.
-func semanticResult(v *wire.Node) (refusal string, journalSize int, complete bool) {
+func semanticResult(v *wire.Node) (refusal string, results []*wire.Node, activeHolds []int64, journalSize int, complete bool) {
 	st, err := journal.New(v.Get("window_ms"))
 	if err != nil {
-		return reasonOf(err), 0, true
+		return reasonOf(err), nil, nil, 0, true
 	}
 	var prof *wire.Node
 	if p := v.Get("raw_profile"); p != nil {
@@ -144,25 +151,20 @@ func semanticResult(v *wire.Node) (refusal string, journalSize int, complete boo
 		prof, err = typed(p, wire.KindStratumProfile)
 	}
 	if err != nil {
-		return reasonOf(err), 0, true
+		return reasonOf(err), nil, nil, 0, true
 	}
 	if prof != nil {
 		if err := journal.CheckProfile(prof); err != nil {
-			return reasonOf(err), 0, true
+			return reasonOf(err), nil, nil, 0, true
 		}
-		if rs := prof.Get("runtime").Get("body_removal_stream"); rs != nil && rs.Kind == wire.String {
-			st.SetRemovalStream(rs.Str)
-		}
-	}
-	if v.Get("source_journal") != nil || v.Get("raw_source_journal") != nil {
-		return "", 0, false
+		st.SetProfile(prof)
 	}
 	var entries []*wire.Node
 	if j := v.Get("raw_journal"); j != nil {
 		for _, line := range j.Elems {
 			n, err := wire.Ingest([]byte(line.Str), wire.KindJournalEntry)
 			if err != nil {
-				return reasonOf(err), 0, true
+				return reasonOf(err), nil, nil, 0, true
 			}
 			entries = append(entries, n)
 		}
@@ -170,53 +172,264 @@ func semanticResult(v *wire.Node) (refusal string, journalSize int, complete boo
 		for _, e := range j.Elems {
 			n, err := typed(e, wire.KindJournalEntry)
 			if err != nil {
-				return reasonOf(err), 0, true
+				return reasonOf(err), nil, nil, 0, true
 			}
 			entries = append(entries, n)
 		}
 	}
+	if sh := v.Get("sharing_streams"); sh != nil && sh.Kind == wire.Array {
+		for _, sj := range sh.Elems {
+			var shEntries []*wire.Node
+			for _, se := range sj.Elems {
+				n, err := typed(se, wire.KindJournalEntry)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, true
+				}
+				shEntries = append(shEntries, n)
+			}
+			if err := st.ObserveSharingStream(shEntries); err != nil {
+				return reasonOf(err), nil, nil, 0, true
+			}
+		}
+	}
+	var firstEntry *wire.Node
+	if len(entries) > 0 {
+		firstEntry = entries[0]
+	}
+	if err := st.ValidateRecovery(journal.RecoveryInput{
+		FirstEntry:         firstEntry,
+		QuarantinedStreams: v.Get("quarantined_streams"),
+		CandidateStreams:   v.Get("candidate_streams"),
+		ExpectedStore:      v.Get("expected_store"),
+		RecoveryContexts:   v.Get("recovery_contexts"),
+	}); err != nil {
+		return reasonOf(err), nil, nil, 0, true
+	}
+	srcIn := journal.SourceInput{
+		SourceJournal:    cloneElemList(v.Get("source_journal")),
+		RawSourceJournal: cloneElemList(v.Get("raw_source_journal")),
+		Ancestors:        cloneAncestors(v.Get("ancestors")),
+		RawAncestors:     cloneAncestors(v.Get("raw_ancestors")),
+		SourceSeal:       v.Get("source_seal"),
+	}
+	if err := st.SetSourceChain(srcIn); err != nil {
+		return reasonOf(err), nil, nil, 0, true
+	}
 	if err := journal.CheckJournal(entries); err != nil {
-		return reasonOf(err), 0, true
+		return reasonOf(err), nil, nil, 0, true
 	}
 	for _, e := range entries {
 		if err := st.Ingest(e); err != nil {
-			return reasonOf(err), 0, !st.Partial()
+			return reasonOf(err), nil, nil, 0, !st.Partial()
+		}
+	}
+	journaledOutcome := func() *wire.Node {
+		return &wire.Node{
+			Kind:   wire.Object,
+			Fields: []wire.Member{{Name: "outcome", Value: &wire.Node{Kind: wire.String, Str: "journaled"}}},
 		}
 	}
 	if steps := v.Get("steps"); steps != nil {
 		for _, s := range steps.Elems {
-			var e *wire.Node
-			if raw := s.Get("raw_entry"); raw != nil {
-				e, err = wire.Ingest([]byte(raw.Str), wire.KindJournalEntry)
-			} else if te := s.Get("entry"); te != nil {
-				e, err = typed(te, wire.KindJournalEntry)
-			} else {
-				return "", 0, false
-			}
-			if err != nil {
-				return reasonOf(err), 0, !st.Partial()
-			}
-			if err := st.Ingest(e); err != nil {
-				return reasonOf(err), 0, !st.Partial()
+			switch {
+			case s.Get("raw_request") != nil || s.Get("request") != nil:
+				var req *wire.Node
+				if raw := s.Get("raw_request"); raw != nil {
+					req, err = wire.Ingest([]byte(raw.Str), wire.KindProtectionRequest)
+				} else {
+					req, err = typed(s.Get("request"), wire.KindProtectionRequest)
+				}
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				res, err := st.Request(req, s.Get("at").Str)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, res)
+			case s.Get("retire") != nil:
+				res, err := st.Retire(s.Get("retire"), s.Get("at").Str)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, res)
+			case s.Get("raw_entry") != nil || s.Get("entry") != nil:
+				var e *wire.Node
+				if raw := s.Get("raw_entry"); raw != nil {
+					e, err = wire.Ingest([]byte(raw.Str), wire.KindJournalEntry)
+				} else {
+					e, err = typed(s.Get("entry"), wire.KindJournalEntry)
+				}
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				if err := st.Ingest(e); err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, journaledOutcome())
+			case s.Get("raw_receipt") != nil || s.Get("receipt") != nil:
+				var rcpt *wire.Node
+				if raw := s.Get("raw_receipt"); raw != nil {
+					rcpt, err = wire.IngestReceipt([]byte(raw.Str))
+				} else {
+					r := s.Get("receipt")
+					rcpt, err = typed(r, wire.ReceiptKind(r))
+				}
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				res, err := st.VerifyReceipt(rcpt)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, res)
+			case s.Get("reconcile") != nil:
+				rec := s.Get("reconcile")
+				res, err := st.Reconcile(
+					rec.Get("key").Str,
+					rec.Get("at").Str,
+					rec.Get("attempted_at").Str,
+				)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, res)
+			case s.Get("raw_body_state") != nil || s.Get("body_state") != nil:
+				var bs *wire.Node
+				if raw := s.Get("raw_body_state"); raw != nil {
+					bs, err = wire.Ingest([]byte(raw.Str), wire.KindBodyStateRequest)
+					if err != nil {
+						return reasonOf(err), nil, nil, 0, !st.Partial()
+					}
+				} else {
+					bs = s.Get("body_state")
+				}
+				res, err := st.BodyState(bs)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, res)
+			case s.Get("raw_removal_eligibility") != nil || s.Get("removal_eligibility") != nil:
+				var re *wire.Node
+				if raw := s.Get("raw_removal_eligibility"); raw != nil {
+					re, err = wire.Ingest([]byte(raw.Str), wire.KindRemovalEligibility)
+					if err != nil {
+						return reasonOf(err), nil, nil, 0, !st.Partial()
+					}
+				} else {
+					re = s.Get("removal_eligibility")
+				}
+				res, err := st.RemovalEligibility(re)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, res)
+			case s.Get("raw_verify_seal") != nil || s.Get("verify_seal") != nil:
+				var vs *wire.Node
+				if raw := s.Get("raw_verify_seal"); raw != nil {
+					vs, err = wire.Ingest([]byte(raw.Str), "seal_context")
+					if err != nil {
+						return reasonOf(err), nil, nil, 0, !st.Partial()
+					}
+				} else {
+					vs = s.Get("verify_seal")
+				}
+				res, err := st.VerifySealStep(vs)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, res)
+			case s.Get("source_entry") != nil:
+				srcIn.SourceJournal.Elems = append(srcIn.SourceJournal.Elems, s.Get("source_entry"))
+				if err := st.SetSourceChain(srcIn); err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, journaledOutcome())
+			case s.Get("raw_source_entry") != nil:
+				srcIn.RawSourceJournal.Elems = append(srcIn.RawSourceJournal.Elems, s.Get("raw_source_entry"))
+				if err := st.SetSourceChain(srcIn); err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, journaledOutcome())
+			case s.Get("ancestor_entry") != nil:
+				idx, err := wire.SafeInt(s.Get("ancestor").Token)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				srcIn.Ancestors.Elems[idx].Elems = append(srcIn.Ancestors.Elems[idx].Elems, s.Get("ancestor_entry"))
+				srcInNoSeal := srcIn
+				srcInNoSeal.SourceSeal = nil
+				if err := st.SetSourceChain(srcInNoSeal); err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, journaledOutcome())
+			case s.Get("raw_ancestor_entry") != nil:
+				idx, err := wire.SafeInt(s.Get("ancestor").Token)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				srcIn.RawAncestors.Elems[idx].Elems = append(srcIn.RawAncestors.Elems[idx].Elems, s.Get("raw_ancestor_entry"))
+				srcInNoSeal := srcIn
+				srcInNoSeal.SourceSeal = nil
+				if err := st.SetSourceChain(srcInNoSeal); err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, journaledOutcome())
+			case s.Get("raw_use") != nil || s.Get("use") != nil:
+				var u *wire.Node
+				if raw := s.Get("raw_use"); raw != nil {
+					u, err = wire.Ingest([]byte(raw.Str), wire.KindExportRequest)
+				} else {
+					u, err = typed(s.Get("use"), wire.KindExportRequest)
+				}
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				res, err := st.Use(u)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, res)
+			default:
+				return "", nil, nil, 0, false
 			}
 		}
 	}
 	if err := journal.CheckJournal(st.Journal()); err != nil {
-		return reasonOf(err), 0, !st.Partial()
+		return reasonOf(err), nil, nil, 0, !st.Partial()
 	}
-	return "", st.Len(), !st.Partial()
+	return "", results, st.ActiveHolds(), st.Len(), !st.Partial()
 }
 
-// acceptedAs reports whether a vector's expected result is exactly what a
-// complete replay with no step other than journal entries yields: one
-// "journaled" result per step, no active holds, and the journal size.
-func acceptedAs(exp *wire.Node, size int) bool {
+// acceptedAs reports whether a vector's expected result matches the step
+// results, active holds, and final journal size.
+func acceptedAs(exp *wire.Node, results []*wire.Node, activeHolds []int64, size int) bool {
 	res, holds, js := exp.Get("results"), exp.Get("active_holds"), exp.Get("journal_size")
-	if res == nil || holds == nil || js == nil || len(exp.Fields) != 3 || len(holds.Elems) != 0 {
+	if res == nil || holds == nil || js == nil || len(exp.Fields) != 3 {
 		return false
 	}
-	for _, r := range res.Elems {
-		if o := r.Get("outcome"); len(r.Fields) != 1 || o == nil || o.Str != "journaled" {
+	if len(holds.Elems) != len(activeHolds) {
+		return false
+	}
+	for i, h := range holds.Elems {
+		n, err := wire.SafeInt(h.Token)
+		if err != nil || n != activeHolds[i] {
+			return false
+		}
+	}
+	if len(res.Elems) != len(results) {
+		return false
+	}
+	for i, want := range res.Elems {
+		wantTyped, err := wire.ParseJSON(wire.Encode(want))
+		if err != nil {
+			return false
+		}
+		gotTyped, err := wire.ParseJSON(wire.Encode(results[i]))
+		if err != nil {
+			return false
+		}
+		if !journal.Equal(wantTyped, gotTyped) {
 			return false
 		}
 	}
@@ -264,7 +477,7 @@ func TestV1Vectors(t *testing.T) {
 			// is implemented. A refusal that matches the vector passes; one
 			// that contradicts it is an error only when nothing unimplemented
 			// could have refused first.
-			sem, size, complete := semanticResult(v)
+			sem, results, holds, size, complete := semanticResult(v)
 			switch {
 			case strings.HasPrefix(sem, "error"):
 				t.Errorf("%s: %s", name, sem)
@@ -278,7 +491,7 @@ func TestV1Vectors(t *testing.T) {
 				t.Errorf("%s: semantic stage refuses %q, vector expects %q", name, sem, orAccept(want))
 			case want != "":
 				t.Errorf("%s: semantic stage accepts a complete replay, vector expects %q", name, want)
-			case !acceptedAs(v.Get("expected"), size):
+			case !acceptedAs(v.Get("expected"), results, holds, size):
 				t.Errorf("%s: complete replay of %d entries does not match the expected result", name, size)
 			default:
 				got[name] = statusPass
@@ -336,6 +549,26 @@ func TestV1Vectors(t *testing.T) {
 	t.Logf("%d vectors: %d pass, %d pass:partial, %d pending", len(got), pass, partial, len(got)-pass-partial)
 }
 
+func cloneElemList(n *wire.Node) *wire.Node {
+	if n == nil || n.Kind != wire.Array {
+		return n
+	}
+	elems := make([]*wire.Node, len(n.Elems))
+	copy(elems, n.Elems)
+	return &wire.Node{Kind: wire.Array, Elems: elems}
+}
+
+func cloneAncestors(n *wire.Node) *wire.Node {
+	if n == nil || n.Kind != wire.Array {
+		return n
+	}
+	elems := make([]*wire.Node, len(n.Elems))
+	for i, el := range n.Elems {
+		elems[i] = cloneElemList(el)
+	}
+	return &wire.Node{Kind: wire.Array, Elems: elems}
+}
+
 func hasRaw(v *wire.Node) bool {
 	for _, k := range []string{"raw_profile", "raw_journal", "raw_source_journal"} {
 		if v.Get(k) != nil {
@@ -344,7 +577,7 @@ func hasRaw(v *wire.Node) bool {
 	}
 	if steps := v.Get("steps"); steps != nil {
 		for _, s := range steps.Elems {
-			for _, k := range []string{"raw_request", "raw_entry", "raw_body_state", "raw_use", "raw_receipt"} {
+			for _, k := range []string{"raw_request", "raw_entry", "raw_body_state", "raw_removal_eligibility", "raw_verify_seal", "raw_use", "raw_receipt"} {
 				if s.Get(k) != nil {
 					return true
 				}

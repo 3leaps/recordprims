@@ -64,6 +64,48 @@ func TestVectorShapes(t *testing.T) {
 				invalid[int(x)] = true
 			}
 		}
+		invalidReceipts := map[int]bool{}
+		if l := v.Get("invalid_receipt_steps"); l != nil {
+			for _, e := range l.Elems {
+				x, _ := wire.SafeInt(e.Token)
+				invalidReceipts[int(x)] = true
+			}
+		}
+		invalidRequests := map[int]bool{}
+		if l := v.Get("invalid_request_steps"); l != nil {
+			for _, e := range l.Elems {
+				x, _ := wire.SafeInt(e.Token)
+				invalidRequests[int(x)] = true
+			}
+		}
+		invalidStates := map[int]bool{}
+		if l := v.Get("invalid_body_state_steps"); l != nil {
+			for _, e := range l.Elems {
+				x, _ := wire.SafeInt(e.Token)
+				invalidStates[int(x)] = true
+			}
+		}
+		invalidUses := map[int]bool{}
+		if l := v.Get("invalid_use_steps"); l != nil {
+			for _, e := range l.Elems {
+				x, _ := wire.SafeInt(e.Token)
+				invalidUses[int(x)] = true
+			}
+		}
+		invalidRemovals := map[int]bool{}
+		if l := v.Get("invalid_removal_steps"); l != nil {
+			for _, e := range l.Elems {
+				x, _ := wire.SafeInt(e.Token)
+				invalidRemovals[int(x)] = true
+			}
+		}
+		invalidSeals := map[int]bool{}
+		if l := v.Get("invalid_seal_steps"); l != nil {
+			for _, e := range l.Elems {
+				x, _ := wire.SafeInt(e.Token)
+				invalidSeals[int(x)] = true
+			}
+		}
 		check := func(doc *wire.Node, schema string, want bool, where string) {
 			checked++
 			err := shape.Validate(schema, doc)
@@ -94,22 +136,127 @@ func TestVectorShapes(t *testing.T) {
 		} else if p := v.Get("profile"); p != nil {
 			check(p, "v1/stratum-profile.schema.json", true, "profile")
 		}
+		if cs := v.Get("candidate_streams"); cs != nil {
+			for _, ce := range cs.Elems {
+				check(ce, "v1/journal-entry.schema.json", true, "candidate_streams entry")
+			}
+		}
+		if ss := v.Get("sharing_streams"); ss != nil {
+			for _, sj := range ss.Elems {
+				for _, se := range sj.Elems {
+					check(se, "v1/journal-entry.schema.json", true, "sharing_streams entry")
+				}
+			}
+		}
 		if j := v.Get("raw_journal"); j != nil {
+			aborted := false
 			for i, line := range j.Elems {
 				n := ingest(line.Str, wire.KindJournalEntry)
 				if n == nil {
+					aborted = true
 					break
 				}
 				check(n, "v1/journal-entry.schema.json", !invalid[i], "raw_journal entry")
+			}
+			if aborted {
+				continue
 			}
 		} else if j := v.Get("journal"); j != nil {
 			for i, e := range j.Elems {
 				check(e, "v1/journal-entry.schema.json", !invalid[i], "journal entry")
 			}
 		}
+		if steps := v.Get("steps"); steps != nil {
+			for i, s := range steps.Elems {
+				switch {
+				case s.Get("raw_request") != nil:
+					n := ingest(s.Get("raw_request").Str, wire.KindProtectionRequest)
+					if n == nil {
+						goto nextVector
+					}
+					check(n, "v1/protection-request.schema.json", !invalidRequests[i], "raw_request step")
+				case s.Get("request") != nil:
+					check(s.Get("request"), "v1/protection-request.schema.json", !invalidRequests[i], "request step")
+				case s.Get("raw_receipt") != nil:
+					n, err := wire.IngestReceipt([]byte(s.Get("raw_receipt").Str))
+					if err != nil {
+						goto nextVector
+					}
+					check(n, receiptSchema(n), !invalidReceipts[i], "raw_receipt step")
+				case s.Get("receipt") != nil:
+					r := s.Get("receipt")
+					check(r, receiptSchema(r), !invalidReceipts[i], "receipt step")
+				case s.Get("raw_entry") != nil:
+					n := ingest(s.Get("raw_entry").Str, wire.KindJournalEntry)
+					if n == nil {
+						goto nextVector
+					}
+					check(n, "v1/journal-entry.schema.json", true, "raw_entry step")
+				case s.Get("entry") != nil:
+					check(s.Get("entry"), "v1/journal-entry.schema.json", true, "entry step")
+				case s.Get("raw_body_state") != nil:
+					n := ingest(s.Get("raw_body_state").Str, wire.KindBodyStateRequest)
+					if n == nil {
+						goto nextVector
+					}
+					check(n, "v1/body-state-request.schema.json", !invalidStates[i], "raw_body_state step")
+				case s.Get("body_state") != nil:
+					check(s.Get("body_state"), "v1/body-state-request.schema.json", !invalidStates[i], "body_state step")
+				case s.Get("raw_use") != nil:
+					n := ingest(s.Get("raw_use").Str, wire.KindExportRequest)
+					if n == nil {
+						goto nextVector
+					}
+					check(n, "v1/export-request.schema.json", !invalidUses[i], "raw_use step")
+				case s.Get("use") != nil:
+					check(s.Get("use"), "v1/export-request.schema.json", !invalidUses[i], "use step")
+				case s.Get("raw_removal_eligibility") != nil:
+					n := ingest(s.Get("raw_removal_eligibility").Str, wire.KindRemovalEligibility)
+					if n == nil {
+						goto nextVector
+					}
+					check(n, "v1/removal-eligibility-request.schema.json", !invalidRemovals[i], "raw_removal_eligibility step")
+				case s.Get("removal_eligibility") != nil:
+					check(s.Get("removal_eligibility"), "v1/removal-eligibility-request.schema.json", !invalidRemovals[i], "removal_eligibility step")
+				case s.Get("raw_verify_seal") != nil:
+					vctx := ingest(s.Get("raw_verify_seal").Str, "seal_context")
+					if vctx == nil {
+						goto nextVector
+					}
+					if rs := vctx.Get("raw_seal"); rs != nil && rs.Kind == wire.String {
+						sn := ingest(rs.Str, wire.KindStreamSeal)
+						if sn == nil {
+							goto nextVector
+						}
+						check(sn, "v1/stream-seal.schema.json", !invalidSeals[i], "raw_verify_seal.raw_seal step")
+					} else if sl := vctx.Get("seal"); sl != nil {
+						check(sl, "v1/stream-seal.schema.json", !invalidSeals[i], "raw_verify_seal.seal step")
+					}
+				case s.Get("verify_seal") != nil:
+					vctx := s.Get("verify_seal")
+					if rs := vctx.Get("raw_seal"); rs != nil && rs.Kind == wire.String {
+						sn := ingest(rs.Str, wire.KindStreamSeal)
+						if sn == nil {
+							goto nextVector
+						}
+						check(sn, "v1/stream-seal.schema.json", !invalidSeals[i], "verify_seal.raw_seal step")
+					} else if sl := vctx.Get("seal"); sl != nil {
+						check(sl, "v1/stream-seal.schema.json", !invalidSeals[i], "verify_seal.seal step")
+					}
+				}
+			}
+		}
+	nextVector:
 	}
 	if checked < 500 {
 		t.Fatalf("only %d documents checked", checked)
 	}
 	t.Logf("%d vector documents checked", checked)
+}
+
+func receiptSchema(n *wire.Node) string {
+	if wire.ReceiptKind(n) == wire.KindWriteReceipt {
+		return "v1/write-receipt.schema.json"
+	}
+	return "v1/protection-receipt.schema.json"
 }
