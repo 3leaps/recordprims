@@ -55,7 +55,26 @@ var (
 	// ErrStoreInvalid: the store root failed validation on open (ownership,
 	// permissions, object type, filesystem type, or format). Never repaired.
 	ErrStoreInvalid = errors.New("recordprims: invalid store")
+
+	// ErrContinuationUnsupported: the continuation source uses an unsupported
+	// capability or store (same-store durable-record/v1 sources only).
+	ErrContinuationUnsupported = errors.New("recordprims: continuation source unsupported")
+
+	// ErrStaleReview: the source or destination state digest in a restriction
+	// review does not match the current state under the lock.
+	ErrStaleReview = errors.New("recordprims: stale restriction review")
 )
+
+// ErrJournalInvalid is returned, determinately, when a stream journal (such as
+// the store's designated body-removal stream) is missing or fails contract
+// validation. Reason carries the closed durable-record/v1 refusal code.
+type ErrJournalInvalid struct {
+	Reason string
+}
+
+func (e *ErrJournalInvalid) Error() string {
+	return fmt.Sprintf("recordprims: invalid journal (%s)", e.Reason)
+}
 
 // ErrDamagedTail is returned, determinately, by operations on a stream whose
 // journal tail is a torn line or an incomplete atomic group. Other streams are

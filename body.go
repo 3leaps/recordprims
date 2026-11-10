@@ -12,10 +12,15 @@ import (
 	"io/fs"
 	"path"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/3leaps/recordprims/internal/jfile"
+	"github.com/3leaps/recordprims/internal/journal"
+	"github.com/3leaps/recordprims/internal/shape"
+	"github.com/3leaps/recordprims/internal/wire"
 )
 
 // BodyRef binds bytes held outside a record by digest and length.
@@ -35,22 +40,46 @@ type PublicationLease struct {
 
 // Pin names one revision of one record.
 type Pin struct {
-	Stream   string
-	RecordID string
-	Revision uint64
-	Digest   string
+	Stream   string `json:"stream"`
+	RecordID string `json:"record_id"`
+	Revision uint64 `json:"revision"`
+	Digest   string `json:"digest"`
 }
+
+// Provenance identifies the producer or operator of a record or lifecycle action.
+type Provenance struct {
+	ActorKind  string `json:"actor_kind"`
+	Actor      string `json:"actor"`
+	Supervisor string `json:"supervisor,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Tool       string `json:"tool,omitempty"`
+}
+
+// Authorization binds an external authorization artifact by reference and digest.
+type Authorization struct {
+	Ref    string `json:"ref"`
+	Digest string `json:"digest"`
+}
+
+// RemoveBodyReason is the closed vocabulary of body-removal reasons.
+type RemoveBodyReason string
+
+const (
+	RemoveReasonRetention        RemoveBodyReason = "retention"
+	RemoveReasonOperator         RemoveBodyReason = "operator"
+	RemoveReasonRightsRestricted RemoveBodyReason = "rights_restricted"
+)
 
 // RemoveBodyRequest asks the store to remove a body's bytes.
 type RemoveBodyRequest struct {
 	Digest string
 	Length int64
-	// DropSet lists the pins whose references the caller is retiring along
-	// with the body.
-	DropSet []Pin
 	// CompleteIncarnation, when set, completes an earlier removal of that
 	// incarnation only; a newer publication makes the request superseded.
 	CompleteIncarnation *uint64
+	Reason              RemoveBodyReason
+	Provenance          Provenance
+	Authorization       *Authorization
 }
 
 // RemoveBodyOutcome is the closed set of removal results.
@@ -74,26 +103,27 @@ type RemoveBodyResult struct {
 	Outcome RemoveBodyOutcome
 }
 
-// bodyStateKind is the single body state every body operation derives from.
+// bodyStateKind is the durable-record/v1 reader state (plus corrupt for failed
+// physical byte observation) every body operation derives from.
 type bodyStateKind string
 
 const (
-	stateLive                  bodyStateKind = "live"
-	stateRemoving              bodyStateKind = "removing"
-	statePublishing            bodyStateKind = "publishing"
-	statePublicationIncomplete bodyStateKind = "publication_incomplete"
-	stateRemoved               bodyStateKind = "removed"
-	stateMissing               bodyStateKind = "missing"
-	stateInconsistent          bodyStateKind = "inconsistent"
-	stateUnknownDigest         bodyStateKind = "unknown_digest"
-	stateCorrupt               bodyStateKind = "corrupt"
+	stateAvailable      bodyStateKind = "available"
+	stateRemovalPending bodyStateKind = "removal_pending"
+	stateRemoved        bodyStateKind = "removed"
+	statePublishing     bodyStateKind = "publishing"
+	stateUnpublished    bodyStateKind = "unpublished"
+	stateIntegrityLoss  bodyStateKind = "integrity_loss"
+	stateCorrupt        bodyStateKind = "corrupt"
 )
 
-// bodyState is the state of one (digest, length) and the incarnation it was
-// evaluated at.
+// bodyState is the evaluated state of one (digest, length), the journal bound,
+// the journal phase, and the local prewrite incarnation ledger.
 type bodyState struct {
 	kind        bodyStateKind
-	incarnation uint64
+	incarnation uint64 // max(journal bound, local counter)
+	bound       uint64 // committed journal bound
+	phase       string // "", "published", "started", "removed"
 }
 
 // Body directory layout, relative to the store root.
@@ -101,9 +131,7 @@ const (
 	dirBodySHA256      = dirBodies + "/sha256"
 	dirBodyTmp         = dirBodies + "/tmp"
 	dirBodyIncarnation = dirBodies + "/incarnation"
-	dirBodyPublished   = dirBodies + "/published"
 	dirBodyPending     = dirBodies + "/pending"
-	dirBodyRemoved     = dirBodies + "/removed"
 )
 
 var (
@@ -111,10 +139,11 @@ var (
 	reMediaType = regexp.MustCompile(`^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$`)
 	reStream    = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
 	reRecordID  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	reAuthRef   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$`)
 )
 
 // errBodyConflict is returned by PutBody when the stored bytes for the digest
-// are corrupt or the body's records are inconsistent.
+// are corrupt.
 var errBodyConflict = fmt.Errorf("%w: body_conflict", ErrStoreInvalid)
 
 // digestHex returns the 64-hex part of a validated digest. Names on disk use
@@ -123,22 +152,6 @@ func digestHex(digest string) string { return strings.TrimPrefix(digest, "sha256
 
 func bodyFile(h string) string        { return dirBodySHA256 + "/" + h[:2] + "/" + h }
 func incarnationFile(h string) string { return dirBodyIncarnation + "/" + h }
-func publishedFile(h string, n uint64) string {
-	return dirBodyPublished + "/" + h + "-" + strconv.FormatUint(n, 10)
-}
-func tombstoneFile(h string, length int64) string {
-	return dirBodyRemoved + "/" + h + "-" + strconv.FormatInt(length, 10) + ".json"
-}
-
-// tombstone is the retention record written before a body's bytes are
-// unlinked.
-type tombstone struct {
-	Digest      string `json:"digest"`
-	Length      int64  `json:"length"`
-	RemovedAt   string `json:"removed_at"`
-	DropSetHash string `json:"drop_set_hash"`
-	Incarnation uint64 `json:"incarnation"`
-}
 
 type leaseFile struct {
 	Incarnation uint64 `json:"incarnation"`
@@ -160,7 +173,7 @@ func (s *Store) ensureBodyDirs() error {
 	if s.bodyDirsReady {
 		return nil
 	}
-	for _, d := range []string{dirBodies, dirBodySHA256, dirBodyTmp, dirBodyIncarnation, dirBodyPublished, dirBodyPending, dirBodyRemoved} {
+	for _, d := range []string{dirBodies, dirBodySHA256, dirBodyTmp, dirBodyIncarnation, dirBodyPending} {
 		if err := s.root.Mkdir(d, s.fso); err != nil {
 			return ioErr("mkdir", err, false)
 		}
@@ -172,9 +185,87 @@ func (s *Store) ensureBodyDirs() error {
 	return nil
 }
 
+type designatedJournal struct {
+	st        *journal.State
+	jpath     string
+	sdir      string
+	cutOffset int64
+	lastSeq   int64
+	lastAt    time.Time
+}
+
+func rejectReason(err error) string {
+	var r *wire.Reject
+	if errors.As(err, &r) {
+		return r.Reason
+	}
+	return journal.ReasonShape
+}
+
+// readDesignatedState replays and validates the store's designated body-removal
+// stream under the store lock. A missing, torn, or invalid designated stream
+// returns ErrJournalInvalid (G7, G9, item 21).
+func (s *Store) readDesignatedState() (*designatedJournal, error) {
+	streamID := s.profile.Runtime.BodyRemovalStream
+	if streamID == "" {
+		return nil, &ErrJournalInvalid{Reason: journal.ReasonBodyRemovalStream}
+	}
+	jpath := streamJournalFile(streamID)
+	raw, err := readFileVerified(s.root, jpath, s.fso, maxJournalBytes)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, &ErrJournalInvalid{Reason: journal.ReasonBodyRemovalStream}
+	}
+	if err != nil {
+		return nil, ioErr("read", err, false)
+	}
+	nodes, err := wire.IngestLines(raw, wire.KindJournalEntry)
+	if err != nil {
+		return nil, &ErrJournalInvalid{Reason: rejectReason(err)}
+	}
+	st, err := journal.New(s.windowNode())
+	if err != nil {
+		return nil, &ErrJournalInvalid{Reason: rejectReason(err)}
+	}
+	st.SetProfile(s.profileNode)
+	var lastAt time.Time
+	for _, node := range nodes {
+		if err := shape.Validate("v1/journal-entry.schema.json", node); err != nil {
+			return nil, &ErrJournalInvalid{Reason: journal.ReasonShape}
+		}
+		if err := st.Ingest(node); err != nil {
+			return nil, &ErrJournalInvalid{Reason: rejectReason(err)}
+		}
+		if atNode := node.Get("at"); atNode != nil && atNode.Kind == wire.String {
+			lastAt, _ = journal.ParseInstant(atNode.Str)
+		}
+	}
+	if err := journal.CheckJournal(st.Journal()); err != nil {
+		return nil, &ErrJournalInvalid{Reason: rejectReason(err)}
+	}
+	if st.Stream() != streamID {
+		return nil, &ErrJournalInvalid{Reason: journal.ReasonBodyRemovalStream}
+	}
+	return &designatedJournal{
+		st:        st,
+		jpath:     jpath,
+		sdir:      streamDir(streamID),
+		cutOffset: int64(len(raw)),
+		lastSeq:   int64(st.Len()),
+		lastAt:    lastAt,
+	}, nil
+}
+
 // bodyState evaluates the state of (digest, length) under the store lock.
 func (s *Store) bodyState(h string, length int64) (bodyState, error) {
-	n, ok, err := s.readIncarnation(h)
+	desig, err := s.readDesignatedState()
+	if err != nil {
+		return bodyState{}, err
+	}
+	return s.evalBodyState(desig, h, length)
+}
+
+func (s *Store) evalBodyState(desig *designatedJournal, h string, length int64) (bodyState, error) {
+	localN, hasLocal, err := s.readIncarnation(h)
 	if err != nil {
 		return bodyState{}, err
 	}
@@ -182,44 +273,27 @@ func (s *Store) bodyState(h string, length int64) (bodyState, error) {
 	if err != nil {
 		return bodyState{}, err
 	}
-	// A digest or length mismatch overrides every other state.
+	key := journal.BodyKey{Digest: "sha256:" + h, Length: length}
+	rs, bound, phase := desig.st.BodyLifecycle(key, present && intact)
+	maxInc := uint64(bound)
+	if hasLocal && localN > maxInc {
+		maxInc = localN
+	}
+	// A digest or length mismatch overrides every other state (G15 step 0).
 	if present && !intact {
-		return bodyState{kind: stateCorrupt, incarnation: n}, nil
+		return bodyState{
+			kind:        stateCorrupt,
+			incarnation: maxInc,
+			bound:       uint64(bound),
+			phase:       phase,
+		}, nil
 	}
-	if !ok {
-		if present {
-			// Bytes with no recorded incarnation cannot arise from the
-			// protocols: an integrity failure.
-			return bodyState{kind: stateInconsistent}, nil
-		}
-		return bodyState{kind: stateUnknownDigest}, nil
-	}
-	pub, err := s.exists(publishedFile(h, n))
-	if err != nil {
-		return bodyState{}, err
-	}
-	tomb, err := s.tombstoneFor(h, length, n)
-	if err != nil {
-		return bodyState{}, err
-	}
-	var k bodyStateKind
-	switch {
-	case present && pub && !tomb:
-		k = stateLive
-	case present && pub && tomb:
-		k = stateRemoving
-	case present && !pub && !tomb:
-		k = statePublishing
-	case present && !pub && tomb:
-		k = stateInconsistent
-	case !present && !pub:
-		k = statePublicationIncomplete
-	case !present && pub && tomb:
-		k = stateRemoved
-	default:
-		k = stateMissing
-	}
-	return bodyState{kind: k, incarnation: n}, nil
+	return bodyState{
+		kind:        bodyStateKind(rs),
+		incarnation: maxInc,
+		bound:       uint64(bound),
+		phase:       phase,
+	}, nil
 }
 
 func (s *Store) readIncarnation(h string) (uint64, bool, error) {
@@ -267,21 +341,151 @@ func (s *Store) exists(name string) (bool, error) {
 	return true, nil
 }
 
-// tombstoneFor reports a tombstone for (digest, length) at incarnation n. A
-// tombstone for any other incarnation is stale and ignored.
-func (s *Store) tombstoneFor(h string, length int64, n uint64) (bool, error) {
-	b, err := readFileVerified(s.root, tombstoneFile(h, length), s.fso, 1<<12)
-	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
+func (s *Store) appendLifecycleEntry(desig *designatedJournal, entryType, h string, length int64, incarnation uint64, req *RemoveBodyRequest) error {
+	if desig.lastSeq >= maxSafeInteger {
+		return fmt.Errorf("%w: designated stream seq exhausted", ErrSchema)
 	}
+	now := s.opts.Clock.Now().UTC().Truncate(time.Microsecond)
+	if now.Before(desig.lastAt) {
+		return ErrClockRegression
+	}
+	seq := desig.lastSeq + 1
+	seqTok := strconv.FormatInt(seq, 10)
+	lenTok := strconv.FormatInt(length, 10)
+	incTok := strconv.FormatUint(incarnation, 10)
+
+	fields := []wire.Member{
+		{Name: "v", Value: &wire.Node{Kind: wire.Number, Token: "1", IsInt: true, Int: 1}},
+		{Name: "seq", Value: &wire.Node{Kind: wire.Number, Token: seqTok, IsInt: true, Int: seq}},
+		{Name: "group", Value: &wire.Node{Kind: wire.Number, Token: seqTok, IsInt: true, Int: seq}},
+		{Name: "group_size", Value: &wire.Node{Kind: wire.Number, Token: "1", IsInt: true, Int: 1}},
+		{Name: "stream", Value: &wire.Node{Kind: wire.String, Str: s.profile.Runtime.BodyRemovalStream}},
+		{Name: "type", Value: &wire.Node{Kind: wire.String, Str: entryType}},
+		{Name: "at", Value: &wire.Node{Kind: wire.String, Str: FormatInstant(now)}},
+		{Name: "body", Value: &wire.Node{
+			Kind: wire.Object,
+			Fields: []wire.Member{
+				{Name: "digest", Value: &wire.Node{Kind: wire.String, Str: "sha256:" + h}},
+				{Name: "length", Value: &wire.Node{Kind: wire.Number, Token: lenTok, IsInt: true, Int: length}},
+			},
+		}},
+		{Name: "incarnation", Value: &wire.Node{Kind: wire.Number, Token: incTok, IsInt: true, Int: int64(incarnation)}},
+	}
+	if entryType == "body_removal_started" && req != nil {
+		fields = append(fields,
+			wire.Member{Name: "reason", Value: &wire.Node{Kind: wire.String, Str: string(req.Reason)}},
+			wire.Member{Name: "provenance", Value: provenanceNode(req.Provenance)},
+		)
+		if req.Authorization != nil {
+			fields = append(fields, wire.Member{
+				Name: "authorization",
+				Value: &wire.Node{
+					Kind: wire.Object,
+					Fields: []wire.Member{
+						{Name: "ref", Value: &wire.Node{Kind: wire.String, Str: req.Authorization.Ref}},
+						{Name: "digest", Value: &wire.Node{Kind: wire.String, Str: req.Authorization.Digest}},
+					},
+				},
+			})
+		}
+	}
+	entry := &wire.Node{Kind: wire.Object, Fields: fields}
+
+	// G2: pre-validate exact emitted wire bytes, shape, and designated-stream state before writing.
+	rawEntry := wire.Encode(entry)
+	ingested, err := wire.Ingest(rawEntry, wire.KindJournalEntry)
 	if err != nil {
-		return false, ioErr("read", err, false)
+		return fmt.Errorf("%w: lifecycle entry wire invalid: %s", ErrSchema, rejectReason(err))
 	}
-	var t tombstone
-	if err := json.Unmarshal(b, &t); err != nil {
-		return false, fmt.Errorf("%w: tombstone invalid", ErrStoreInvalid)
+	if err := shape.Validate("v1/journal-entry.schema.json", ingested); err != nil {
+		return fmt.Errorf("%w: lifecycle entry shape invalid", ErrSchema)
 	}
-	return t.Incarnation == n, nil
+	if err := desig.st.Ingest(ingested); err != nil {
+		return &ErrJournalInvalid{Reason: rejectReason(err)}
+	}
+
+	line := append(rawEntry, '\n')
+	if err := s.appender.Append(desig.jpath, desig.cutOffset, line, true); err != nil {
+		return mapJFileErr(err)
+	}
+	desig.cutOffset += int64(len(line))
+	desig.lastSeq = seq
+	desig.lastAt = now
+
+	switch entryType {
+	case "body_published":
+		if err := s.fault("journal.published_written"); err != nil {
+			return err
+		}
+		if err := s.fault("journal.published_fsynced"); err != nil {
+			return err
+		}
+		return s.fault("body.published_written")
+	case "body_removal_started":
+		if err := s.fault("journal.removal_started_written"); err != nil {
+			return err
+		}
+		if err := s.fault("remove.tombstone_written"); err != nil {
+			return err
+		}
+		if err := s.fault("journal.removal_started_fsynced"); err != nil {
+			return err
+		}
+		return s.fault("remove.tombstone_fsynced")
+	case "body_removed":
+		if err := s.fault("journal.removed_written"); err != nil {
+			return err
+		}
+		return s.fault("journal.removed_fsynced")
+	}
+	return nil
+}
+
+func provenanceNode(p Provenance) *wire.Node {
+	fields := []wire.Member{
+		{Name: "actor_kind", Value: &wire.Node{Kind: wire.String, Str: p.ActorKind}},
+		{Name: "actor", Value: &wire.Node{Kind: wire.String, Str: p.Actor}},
+	}
+	if p.Supervisor != "" {
+		fields = append(fields, wire.Member{Name: "supervisor", Value: &wire.Node{Kind: wire.String, Str: p.Supervisor}})
+	}
+	if p.Model != "" {
+		fields = append(fields, wire.Member{Name: "model", Value: &wire.Node{Kind: wire.String, Str: p.Model}})
+	}
+	if p.Tool != "" {
+		fields = append(fields, wire.Member{Name: "tool", Value: &wire.Node{Kind: wire.String, Str: p.Tool}})
+	}
+	return &wire.Node{Kind: wire.Object, Fields: fields}
+}
+
+func validWireString(s string, minRunes, maxRunes int) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	n := utf8.RuneCountInString(s)
+	return n >= minRunes && n <= maxRunes
+}
+
+func validProvenance(p Provenance) bool {
+	if p.ActorKind != "human" && p.ActorKind != "agent" && p.ActorKind != "process" {
+		return false
+	}
+	if !validWireString(p.Actor, 1, 128) {
+		return false
+	}
+	for _, opt := range []string{p.Supervisor, p.Model, p.Tool} {
+		if opt != "" && !validWireString(opt, 1, 128) {
+			return false
+		}
+	}
+	return true
+}
+
+func validAuthorization(a *Authorization) bool {
+	if a == nil {
+		return true
+	}
+	return reAuthRef.MatchString(a.Ref) && reDigest.MatchString(a.Digest)
 }
 
 // PutBody streams r into the store as a content-addressed body and returns
@@ -290,9 +494,7 @@ func (s *Store) tombstoneFor(h string, length int64, n uint64) (bool, error) {
 // temporary file, which is not body state. A body longer than 2^53 - 1 bytes
 // is refused while staging; a publication whose incarnation would pass
 // 2^53 - 1 is refused after staging. Both refusals are a determinate ErrSchema
-// that changes no body state, and the staged file is removed. If that removal
-// fails, the error also carries an unlink IOError and the file remains as a
-// tmp leftover that Verify reports.
+// that changes no body state, and the staged file is removed.
 func (s *Store) PutBody(ctx context.Context, r io.Reader, mediaType string) (BodyRef, PublicationLease, error) {
 	if !reMediaType.MatchString(mediaType) {
 		return BodyRef{}, PublicationLease{}, fmt.Errorf("%w: media type", ErrSchema)
@@ -305,9 +507,6 @@ func (s *Store) PutBody(ctx context.Context, r io.Reader, mediaType string) (Bod
 		return BodyRef{}, PublicationLease{}, err
 	}
 	staged := true
-	// completed is set on every return below; a panic before then (in a
-	// hook or under the lock) still removes a staged file that was never
-	// linked into place, and the panic continues.
 	completed := false
 	defer func() {
 		if !completed && staged {
@@ -316,33 +515,57 @@ func (s *Store) PutBody(ctx context.Context, r io.Reader, mediaType string) (Bod
 	}()
 
 	var lease PublicationLease
-	// progressed is set once the operation may have changed durable state;
-	// any later failure is indeterminate.
 	progressed := false
 	err = s.withLock(func() error {
-		st, err := s.bodyState(h, length)
+		desig, err := s.readDesignatedState()
 		if err != nil {
 			return err
 		}
-		if st.kind == stateCorrupt || st.kind == stateInconsistent {
+		st, err := s.evalBodyState(desig, h, length)
+		if err != nil {
+			return err
+		}
+		if st.kind == stateCorrupt {
 			return errBodyConflict
 		}
-		if st.kind != stateLive && st.kind != statePublishing && st.incarnation >= maxSafeInteger {
-			return fmt.Errorf("%w: body incarnation exhausted", ErrSchema)
-		}
-		progressed = true
-		n := st.incarnation
 		switch st.kind {
-		case stateLive:
+		case stateAvailable:
+			// Bytes are already verified in place and committed at st.bound.
+			progressed = true
+			lease, err = s.writeLease(h, st.bound)
+			return err
 		case statePublishing:
+			// Bytes are verified in place, awaiting body_published commit.
+			n := st.incarnation
+			if n <= st.bound {
+				if st.bound >= maxSafeInteger {
+					return fmt.Errorf("%w: body incarnation exhausted", ErrSchema)
+				}
+				n = st.bound + 1
+				progressed = true
+				if err := s.writeIncarnation(h, n); err != nil {
+					return err
+				}
+			}
+			progressed = true
 			if err := s.syncBodyDir(h, "body.dir_fsynced"); err != nil {
 				return err
 			}
-			if err := s.publish(h, n); err != nil {
+			if err := s.appendLifecycleEntry(desig, "body_published", h, length, n, nil); err != nil {
 				return err
 			}
+			lease, err = s.writeLease(h, n)
+			return err
 		default:
-			n++
+			if st.incarnation >= maxSafeInteger {
+				return fmt.Errorf("%w: body incarnation exhausted", ErrSchema)
+			}
+			now := s.opts.Clock.Now().UTC().Truncate(time.Microsecond)
+			if now.Before(desig.lastAt) {
+				return ErrClockRegression
+			}
+			progressed = true
+			n := st.incarnation + 1
 			if err := s.writeIncarnation(h, n); err != nil {
 				return err
 			}
@@ -350,12 +573,12 @@ func (s *Store) PutBody(ctx context.Context, r io.Reader, mediaType string) (Bod
 				return err
 			}
 			staged = false
-			if err := s.publish(h, n); err != nil {
+			if err := s.appendLifecycleEntry(desig, "body_published", h, length, n, nil); err != nil {
 				return err
 			}
+			lease, err = s.writeLease(h, n)
+			return err
 		}
-		lease, err = s.writeLease(h, n)
-		return err
 	})
 	completed = true
 	if err != nil {
@@ -366,9 +589,6 @@ func (s *Store) PutBody(ctx context.Context, r io.Reader, mediaType string) (Bod
 		return BodyRef{}, PublicationLease{}, err
 	}
 	if staged {
-		// The body's bytes were already in place; the staged copy is
-		// redundant. A failed removal leaves a tmp leftover for Verify and
-		// does not fail the publication.
 		s.root.Remove(tmp)
 	}
 	return BodyRef{Digest: "sha256:" + h, Length: length, MediaType: mediaType}, lease, nil
@@ -396,9 +616,6 @@ func (s *Store) stage(ctx context.Context, r io.Reader) (name, h string, length 
 	if err != nil {
 		return "", "", 0, ioErr("create", err, false)
 	}
-	// finished is set on every return below; a panic while staging (a
-	// reader that panics, for instance) still closes and removes the file,
-	// and the panic continues.
 	finished := false
 	defer func() {
 		if !finished {
@@ -456,8 +673,8 @@ func (s *Store) stage(ctx context.Context, r io.Reader) (name, h string, length 
 	return name, hex.EncodeToString(sum.Sum(nil)), length, nil
 }
 
-// writeIncarnation durably advances the digest's incarnation, which makes
-// every tombstone for an earlier incarnation stale.
+// writeIncarnation durably advances the digest's incarnation in the prewrite
+// durable ledger before attempting body_published(n).
 func (s *Store) writeIncarnation(h string, n uint64) error {
 	if err := s.replaceFile(incarnationFile(h), []byte(strconv.FormatUint(n, 10)), "body.incarnation_written"); err != nil {
 		return err
@@ -500,13 +717,6 @@ func (s *Store) syncBodyDir(h, phase string) error {
 		return ioErr("fsync_dir", err, true)
 	}
 	return s.fault(phase)
-}
-
-func (s *Store) publish(h string, n uint64) error {
-	if err := writeFileDurable(s.root, publishedFile(h, n), []byte("{}")); err != nil {
-		return err
-	}
-	return s.fault("body.published_written")
 }
 
 func (s *Store) writeLease(h string, n uint64) (PublicationLease, error) {
@@ -559,7 +769,7 @@ func (s *Store) replaceFile(name string, data []byte, phase string) error {
 
 // bodyErr turns a failure inside a body operation into the published error:
 // the error itself when nothing durable changed, otherwise ErrBodyIncomplete
-// with the body state after the failure.
+// with the reader state after the failure.
 func (s *Store) bodyErr(err error, progressed bool, h string, length int64) error {
 	if !progressed {
 		return err
@@ -576,9 +786,7 @@ func (s *Store) bodyErr(err error, progressed bool, h string, length int64) erro
 
 // RemoveBody removes a body's bytes when nothing protects them. Every outcome
 // is a result; incomplete durable progress returns ErrBodyIncomplete and is
-// completed by retrying the same call. A length, drop-set revision or
-// CompleteIncarnation outside the durable-record integer domain (incarnations
-// and revisions 1 to 2^53 - 1, lengths 0 to 2^53 - 1) is refused with ErrSchema.
+// completed by retrying the same call.
 func (s *Store) RemoveBody(ctx context.Context, req RemoveBodyRequest) (RemoveBodyResult, error) {
 	if !reDigest.MatchString(req.Digest) || req.Length < 0 || req.Length > maxSafeInteger {
 		return RemoveBodyResult{}, fmt.Errorf("%w: digest or length", ErrSchema)
@@ -586,9 +794,14 @@ func (s *Store) RemoveBody(ctx context.Context, req RemoveBodyRequest) (RemoveBo
 	if c := req.CompleteIncarnation; c != nil && (*c < 1 || *c > maxSafeInteger) {
 		return RemoveBodyResult{}, fmt.Errorf("%w: complete incarnation", ErrSchema)
 	}
-	dropHash, err := dropSetHash(req.DropSet)
-	if err != nil {
-		return RemoveBodyResult{}, err
+	if req.Reason != RemoveReasonRetention && req.Reason != RemoveReasonOperator && req.Reason != RemoveReasonRightsRestricted {
+		return RemoveBodyResult{}, fmt.Errorf("%w: removal reason", ErrSchema)
+	}
+	if !validProvenance(req.Provenance) {
+		return RemoveBodyResult{}, fmt.Errorf("%w: removal provenance", ErrSchema)
+	}
+	if !validAuthorization(req.Authorization) {
+		return RemoveBodyResult{}, fmt.Errorf("%w: removal authorization", ErrSchema)
 	}
 	if err := ctx.Err(); err != nil {
 		return RemoveBodyResult{}, err
@@ -596,41 +809,101 @@ func (s *Store) RemoveBody(ctx context.Context, req RemoveBodyRequest) (RemoveBo
 	h := digestHex(req.Digest)
 	var out RemoveBodyOutcome
 	progressed := false
-	err = s.withLock(func() error {
+	err := s.withLock(func() error {
 		if err := s.ensureBodyDirs(); err != nil {
 			return err
 		}
-		st, err := s.bodyState(h, req.Length)
+		// G4c step 1: pre-validate designated stream at a complete valid cut.
+		desig, err := s.readDesignatedState()
 		if err != nil {
 			return err
 		}
-		if st.kind == stateRemoved {
-			progressed = true
+		// G15 step 0: observe the bytes under the lock.
+		st, err := s.evalBodyState(desig, h, req.Length)
+		if err != nil {
+			return err
 		}
-		out, err = s.removeDecision(st, h, req)
-		if err != nil || out != "" {
+		if st.kind == stateCorrupt {
+			out = BodyConflict
+			return nil
+		}
+		// G4c step 2: CompleteIncarnation check.
+		if req.CompleteIncarnation != nil {
+			if st.bound == 0 || *req.CompleteIncarnation != st.bound || st.incarnation != st.bound {
+				out = BodySuperseded
+				return nil
+			}
+		}
+		// G15: states with no state change before steps 3-5.
+		switch st.kind {
+		case stateIntegrityLoss:
+			out = BodyMissing
+			return nil
+		case stateUnpublished, stateRemoved:
+			out = BodyAbsent
+			return nil
+		case statePublishing:
+			out = BodyPending
+			return nil
+		}
+
+		// G4c step 3: removal_pending with bytes already absent completes by
+		// syncing the directory and appending body_removed(bound).
+		if st.kind == stateRemovalPending {
+			present, _, err := s.bodyFilePresent(h, req.Length)
+			if err != nil {
+				return err
+			}
+			if !present {
+				if st.incarnation > st.bound {
+					// A newer PutBody incremented the prewrite ledger; do not
+					// append body_removed if a new publication was initiated.
+					out = BodyPending
+					return nil
+				}
+				progressed = true
+				if err := s.syncBodyDir(h, "remove.dir_fsynced"); err != nil {
+					return err
+				}
+				if err := s.appendLifecycleEntry(desig, "body_removed", h, req.Length, st.bound, nil); err != nil {
+					return err
+				}
+				out = BodyAbsent
+				return nil
+			}
+		}
+
+		// G4c steps 4 & 5: removal_pending with bytes present, or available
+		// with bytes present. Re-verify incarnation and full eligibility.
+		if st.incarnation > st.bound {
+			out = BodyPending
+			return nil
+		}
+		eligOut, err := s.checkRemovalEligibility(h, req.Length)
+		if err != nil || eligOut != "" {
+			out = eligOut
+			return err
+		}
+		if err := s.fault("remove.checked"); err != nil {
 			return err
 		}
 		if err := s.fault("remove.decided"); err != nil {
 			return err
 		}
-		progressed = true
-		if st.kind == stateLive {
-			t := tombstone{
-				Digest:      req.Digest,
-				Length:      req.Length,
-				RemovedAt:   FormatInstant(s.opts.Clock.Now()),
-				DropSetHash: dropHash,
-				Incarnation: st.incarnation,
-			}
-			b, _ := json.Marshal(t)
-			if err := s.replaceFile(tombstoneFile(h, req.Length), b, "remove.tombstone_written"); err != nil {
-				return err
-			}
-			if err := s.fault("remove.tombstone_fsynced"); err != nil {
+
+		if st.kind == stateAvailable {
+			if err := s.appendLifecycleEntry(desig, "body_removal_started", h, req.Length, st.bound, &req); err != nil {
+				var ioe *IOError
+				if errors.As(err, &ioe) && !ioe.indeterminate {
+					// G3: partial write on designated stream was aborted back
+					// to the prior cut; nothing durable changed.
+					return err
+				}
+				progressed = true
 				return err
 			}
 		}
+		progressed = true
 		if err := s.root.Remove(bodyFile(h)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return ioErr("unlink", err, true)
 		}
@@ -638,6 +911,9 @@ func (s *Store) RemoveBody(ctx context.Context, req RemoveBodyRequest) (RemoveBo
 			return err
 		}
 		if err := s.syncBodyDir(h, "remove.dir_fsynced"); err != nil {
+			return err
+		}
+		if err := s.appendLifecycleEntry(desig, "body_removed", h, req.Length, st.bound, nil); err != nil {
 			return err
 		}
 		out = BodyRemoved
@@ -649,41 +925,34 @@ func (s *Store) RemoveBody(ctx context.Context, req RemoveBodyRequest) (RemoveBo
 	return RemoveBodyResult{Outcome: out}, nil
 }
 
-// removeDecision applies the removal table in order. An empty outcome with a
-// nil error means "perform the removal" (state live or removing).
-func (s *Store) removeDecision(st bodyState, h string, req RemoveBodyRequest) (RemoveBodyOutcome, error) {
-	switch {
-	case st.kind == stateUnknownDigest:
-		if req.CompleteIncarnation != nil {
-			return BodySuperseded, nil
-		}
-		return BodyAbsent, nil
-	case req.CompleteIncarnation != nil && *req.CompleteIncarnation != st.incarnation:
-		return BodySuperseded, nil
-	case st.kind == stateCorrupt || st.kind == stateInconsistent:
-		return BodyConflict, nil
-	case st.kind == statePublicationIncomplete:
-		return BodyPublicationIncomplete, nil
-	case st.kind == stateRemoved:
-		// Complete a removal whose directory fsync may have failed.
-		if err := s.syncBodyDir(h, "remove.dir_fsynced"); err != nil {
-			return "", err
-		}
-		return BodyAbsent, nil
-	case st.kind == stateMissing:
-		return BodyMissing, nil
-	case st.kind == statePublishing:
-		return BodyPending, nil
-	}
-	// Protection: holds and references live in stream journals. Until every
-	// stream can be enumerated and checked, any stream present leaves the
-	// body's protection unknown.
+// checkRemovalEligibility evaluates G4c step 5 eligibility across all non-designated
+// streams in the store, plus active leases.
+func (s *Store) checkRemovalEligibility(h string, length int64) (RemoveBodyOutcome, error) {
 	streams, err := s.root.ReadDirNames(dirStreams, s.fso)
 	if err != nil {
 		return BodyProtectionUnknown, nil
 	}
-	if len(streams) > 0 {
-		return BodyProtectionUnknown, nil
+	desigHash := streamHash(s.profile.Runtime.BodyRemovalStream)
+	target := journal.BodyKey{Digest: "sha256:" + h, Length: length}
+
+	var anyHeld, anyReferenced bool
+	for _, sh := range streams {
+		if sh == desigHash {
+			continue
+		}
+		st, ok := s.replaySharingStreamDir(sh)
+		if !ok {
+			return BodyProtectionUnknown, nil
+		}
+		if st.BodyHeld(target) {
+			anyHeld = true
+		}
+		if st.BodyReferenced(target) {
+			anyReferenced = true
+		}
+	}
+	if anyHeld {
+		return BodyHeld, nil
 	}
 	leased, err := s.unexpiredLease(h)
 	if err != nil {
@@ -692,7 +961,78 @@ func (s *Store) removeDecision(st bodyState, h string, req RemoveBodyRequest) (R
 	if leased {
 		return BodyPending, nil
 	}
+	if anyReferenced {
+		return BodyStillReferenced, nil
+	}
 	return "", nil
+}
+
+func (s *Store) replaySharingStreamDir(sh string) (*journal.State, bool) {
+	sdir := dirStreams + "/" + sh
+	if sealed, err := s.exists(sdir + "/SEALED"); err != nil || sealed {
+		return nil, false
+	}
+	raw, err := readFileVerified(s.root, sdir+"/journal.ndjson", s.fso, maxJournalBytes)
+	if err != nil {
+		return nil, false
+	}
+	nodes, err := wire.IngestLines(raw, wire.KindJournalEntry)
+	if err != nil {
+		return nil, false
+	}
+	st, err := journal.New(s.windowNode())
+	if err != nil {
+		return nil, false
+	}
+	st.SetProfile(s.profileNode)
+	for i, node := range nodes {
+		if err := shape.Validate("v1/journal-entry.schema.json", node); err != nil {
+			return nil, false
+		}
+		if i == 0 && node.Get("continues") != nil {
+			if !s.attachContinuationChain(st, node.Get("continues"), map[string]bool{sh: true}) {
+				return nil, false
+			}
+		}
+		if err := st.Ingest(node); err != nil {
+			return nil, false
+		}
+	}
+	if err := journal.CheckJournal(st.Journal()); err != nil {
+		return nil, false
+	}
+	if streamHash(st.Stream()) != sh {
+		return nil, false
+	}
+	if st.ReviewPending() {
+		return nil, false
+	}
+	return st, true
+}
+
+func (s *Store) attachContinuationChain(dst *journal.State, cont *wire.Node, seen map[string]bool) bool {
+	if cont == nil || cont.Kind != wire.Object || len(seen) > 16 {
+		return false
+	}
+	capNode, streamNode := cont.Get("capability"), cont.Get("stream")
+	if capNode == nil || capNode.Kind != wire.String || capNode.Str != "contract: durable-record/v1" ||
+		streamNode == nil || streamNode.Kind != wire.String {
+		return false
+	}
+	srcHash := streamHash(streamNode.Str)
+	if seen[srcHash] || srcHash == streamHash(s.profile.Runtime.BodyRemovalStream) {
+		return false
+	}
+	seen[srcHash] = true
+	srcSt, ok := s.replaySharingStreamDir(srcHash)
+	if !ok || srcSt.Stream() != streamNode.Str {
+		return false
+	}
+	srcArr := &wire.Node{Kind: wire.Array, Elems: srcSt.Journal()}
+	if err := dst.SetSourceChain(journal.SourceInput{SourceJournal: srcArr}); err != nil {
+		return false
+	}
+	return true
 }
 
 // unexpiredLease reports whether any publication lease for the digest is
@@ -724,40 +1064,28 @@ func (s *Store) unexpiredLease(h string) (bool, error) {
 	return false, nil
 }
 
-// dropSetHash validates the drop set and returns the sha256 of its sorted,
-// canonical JSON encoding. Every field is restricted ASCII, so the encoding
-// is canonical by construction.
-func dropSetHash(pins []Pin) (string, error) {
-	type wirePin struct {
-		Digest   string `json:"digest"`
-		RecordID string `json:"record_id"`
-		Revision uint64 `json:"revision"`
-		Stream   string `json:"stream"`
+// consumeLease removes a valid, unexpired publication lease for digest.
+func (s *Store) consumeLease(h string, lease PublicationLease) error {
+	if lease.ID == "" || lease.Digest != "sha256:"+h {
+		return fmt.Errorf("%w: invalid publication lease", ErrSchema)
 	}
-	w := make([]wirePin, 0, len(pins))
-	for _, p := range pins {
-		if !reStream.MatchString(p.Stream) || !reRecordID.MatchString(p.RecordID) || p.Revision < 1 || p.Revision > maxSafeInteger || !reDigest.MatchString(p.Digest) {
-			return "", fmt.Errorf("%w: drop set pin", ErrSchema)
-		}
-		w = append(w, wirePin{p.Digest, p.RecordID, p.Revision, p.Stream})
-	}
-	sort.Slice(w, func(i, j int) bool {
-		a, b := w[i], w[j]
-		if a.Stream != b.Stream {
-			return a.Stream < b.Stream
-		}
-		if a.RecordID != b.RecordID {
-			return a.RecordID < b.RecordID
-		}
-		if a.Revision != b.Revision {
-			return a.Revision < b.Revision
-		}
-		return a.Digest < b.Digest
-	})
-	b, err := json.Marshal(w)
+	name := dirBodyPending + "/" + h + "/" + lease.ID
+	b, err := readFileVerified(s.root, name, s.fso, 1<<12)
 	if err != nil {
-		return "", err
+		return fmt.Errorf("%w: publication lease not found", ErrSchema)
 	}
-	sum := sha256.Sum256(b)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	var l leaseFile
+	if json.Unmarshal(b, &l) != nil {
+		return fmt.Errorf("%w: publication lease invalid", ErrStoreInvalid)
+	}
+	exp, err := ParseInstant(l.ExpiresAt)
+	if err != nil || !s.opts.Clock.Now().Before(exp) {
+		return fmt.Errorf("%w: publication lease expired", ErrSchema)
+	}
+	if err := s.root.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return ioErr("unlink", err, true)
+	}
+	return s.root.SyncDir(dirBodyPending + "/" + h)
 }
+
+var _ = jfile.ErrAborted

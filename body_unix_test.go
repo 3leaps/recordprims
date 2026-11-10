@@ -66,8 +66,8 @@ func TestPutBodyRefusalReportsStagingCleanupFailure(t *testing.T) {
 	if len(names) != 1 {
 		t.Fatalf("tmp leftovers %v, want one", names)
 	}
-	if got := state(t, s, b); got != statePublicationIncomplete {
-		t.Fatalf("state %s, want unchanged publication_incomplete", got)
+	if got := state(t, s, b); got != stateUnpublished {
+		t.Fatalf("state %s, want unchanged unpublished", got)
 	}
 }
 
@@ -84,8 +84,8 @@ func TestStageFailureReportsCleanupFailure(t *testing.T) {
 	if len(names) != 1 {
 		t.Fatalf("tmp leftovers %v, want one", names)
 	}
-	if got := state(t, s, b); got != stateUnknownDigest {
-		t.Fatalf("state %s, want unknown_digest", got)
+	if got := state(t, s, b); got != stateUnpublished {
+		t.Fatalf("state %s, want unpublished", got)
 	}
 }
 
@@ -104,8 +104,8 @@ func TestIndeterminateFailureStaysIndeterminateWithCleanupFailure(t *testing.T) 
 		t.Fatalf("tmp leftovers %v, want one", names)
 	}
 	put(t, s, b)
-	if got := state(t, s, b); got != stateLive {
-		t.Fatalf("retry state %s, want live", got)
+	if got := state(t, s, b); got != stateAvailable {
+		t.Fatalf("retry state %s, want available", got)
 	}
 }
 

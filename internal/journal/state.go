@@ -169,6 +169,56 @@ func (s *State) ActiveHolds() []int64 {
 	return out
 }
 
+// LiveKey reports whether key is live in the stream's idempotency window at at,
+// returning its operation kind ("content", "protection", or "retirement"),
+// identity value (entry digest or request digest), record_id, and stored receipt.
+func (s *State) LiveKey(key string, at time.Time) (kind, value, recordID string, receipt *wire.Node, ok bool) {
+	prior, live := s.live(key, at)
+	if !live {
+		return "", "", "", nil, false
+	}
+	return prior.id.kind, prior.id.value, prior.recordID, cloneNode(prior.receipt), true
+}
+
+// HeadPin returns the highest accepted revision Pin for recordID on the stream.
+func (s *State) HeadPin(recordID string) (Pin, bool) {
+	var best Pin
+	found := false
+	for p := range s.records {
+		if p.RecordID == recordID && (!found || p.Revision > best.Revision) {
+			best = p
+			found = true
+		}
+	}
+	return best, found
+}
+
+// FirstRetired returns the seq and at timestamp of the first retirement entry
+// for recordID on the stream.
+func (s *State) FirstRetired(recordID string) (seq int64, at string, ok bool) {
+	if !s.retired[recordID] {
+		return 0, "", false
+	}
+	for _, e := range s.journal {
+		if typ, _ := strOf(e, "type"); typ == "retired" {
+			if rid, _ := strOf(e, "record_id"); rid == recordID {
+				sq, _ := intOf(e, "seq")
+				atStr, _ := strOf(e, "at")
+				return sq, atStr, true
+			}
+		}
+	}
+	return 0, "", false
+}
+
+// CutDigest computes the RFC 8785 JCS sha256 digest over entries 1..cutSeq.
+func (s *State) CutDigest(cutSeq int64) (string, error) {
+	if cutSeq < 1 || cutSeq > int64(len(s.journal)) {
+		return "", reject(ReasonContinuation, "cut_seq %d out of range", cutSeq)
+	}
+	return sliceDigest(s.journal[:cutSeq])
+}
+
 func (s *State) hasRecordID(recordID string) bool {
 	for p := range s.records {
 		if p.RecordID == recordID {
