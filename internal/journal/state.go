@@ -39,19 +39,25 @@ type liveEntry struct {
 // State replays one v1 stream entry by entry, in the reference interpreter's
 // order.
 type State struct {
-	window        int64
-	journal       []*wire.Node
-	stream        string
-	failureModel  string
-	records       map[Pin]*wire.Node
-	holds         map[int64]*wire.Node
-	active        map[int64]bool
-	keys          map[string]liveEntry
-	retired       map[string]bool
-	restrictedAt  []int64
-	removalStream string
-	hasRemoval    bool
-	partial       bool
+	window                int64
+	journal               []*wire.Node
+	stream                string
+	failureModel          string
+	records               map[Pin]*wire.Node
+	holds                 map[int64]*wire.Node
+	active                map[int64]bool
+	keys                  map[string]liveEntry
+	retired               map[string]bool
+	restrictedAt          []int64
+	removalStream         string
+	hasRemoval            bool
+	incarnationAllocation string
+	quarantinedDesignated []string
+	expectedQuarantined   []string
+	referencedBodies      map[BodyKey]bool
+	bodies                map[BodyKey]bodyState
+	openStarts            map[BodyKey]map[int64]bool
+	partial               bool
 }
 
 var integerToken = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
@@ -69,12 +75,15 @@ func New(window *wire.Node) (*State, error) {
 		return nil, reject(wire.ReasonNumericDomain, "the idempotency window exceeds %d", int64(wire.MaxSafeInteger))
 	}
 	return &State{
-		window:  v.Int64(),
-		records: map[Pin]*wire.Node{},
-		holds:   map[int64]*wire.Node{},
-		active:  map[int64]bool{},
-		keys:    map[string]liveEntry{},
-		retired: map[string]bool{},
+		window:           v.Int64(),
+		records:          map[Pin]*wire.Node{},
+		holds:            map[int64]*wire.Node{},
+		active:           map[int64]bool{},
+		keys:             map[string]liveEntry{},
+		retired:          map[string]bool{},
+		referencedBodies: map[BodyKey]bool{},
+		bodies:           map[BodyKey]bodyState{},
+		openStarts:       map[BodyKey]map[int64]bool{},
 	}, nil
 }
 
@@ -82,6 +91,32 @@ func New(window *wire.Node) (*State, error) {
 // the profile's runtime.body_removal_stream.
 func (s *State) SetRemovalStream(name string) {
 	s.removalStream, s.hasRemoval = name, true
+}
+
+// SetProfile configures runtime fields from a validated stratum profile
+// (body_removal_stream, incarnation_allocation, quarantined_designated_streams).
+func (s *State) SetProfile(prof *wire.Node) {
+	if prof == nil || prof.Kind != wire.Object {
+		return
+	}
+	rt := prof.Get("runtime")
+	if rt == nil || rt.Kind != wire.Object {
+		return
+	}
+	if rs := rt.Get("body_removal_stream"); rs != nil && rs.Kind == wire.String {
+		s.SetRemovalStream(rs.Str)
+	}
+	if ia := rt.Get("incarnation_allocation"); ia != nil && ia.Kind == wire.String {
+		s.incarnationAllocation = ia.Str
+	}
+	if qds := rt.Get("quarantined_designated_streams"); qds != nil && qds.Kind == wire.Array {
+		s.quarantinedDesignated = make([]string, 0, len(qds.Elems))
+		for _, el := range qds.Elems {
+			if el != nil && el.Kind == wire.String {
+				s.quarantinedDesignated = append(s.quarantinedDesignated, el.Str)
+			}
+		}
+	}
 }
 
 // Partial reports whether an ingested entry needed semantics this package
@@ -559,6 +594,10 @@ func (s *State) Ingest(e *wire.Node) error {
 		}
 	}
 	switch {
+	case lifecycle[typ]:
+		if err := s.trackBody(e, where); err != nil {
+			return err
+		}
 	case typ == "stream_opened":
 		stream, err := strOf(e, "stream")
 		if err != nil {
@@ -569,7 +608,7 @@ func (s *State) Ingest(e *wire.Node) error {
 			return err
 		}
 		s.stream, s.failureModel = stream, fm
-		if e.Get("continues") != nil || e.Get("recovery") != nil {
+		if e.Get("continues") != nil {
 			s.partial = true
 		}
 	case typ == "appended" || typ == "revised":

@@ -155,12 +155,7 @@ func semanticResult(v *wire.Node) (refusal string, results []*wire.Node, activeH
 		if err := journal.CheckProfile(prof); err != nil {
 			return reasonOf(err), nil, nil, 0, true
 		}
-		if rs := prof.Get("runtime").Get("body_removal_stream"); rs != nil && rs.Kind == wire.String {
-			st.SetRemovalStream(rs.Str)
-		}
-	}
-	if v.Get("source_journal") != nil || v.Get("raw_source_journal") != nil {
-		return "", nil, nil, 0, false
+		st.SetProfile(prof)
 	}
 	var entries []*wire.Node
 	if j := v.Get("raw_journal"); j != nil {
@@ -179,6 +174,37 @@ func semanticResult(v *wire.Node) (refusal string, results []*wire.Node, activeH
 			}
 			entries = append(entries, n)
 		}
+	}
+	if sh := v.Get("sharing_streams"); sh != nil && sh.Kind == wire.Array {
+		for _, sj := range sh.Elems {
+			var shEntries []*wire.Node
+			for _, se := range sj.Elems {
+				n, err := typed(se, wire.KindJournalEntry)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, true
+				}
+				shEntries = append(shEntries, n)
+			}
+			if err := st.ObserveSharingStream(shEntries); err != nil {
+				return reasonOf(err), nil, nil, 0, true
+			}
+		}
+	}
+	var firstEntry *wire.Node
+	if len(entries) > 0 {
+		firstEntry = entries[0]
+	}
+	if err := st.ValidateRecovery(journal.RecoveryInput{
+		FirstEntry:         firstEntry,
+		QuarantinedStreams: v.Get("quarantined_streams"),
+		CandidateStreams:   v.Get("candidate_streams"),
+		ExpectedStore:      v.Get("expected_store"),
+		RecoveryContexts:   v.Get("recovery_contexts"),
+	}); err != nil {
+		return reasonOf(err), nil, nil, 0, true
+	}
+	if v.Get("source_journal") != nil || v.Get("raw_source_journal") != nil {
+		return "", nil, nil, 0, false
 	}
 	if err := journal.CheckJournal(entries); err != nil {
 		return reasonOf(err), nil, nil, 0, true
@@ -252,6 +278,21 @@ func semanticResult(v *wire.Node) (refusal string, results []*wire.Node, activeH
 					rec.Get("at").Str,
 					rec.Get("attempted_at").Str,
 				)
+				if err != nil {
+					return reasonOf(err), nil, nil, 0, !st.Partial()
+				}
+				results = append(results, res)
+			case s.Get("raw_body_state") != nil || s.Get("body_state") != nil:
+				var bs *wire.Node
+				if raw := s.Get("raw_body_state"); raw != nil {
+					bs, err = wire.Ingest([]byte(raw.Str), wire.KindBodyStateRequest)
+					if err != nil {
+						return reasonOf(err), nil, nil, 0, !st.Partial()
+					}
+				} else {
+					bs = s.Get("body_state")
+				}
+				res, err := st.BodyState(bs)
 				if err != nil {
 					return reasonOf(err), nil, nil, 0, !st.Partial()
 				}

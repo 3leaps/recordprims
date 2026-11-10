@@ -277,7 +277,7 @@ func TestIngestRequestObservedAt(t *testing.T) {
 
 func TestIngestBodyRemovalPlacement(t *testing.T) {
 	life := func(seq int, strm, typ string) string {
-		return fmt.Sprintf(`{"v":1,"seq":%d,"group":%d,"group_size":1,"stream":%q,"type":%q,"at":%q,"body":{"digest":"sha256:%s","length":8}}`, seq, seq, strm, typ, at(seq), strings.Repeat("1", 64))
+		return fmt.Sprintf(`{"v":1,"seq":%d,"group":%d,"group_size":1,"stream":%q,"type":%q,"at":%q,"incarnation":1,"body":{"digest":"sha256:%s","length":8}}`, seq, seq, strm, typ, at(seq), strings.Repeat("1", 64))
 	}
 	openedOn := func(strm string) string { return set(opened(1), "stream", fmt.Sprintf("%q", strm)) }
 	r1 := record("a", 1, "")
@@ -325,8 +325,8 @@ func TestPartial(t *testing.T) {
 		t.Fatalf("continuation: %q partial=%v, want partial", got, c.Partial())
 	}
 	r := window(t)
-	if got := ingestAll(t, r, set(opened(1), "failure_model", `"survives_power_loss","recovery":{}`)); got != "" || !r.Partial() {
-		t.Fatalf("recovery: %q partial=%v, want partial", got, r.Partial())
+	if got := ingestAll(t, r, set(opened(1), "failure_model", `"survives_power_loss","recovery":{}`)); got != "" || r.Partial() {
+		t.Fatalf("recovery: %q partial=%v, want false", got, r.Partial())
 	}
 }
 
@@ -667,6 +667,57 @@ func TestRetirement(t *testing.T) {
 	foreignRcpt, err := s.Retire(foreignNode, at(4))
 	if err != nil || foreignRcpt.Get("outcome").Str != ReasonTargetNotFound {
 		t.Fatalf("Retire foreign stream: err=%v rcpt=%s", err, wire.Encode(foreignRcpt))
+	}
+}
+
+func TestBodyLifecycleAndState(t *testing.T) {
+	bodyDig := "sha256:" + strings.Repeat("a", 64)
+	bodyRef := fmt.Sprintf(`{"digest":%q,"length":12}`, bodyDig)
+	openedBodies := set(opened(1), "stream", `"bodies"`)
+	life := func(seq int, typ string, inc int) string {
+		extra := ""
+		if typ == "body_removal_started" {
+			extra = `,"reason":"retention"`
+		}
+		return fmt.Sprintf(`{"v":1,"seq":%d,"group":%d,"group_size":1,"stream":"bodies","type":%q,"at":%q,"incarnation":%d,"body":%s%s}`, seq, seq, typ, at(seq), inc, bodyRef, extra)
+	}
+	for _, c := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"publish start remove republish", []string{openedBodies, life(2, "body_published", 1), life(3, "body_removal_started", 1), life(4, "body_removed", 1), life(5, "body_published", 2)}, ""},
+		{"publish nonincreasing incarnation", []string{openedBodies, life(2, "body_published", 2), life(3, "body_published", 2)}, ReasonBodyLifecycle},
+		{"removal_started before publish", []string{openedBodies, life(2, "body_removal_started", 1)}, ReasonBodyLifecycle},
+		{"removed before removal_started", []string{openedBodies, life(2, "body_published", 1), life(3, "body_removed", 1)}, ReasonBodyLifecycle},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := window(t)
+			s.SetRemovalStream("bodies")
+			if got := ingestAll(t, s, c.lines...); got != c.want {
+				t.Fatalf("%q, want %q", got, c.want)
+			}
+		})
+	}
+
+	s := window(t)
+	s.SetRemovalStream("bodies")
+	if got := ingestAll(t, s, openedBodies, life(2, "body_published", 1)); got != "" {
+		t.Fatal(got)
+	}
+	bsStep, _ := wire.ParseJSON([]byte(fmt.Sprintf(`{"body":%s,"present":true}`, bodyRef)))
+	res, err := s.BodyState(bsStep)
+	if err != nil || res.Get("state").Str != "available" {
+		t.Fatalf("BodyState published+present: err=%v res=%s", err, wire.Encode(res))
+	}
+	bsAbsent, _ := wire.ParseJSON([]byte(fmt.Sprintf(`{"body":%s,"present":false}`, bodyRef)))
+	res, err = s.BodyState(bsAbsent)
+	if err != nil || res.Get("state").Str != "integrity_loss" {
+		t.Fatalf("BodyState published+absent: err=%v res=%s", err, wire.Encode(res))
+	}
+	badStep, _ := wire.ParseJSON([]byte(fmt.Sprintf(`{"body":%s,"present":"unknown"}`, bodyRef)))
+	if _, err := s.BodyState(badStep); reasonOf(err) != ReasonBodyObservation {
+		t.Fatalf("BodyState non-bool present: %q, want %q", reasonOf(err), ReasonBodyObservation)
 	}
 }
 

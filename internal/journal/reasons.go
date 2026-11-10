@@ -51,6 +51,18 @@ const (
 	ReasonHoldNotActive          = "hold_not_active"
 	ReasonHoldMismatch           = "hold_mismatch"
 	ReasonObservationOrder       = "observation_order"
+	ReasonBodyLifecycle          = "body_lifecycle"
+	ReasonBodyObservation        = "body_observation"
+	ReasonRecoveryIncomplete     = "recovery_incomplete"
+	ReasonContinuation           = "continuation"
+	ReasonInvalidPurpose         = "invalid_purpose"
+	ReasonProtectionUnavailable  = "protection_unavailable"
+	ReasonRestrictionsPending    = "restrictions_pending"
+	ReasonExportSelection        = "export_selection"
+	ReasonProtectedUse           = "protected_use"
+	ReasonBodyClosure            = "body_closure"
+	ReasonStillReferenced        = "still_referenced"
+	ReasonRemovalAuthorization   = "removal_authorization"
 	// ReasonShape is the shape stage's refusal. This package reaches it only
 	// when a document that should have passed shape lacks a member or has
 	// the wrong type for one, so it fails closed instead of guessing.

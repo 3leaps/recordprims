@@ -78,6 +78,13 @@ func TestVectorShapes(t *testing.T) {
 				invalidRequests[int(x)] = true
 			}
 		}
+		invalidStates := map[int]bool{}
+		if l := v.Get("invalid_body_state_steps"); l != nil {
+			for _, e := range l.Elems {
+				x, _ := wire.SafeInt(e.Token)
+				invalidStates[int(x)] = true
+			}
+		}
 		check := func(doc *wire.Node, schema string, want bool, where string) {
 			checked++
 			err := shape.Validate(schema, doc)
@@ -107,6 +114,18 @@ func TestVectorShapes(t *testing.T) {
 			check(n, "v1/stratum-profile.schema.json", true, "raw_profile")
 		} else if p := v.Get("profile"); p != nil {
 			check(p, "v1/stratum-profile.schema.json", true, "profile")
+		}
+		if cs := v.Get("candidate_streams"); cs != nil {
+			for _, ce := range cs.Elems {
+				check(ce, "v1/journal-entry.schema.json", true, "candidate_streams entry")
+			}
+		}
+		if ss := v.Get("sharing_streams"); ss != nil {
+			for _, sj := range ss.Elems {
+				for _, se := range sj.Elems {
+					check(se, "v1/journal-entry.schema.json", true, "sharing_streams entry")
+				}
+			}
 		}
 		if j := v.Get("raw_journal"); j != nil {
 			aborted := false
@@ -154,6 +173,14 @@ func TestVectorShapes(t *testing.T) {
 					check(n, "v1/journal-entry.schema.json", true, "raw_entry step")
 				case s.Get("entry") != nil:
 					check(s.Get("entry"), "v1/journal-entry.schema.json", true, "entry step")
+				case s.Get("raw_body_state") != nil:
+					n := ingest(s.Get("raw_body_state").Str, wire.KindBodyStateRequest)
+					if n == nil {
+						goto nextVector
+					}
+					check(n, "v1/body-state-request.schema.json", !invalidStates[i], "raw_body_state step")
+				case s.Get("body_state") != nil:
+					check(s.Get("body_state"), "v1/body-state-request.schema.json", !invalidStates[i], "body_state step")
 				}
 			}
 		}
