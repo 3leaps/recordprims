@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -347,5 +348,77 @@ func TestPutBodyAndBodyStateOnBucketCAS(t *testing.T) {
 	}
 	if st != "available" {
 		t.Fatalf("BodyState = %q, want available", st)
+	}
+}
+
+func TestAppendVerifiesExternalBodyIsAvailableAndOpenRequiresDesignatedStream(t *testing.T) {
+	ctx := context.Background()
+	mem := bucketcas.NewMemStore()
+	bs, err := bucketcas.Init(ctx, mem, bucketcas.Options{Prefix: "verify"})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := bs.OpenStream(ctx, "notes", "single_revision"); err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+
+	// 1. Append referencing an unpublished body must fail before writing body_status: "verified".
+	missingDig := "sha256:" + strings.Repeat("a", 64)
+	recMissing := []byte(fmt.Sprintf(
+		`{"v":1,"stream":"notes","record_id":"r1","revision":1,"payload_contract":"contract: notes/v1","body":{"digest":%q,"length":3,"media_type":"text/plain"},"provenance":{"actor_kind":"process","actor":"test"},"classification":{"retention":"standard","sensitivity":"1-confidential"}}`,
+		missingDig,
+	))
+	if _, err := bs.Append(ctx, bucketcas.AppendInput{
+		Stream:         "notes",
+		Record:         recMissing,
+		IdempotencyKey: "k-missing",
+	}); !errors.Is(err, bucketcas.ErrInvalidStore) {
+		t.Fatalf("Append with unpublished body: got err=%v, want ErrInvalidStore", err)
+	}
+
+	// 2. After PutBody publishes the body, Append succeeds and marks body_status: "verified".
+	dig, length, _, err := bs.PutBody(ctx, []byte("abc"))
+	if err != nil {
+		t.Fatalf("PutBody: %v", err)
+	}
+	recAvail := []byte(fmt.Sprintf(
+		`{"v":1,"stream":"notes","record_id":"r1","revision":1,"payload_contract":"contract: notes/v1","body":{"digest":%q,"length":%d,"media_type":"text/plain"},"provenance":{"actor_kind":"process","actor":"test"},"classification":{"retention":"standard","sensitivity":"1-confidential"}}`,
+		dig, length,
+	))
+	rcpt, err := bs.Append(ctx, bucketcas.AppendInput{
+		Stream:         "notes",
+		Record:         recAvail,
+		IdempotencyKey: "k-avail",
+	})
+	if err != nil || rcpt.Outcome != "appended" {
+		t.Fatalf("Append with available body: rcpt=%+v err=%v", rcpt, err)
+	}
+
+	// 3. Deleting the designated stream's head.json causes Open to fail with ErrInvalidStore.
+	if _, err := mem.Delete(ctx, "verify/streams/body-removal/head.json"); err != nil {
+		t.Fatalf("Delete head.json: %v", err)
+	}
+	if _, err := bucketcas.Open(ctx, mem, bucketcas.Options{Prefix: "verify"}); !errors.Is(err, bucketcas.ErrInvalidStore) {
+		t.Fatalf("Open with missing designated stream head.json: got err=%v, want ErrInvalidStore", err)
+	}
+}
+
+func TestUnknownInitIsIndeterminate(t *testing.T) {
+	ctx := context.Background()
+	for _, target := range []string{"profile.json", "STORE.json"} {
+		t.Run(target, func(t *testing.T) {
+			mem := bucketcas.NewMemStore()
+			mem.SetPutIfAbsentHook(func(k string, _ []byte) (bool, bool, stratum.CommitKnowledge, error) {
+				if strings.HasSuffix(k, target) {
+					return true, true, stratum.CommitUnknown, errors.New("lost reply")
+				}
+				return false, false, 0, nil
+			})
+			_, err := bucketcas.Init(ctx, mem, bucketcas.Options{Prefix: "test"})
+			var ind *stratum.IndeterminateError
+			if !errors.As(err, &ind) {
+				t.Fatalf("CommitUnknown on %s returned %T (%v), want *stratum.IndeterminateError", target, err, err)
+			}
+		})
 	}
 }

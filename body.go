@@ -391,15 +391,20 @@ func (s *Store) appendLifecycleEntry(desig *designatedJournal, entryType, h stri
 	}
 	entry := &wire.Node{Kind: wire.Object, Fields: fields}
 
-	// G2: pre-validate against shape and designated-stream state before writing.
-	if err := shape.Validate("v1/journal-entry.schema.json", entry); err != nil {
+	// G2: pre-validate exact emitted wire bytes, shape, and designated-stream state before writing.
+	rawEntry := wire.Encode(entry)
+	ingested, err := wire.Ingest(rawEntry, wire.KindJournalEntry)
+	if err != nil {
+		return fmt.Errorf("%w: lifecycle entry wire invalid: %s", ErrSchema, rejectReason(err))
+	}
+	if err := shape.Validate("v1/journal-entry.schema.json", ingested); err != nil {
 		return fmt.Errorf("%w: lifecycle entry shape invalid", ErrSchema)
 	}
-	if err := desig.st.Ingest(entry); err != nil {
+	if err := desig.st.Ingest(ingested); err != nil {
 		return &ErrJournalInvalid{Reason: rejectReason(err)}
 	}
 
-	line := append(wire.Encode(entry), '\n')
+	line := append(rawEntry, '\n')
 	if err := s.appender.Append(desig.jpath, desig.cutOffset, line, true); err != nil {
 		return mapJFileErr(err)
 	}
@@ -453,15 +458,29 @@ func provenanceNode(p Provenance) *wire.Node {
 	return &wire.Node{Kind: wire.Object, Fields: fields}
 }
 
+func validWireString(s string, minRunes, maxRunes int) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	n := 0
+	for _, r := range s {
+		if r < 0x20 {
+			return false
+		}
+		n++
+	}
+	return n >= minRunes && n <= maxRunes
+}
+
 func validProvenance(p Provenance) bool {
 	if p.ActorKind != "human" && p.ActorKind != "agent" && p.ActorKind != "process" {
 		return false
 	}
-	if n := utf8.RuneCountInString(p.Actor); n < 1 || n > 128 {
+	if !validWireString(p.Actor, 1, 128) {
 		return false
 	}
 	for _, opt := range []string{p.Supervisor, p.Model, p.Tool} {
-		if opt != "" && utf8.RuneCountInString(opt) > 128 {
+		if opt != "" && !validWireString(opt, 1, 128) {
 			return false
 		}
 	}

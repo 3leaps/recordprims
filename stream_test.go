@@ -304,4 +304,49 @@ func TestReleaseSinkRevocationShortReadAndReentry(t *testing.T) {
 	if !errors.Is(reentryErr, ErrSinkReentered) {
 		t.Fatalf("same-goroutine reentry: want ErrSinkReentered, got %v", reentryErr)
 	}
+
+	// 4. Panic inside Frame still revokes the retained reader and clears the reentry guard.
+	var panickedReader io.Reader
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected sink panic")
+			}
+		}()
+		_, _ = st.Release(ctx, UseRequest{Purpose: PurposeServe}, &collectSink{
+			fn: func(_ context.Context, _ FrameHeader, r io.Reader) error {
+				panickedReader = r
+				panic("sink panic")
+			},
+		})
+	}()
+	if n, rerr := panickedReader.Read(buf); n != 0 || !errors.Is(rerr, ErrReaderRevoked) {
+		t.Fatalf("retained Read after panic = (%d, %v), want (0, ErrReaderRevoked)", n, rerr)
+	}
+	if _, _, herr := st.Head("r1"); errors.Is(herr, ErrSinkReentered) {
+		t.Fatalf("Head after sink panic returned ErrSinkReentered")
+	}
+}
+
+func TestAppendRefusesInvalidUTF8IdempotencyKeyBeforeWrite(t *testing.T) {
+	s, _, _ := openBodyStore(t)
+	st, err := s.OpenStream("notes", ModeSingleRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := Write{
+		Record:         recordJSON("notes", "r1", 1, nil, `{"a":1}`, nil),
+		IdempotencyKey: string([]byte{'k', 0xff}),
+	}
+	rcpt, err := st.Append(ctx, w)
+	if !errors.Is(err, ErrSchema) || IsIndeterminate(err) {
+		t.Fatalf("Append with invalid UTF-8 key: rcpt=%+v err=%v, want determinate ErrSchema", rcpt, err)
+	}
+	// Stream journal remains valid for subsequent writes.
+	if _, err := st.Append(ctx, Write{
+		Record:         recordJSON("notes", "r1", 1, nil, `{"a":1}`, nil),
+		IdempotencyKey: "k-valid",
+	}); err != nil {
+		t.Fatalf("subsequent valid Append failed: %v", err)
+	}
 }

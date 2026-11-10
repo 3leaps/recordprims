@@ -27,7 +27,8 @@ func (s *BucketStore) PutBody(ctx context.Context, raw []byte) (digest string, l
 	length = int64(len(raw))
 	bKey := s.bodyKey(digHex)
 
-	if _, commit, conflict, err := s.obj.PutIfAbsent(ctx, bKey, raw); err != nil {
+	_, commit, conflict, err := s.obj.PutIfAbsent(ctx, bKey, raw)
+	if err != nil {
 		if conflict == stratum.ConflictAlreadyExists {
 			// Verify existing object matches digest and length before treating as idempotent.
 			gotBytes, _, gotLen, gerr := s.obj.GetCoherent(ctx, bKey)
@@ -44,6 +45,8 @@ func (s *BucketStore) PutBody(ctx context.Context, raw []byte) (digest string, l
 			}
 			return "", 0, 0, err
 		}
+	} else if commit != stratum.CommitCommitted {
+		return "", 0, 0, &stratum.IndeterminateError{Op: "put_body_object", Key: digest, Err: fmt.Errorf("%w: body object %s not committed", ErrInvalidStore, bKey)}
 	}
 
 	jKey := journal.BodyKey{Digest: digest, Length: length}

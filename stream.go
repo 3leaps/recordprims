@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/3leaps/recordprims/internal/canon"
 	"github.com/3leaps/recordprims/internal/journal"
@@ -279,13 +278,28 @@ type replayedStream struct {
 }
 
 func (rep *replayedStream) appendLine(s *Store, line []byte) error {
+	rawEntry := bytes.TrimSuffix(line, []byte{'\n'})
+	ingested, err := wire.Ingest(rawEntry, wire.KindJournalEntry)
+	if err != nil {
+		return fmt.Errorf("%w: entry wire invalid: %s", ErrSchema, rejectReason(err))
+	}
+	if err := shape.Validate("v1/journal-entry.schema.json", ingested); err != nil {
+		return fmt.Errorf("%w: entry shape invalid", ErrSchema)
+	}
 	if err := s.appender.Append(rep.jpath, rep.cutOffset, line, false); err != nil {
 		return mapJFileErr(err)
 	}
 	rep.raw = append(rep.raw, line...)
 	rep.cutOffset = int64(len(rep.raw))
 	rep.lastSeq = int64(rep.st.Len())
-	return s.syncStreamIndexes(rep, rep.raw)
+	if err := s.syncStreamIndexes(rep, rep.raw); err != nil {
+		var ioe *IOError
+		if errors.As(err, &ioe) {
+			return &IOError{Op: ioe.Op, Class: ioe.Class, indeterminate: true}
+		}
+		return &IOError{Op: "index", Class: "other", indeterminate: true}
+	}
+	return nil
 }
 
 // OpenStream opens or creates a content stream on s. It refuses the store's
@@ -548,8 +562,8 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 	if err := ctx.Err(); err != nil {
 		return Receipt{}, err
 	}
-	if kl := utf8.RuneCountInString(w.IdempotencyKey); kl < 1 || kl > 256 {
-		return Receipt{}, fmt.Errorf("%w: idempotency key length", ErrSchema)
+	if !validWireString(w.IdempotencyKey, 1, 256) {
+		return Receipt{}, fmt.Errorf("%w: idempotency key invalid", ErrSchema)
 	}
 	recNode, err := wire.Ingest(w.Record, wire.KindRecord)
 	if err != nil {
@@ -622,8 +636,8 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 				return &ErrJournalInvalid{Reason: rejectReason(err)}
 			}
 			line := append(wire.Encode(dedup), '\n')
-			if err := st.store.appender.Append(rep.jpath, rep.cutOffset, line, false); err != nil {
-				return mapJFileErr(err)
+			if err := rep.appendLine(st.store, line); err != nil {
+				return err
 			}
 			return json.Unmarshal(wire.Encode(savedReceipt), &out)
 		}
@@ -835,8 +849,8 @@ func (st *Stream) Retire(ctx context.Context, recordID string, reason RetireReas
 		}
 	}
 	if cfg.key != "" {
-		if kl := utf8.RuneCountInString(cfg.key); kl < 1 || kl > 256 {
-			return RetireResult{}, fmt.Errorf("%w: idempotency key length", ErrSchema)
+		if !validWireString(cfg.key, 1, 256) {
+			return RetireResult{}, fmt.Errorf("%w: idempotency key invalid", ErrSchema)
 		}
 	}
 
@@ -1018,8 +1032,8 @@ func (st *Stream) Protect(ctx context.Context, req ProtectionRequest) (Protectio
 // caller-supplied attemptedAt timestamp, returning "found" or "unknown" only
 // (Freeze 4.5, G10).
 func (st *Stream) Reconcile(key string, attemptedAt time.Time) (Reconciliation, error) {
-	if kl := utf8.RuneCountInString(key); kl < 1 || kl > 256 {
-		return Reconciliation{}, fmt.Errorf("%w: idempotency key length", ErrSchema)
+	if !validWireString(key, 1, 256) {
+		return Reconciliation{}, fmt.Errorf("%w: idempotency key invalid", ErrSchema)
 	}
 	// G10: caller-supplied instants that aren't exact at microseconds are refused.
 	if attemptedAt.Nanosecond()%1000 != 0 {
@@ -1428,10 +1442,17 @@ func (st *Stream) Release(ctx context.Context, req UseRequest, sink ReleaseSink)
 				return nil
 			}
 			fr := newFrameReader(item.data)
-			st.store.releaseGID.Store(currentGoroutineID())
-			cbErr := sink.Frame(ctx, item.header, fr)
-			st.store.releaseGID.Store(0)
-			readBytes, gotDigest := fr.revoke()
+			var readBytes int64
+			var gotDigest string
+			var cbErr error
+			func() {
+				st.store.releaseGID.Store(currentGoroutineID())
+				defer func() {
+					st.store.releaseGID.Store(0)
+					readBytes, gotDigest = fr.revoke()
+				}()
+				cbErr = sink.Frame(ctx, item.header, fr)
+			}()
 
 			if cbErr != nil || readBytes != item.header.Length || gotDigest != item.header.Digest {
 				idx := i

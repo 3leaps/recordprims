@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/3leaps/recordprims/internal/canon"
 	"github.com/3leaps/recordprims/internal/journal"
@@ -288,7 +289,13 @@ func Init(ctx context.Context, obj stratum.ConditionalObjectStore, opts Options)
 		if conflict == stratum.ConflictAlreadyExists {
 			return nil, ErrStoreExists
 		}
-		return nil, err
+		if commit == stratum.CommitUnknown {
+			return nil, &stratum.IndeterminateError{Op: "init_put_profile", Key: "profile.json", Err: err}
+		}
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: profile.json unexpected commit state %s", ErrInvalidStore, commit)
 	}
 
 	// Open the designated body-removal stream before STORE.json is committed.
@@ -311,7 +318,13 @@ func Init(ctx context.Context, obj stratum.ConditionalObjectStore, opts Options)
 		if conflict == stratum.ConflictAlreadyExists {
 			return nil, ErrStoreExists
 		}
-		return nil, err
+		if commit == stratum.CommitUnknown {
+			return nil, &stratum.IndeterminateError{Op: "init_put_store", Key: "STORE.json", Err: err}
+		}
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: STORE.json unexpected commit state %s", ErrInvalidStore, commit)
 	}
 	return bs, nil
 }
@@ -371,8 +384,10 @@ func Open(ctx context.Context, obj stratum.ConditionalObjectStore, opts Options)
 	bs.bodyRemovalStream = remStream
 
 	// Verify the designated body-removal stream is present and intact.
-	if _, _, _, err := bs.loadStream(ctx, remStream); err != nil {
+	if _, _, exists, err := bs.loadStream(ctx, remStream); err != nil {
 		return nil, err
+	} else if !exists {
+		return nil, fmt.Errorf("%w: designated stream %q missing", ErrInvalidStore, remStream)
 	}
 	return bs, nil
 }
@@ -560,6 +575,13 @@ func (s *BucketStore) stageSegmentAndAdvanceHead(ctx context.Context, ls *loaded
 	for _, e := range newEntries {
 		can, err := canon.Canonicalize(wire.Encode(e))
 		if err != nil {
+			return "", stratum.CommitNotCommitted, stratum.ConflictNone, err
+		}
+		ingested, err := wire.Ingest(can, wire.KindJournalEntry)
+		if err != nil {
+			return "", stratum.CommitNotCommitted, stratum.ConflictNone, err
+		}
+		if err := shape.Validate("v1/journal-entry.schema.json", ingested); err != nil {
 			return "", stratum.CommitNotCommitted, stratum.ConflictNone, err
 		}
 		segBuf.Write(can)
@@ -848,9 +870,29 @@ type AppendReceipt struct {
 	Raw            []byte
 }
 
+func validWireString(s string, minRunes, maxRunes int) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	n := 0
+	for _, r := range s {
+		if r < 0x20 {
+			return false
+		}
+		n++
+	}
+	return n >= minRunes && n <= maxRunes
+}
+
 // Append executes a content write against stream with bounded 412 CAS retry
 // and immediate GetCoherent("head.json") reconciliation on CommitUnknown.
 func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt, error) {
+	if !validWireString(in.IdempotencyKey, 1, 256) {
+		return AppendReceipt{}, fmt.Errorf("%w: invalid idempotency_key", ErrInvalidStore)
+	}
+	if in.Stream == s.bodyRemovalStream {
+		return AppendReceipt{}, fmt.Errorf("%w: %q is the designated body-removal stream", ErrInvalidStore, in.Stream)
+	}
 	recNode, err := wire.Ingest(in.Record, wire.KindRecord)
 	if err != nil {
 		return AppendReceipt{}, err
@@ -904,6 +946,19 @@ func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt
 				Stream:         in.Stream,
 				IdempotencyKey: in.IdempotencyKey,
 			}, nil
+		}
+
+		// 2. Verify external body availability on the designated stream before claiming body_status: verified.
+		if bNode := recNode.Get("body"); bNode != nil {
+			bDig := bNode.Get("digest").Str
+			bLen := bNode.Get("length").Int
+			bst, berr := s.BodyState(ctx, bDig, bLen)
+			if berr != nil {
+				return AppendReceipt{}, berr
+			}
+			if bst != "available" {
+				return AppendReceipt{}, fmt.Errorf("%w: referenced body %s state is %s, not available", ErrInvalidStore, bDig, bst)
+			}
 		}
 
 		// 2. Check retirement.
@@ -1043,6 +1098,9 @@ func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt
 
 // Reconcile queries the stream's idempotency window at the current coherent head.
 func (s *BucketStore) Reconcile(ctx context.Context, stream, key, attemptedAt string) (*wire.Node, error) {
+	if !validWireString(key, 1, 256) {
+		return nil, fmt.Errorf("%w: invalid idempotency_key", ErrInvalidStore)
+	}
 	ls, _, exists, err := s.loadStream(ctx, stream)
 	if err != nil {
 		return nil, err

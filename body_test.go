@@ -685,3 +685,19 @@ func TestPutBodyPanicRemovesStagedFile(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoveBodyRefusesInvalidUTF8Provenance(t *testing.T) {
+	s, _, clk := openBodyStore(t)
+	b := []byte("orphan")
+	put(t, s, b)
+	expire(clk)
+	req := removeReq(b)
+	req.Provenance.Actor = string([]byte{'x', 0xff})
+	res, err := s.RemoveBody(ctx, req)
+	if !errors.Is(err, ErrSchema) || IsIndeterminate(err) {
+		t.Fatalf("RemoveBody with invalid UTF-8 provenance: res=%+v err=%v, want determinate ErrSchema", res, err)
+	}
+	if _, _, err := s.PutBody(ctx, bytes.NewReader([]byte("different")), "text/plain"); err != nil {
+		t.Fatalf("subsequent PutBody after rejected RemoveBody failed: %v", err)
+	}
+}

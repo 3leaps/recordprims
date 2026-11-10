@@ -6,7 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+type clockFunc func() time.Time
+
+func (f clockFunc) Now() time.Time { return f() }
 
 func TestStreamIndexesCreatedAndRebuiltOnWatermarkOrBackrefCorruption(t *testing.T) {
 	ctx := context.Background()
@@ -93,5 +98,47 @@ func TestStreamIndexesCreatedAndRebuiltOnWatermarkOrBackrefCorruption(t *testing
 	}
 	if string(rebuiltRecsBytes) != string(origRecsBytes) {
 		t.Fatalf("rebuilt records.idx does not match original after back-reference corruption")
+	}
+}
+
+func TestPostCommitIndexFailureIsIndeterminate(t *testing.T) {
+	s, dir, clk := openBodyStore(t)
+	st, err := s.OpenStream("notes", ModeSingleRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Head("r1"); err != nil {
+		t.Fatal(err)
+	}
+	headsPath := filepath.Join(dir, streamDir("notes"), "heads.idx")
+	fired := false
+	s.opts.Clock = clockFunc(func() time.Time {
+		if !fired {
+			fired = true
+			if err := os.Remove(headsPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(headsPath, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return clk.t
+	})
+	_, err = st.Append(ctx, Write{
+		Record:         recordJSON("notes", "r1", 1, nil, `{"a":1}`, nil),
+		IdempotencyKey: "k1",
+	})
+	if err == nil {
+		t.Fatal("expected post-commit index write fault")
+	}
+	if !IsIndeterminate(err) {
+		t.Fatalf("post-commit index write failure returned determinate error %v, want IsIndeterminate(err)==true", err)
+	}
+	if err := os.Remove(headsPath); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := st.Reconcile("k1", clk.t)
+	if err != nil || rec.Result != "found" {
+		t.Fatalf("Reconcile after indeterminate index failure: %+v, err=%v, want found", rec, err)
 	}
 }
