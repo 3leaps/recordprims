@@ -261,13 +261,16 @@ func TestIngestChecksCompleteGroups(t *testing.T) {
 }
 
 func TestIngestRequestObservedAt(t *testing.T) {
+	r1 := record("a", 1, "")
+	d1 := digestOf(t, r1)
 	req := func(obs string) string {
-		return fmt.Sprintf(`{"v":1,"seq":2,"group":2,"group_size":1,"stream":%q,"type":"tombstoned","at":%q,"request":{"observed_at":%q},"request_digest":"sha256:%s"}`, stream, at(2), obs, strings.Repeat("0", 64))
+		r := fmt.Sprintf(`{"v":1,"stream":%q,"idempotency_key":"hold-obs","action":"tombstone","scope":"revision","target":{"stream":%q,"record_id":"a","revision":1,"digest":%q},"reason":"legal","observed_at":%q}`, stream, stream, d1, obs)
+		return fmt.Sprintf(`{"v":1,"seq":3,"group":3,"group_size":1,"stream":%q,"type":"tombstoned","at":%q,"request":%s,"request_digest":%q}`, stream, at(3), r, digestOf(t, r))
 	}
-	if got := ingestAll(t, window(t), opened(1), req("2026-10-20T00:00:01.000000Z")); got != "" {
+	if got := ingestAll(t, window(t), opened(1), content(t, "appended", 2, r1), req("2026-10-20T00:00:01.000000Z")); got != "" {
 		t.Fatalf("canonical observed_at: %q", got)
 	}
-	if got := ingestAll(t, window(t), opened(1), req("2026-10-20T00:00:01.0000000Z")); got != ReasonInstantSpelling {
+	if got := ingestAll(t, window(t), opened(1), content(t, "appended", 2, r1), req("2026-10-20T00:00:01.0000000Z")); got != ReasonInstantSpelling {
 		t.Fatalf("seven fractional digits: %q", got)
 	}
 }
@@ -461,6 +464,17 @@ func TestVerifyReceipt(t *testing.T) {
 	if _, err := s.VerifyReceipt(node(t, wire.KindWriteReceipt, set(validRec, "window_covers_from", `"2026-02-30T00:00:01.000000Z"`))); reasonOf(err) != ReasonInstantSpelling {
 		t.Fatalf("impossible window_covers_from: %q", reasonOf(err))
 	}
+
+	// Unkeyed retirement entry cannot verify a retirement receipt.
+	rb := record("b", 1, "")
+	unkeyedRet := fmt.Sprintf(`{"v":1,"seq":6,"group":6,"group_size":1,"stream":%q,"type":"retired","at":%q,"record_id":"b","reason":"retention_expired"}`, stream, at(6))
+	if got := ingestAll(t, s, content(t, "appended", 5, rb), unkeyedRet); got != "" {
+		t.Fatal(got)
+	}
+	unkeyedRcpt := set(set(validRet, "seq", "6"), "record_id", `"b"`)
+	if _, err := s.VerifyReceipt(node(t, wire.KindWriteReceipt, unkeyedRcpt)); reasonOf(err) != ReasonReceiptMismatch {
+		t.Fatalf("unkeyed retirement receipt: %q, want %q", reasonOf(err), ReasonReceiptMismatch)
+	}
 }
 
 func TestCheckReceipt(t *testing.T) {
@@ -472,12 +486,14 @@ func TestCheckReceipt(t *testing.T) {
 	base := fmt.Sprintf(`{"v":1,"kind":"receipt","stream":%q,"idempotency_key":"k2","outcome":"appended","pin":{"stream":%q,"record_id":"a","revision":1,"digest":%q},"seq":2,"failure_model":"survives_power_loss"}`, stream, stream, d1)
 	found := fmt.Sprintf(`{"v":1,"kind":"reconciliation","stream":%q,"idempotency_key":"k2","attempted_at":"2026-10-20T00:00:03.000000Z","result":"found","receipt":%s}`, stream, base)
 	notFound := fmt.Sprintf(`{"v":1,"kind":"reconciliation","stream":%q,"idempotency_key":"absent","attempted_at":"2026-10-20T00:00:03.000000Z","result":"not_found","window_covers_from":"2026-10-20T00:00:01.000000Z","window_covers_until":"2026-10-20T00:00:05.000000Z"}`, stream)
+	unknown := fmt.Sprintf(`{"v":1,"kind":"reconciliation","stream":%q,"idempotency_key":"k2","attempted_at":"2026-10-20T00:00:03.000000Z","result":"unknown","reason":"coverage_unprovable"}`, stream)
 	conflict := fmt.Sprintf(`{"v":1,"kind":"receipt","stream":%q,"idempotency_key":"k3","outcome":"revision_conflict","current":{"stream":%q,"record_id":"a","revision":1,"digest":%q}}`, stream, stream, d1)
 
 	for _, c := range []struct{ name, doc, want string }{
 		{"valid accepted receipt", base, ""},
 		{"valid found reconciliation", found, ""},
 		{"valid not_found reconciliation", notFound, ""},
+		{"valid unknown reconciliation", unknown, ""},
 		{"valid revision_conflict receipt", conflict, ""},
 		{"found reconciliation with non-accepted outcome", set(found, "outcome", `"no_head"`), ReasonReceiptNotAccepted},
 		{"seq not accepted", set(base, "seq", "1"), ReasonReceiptSeq},
@@ -496,6 +512,161 @@ func TestCheckReceipt(t *testing.T) {
 				t.Fatalf("%q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+func TestProtection(t *testing.T) {
+	bodyDig := "sha256:" + strings.Repeat("b", 64)
+	r1 := set(record("a", 1, ""), "payload_contract", fmt.Sprintf(`"contract: example/v0","body":{"digest":%q,"length":42,"media_type":"application/octet-stream"}`, bodyDig))
+	d1 := digestOf(t, r1)
+	target := fmt.Sprintf(`{"stream":%q,"record_id":"a","revision":1,"digest":%q}`, stream, d1)
+
+	makeReq := func(key, action, scope, tgt, extra, obs string) string {
+		if extra != "" {
+			extra = "," + extra
+		}
+		return fmt.Sprintf(`{"v":1,"stream":%q,"idempotency_key":%q,"action":%q,"scope":%q,"target":%s,"reason":"legal","observed_at":%q%s}`, stream, key, action, scope, tgt, obs, extra)
+	}
+	makeEntry := func(seq int, typ, atStr, req string) string {
+		return fmt.Sprintf(`{"v":1,"seq":%d,"group":%d,"group_size":1,"stream":%q,"type":%q,"at":%q,"request":%s,"request_digest":%q}`, seq, seq, stream, typ, atStr, req, digestOf(t, req))
+	}
+
+	tombRev := makeReq("h1", "tombstone", "revision", target, "", at(2))
+	untombRev := makeReq("u1", "restore", "revision", target, `"restores":3`, at(3))
+	tombBody := makeReq("hb", "tombstone", "body", target, fmt.Sprintf(`"body":{"digest":%q,"length":42}`, bodyDig), at(2))
+	tombWrongBody := makeReq("hwb", "tombstone", "body", target, fmt.Sprintf(`"body":{"digest":%q,"length":99}`, bodyDig), at(2))
+	tombFutureObs := makeReq("hfo", "tombstone", "revision", target, "", at(5))
+	foreignTarget := fmt.Sprintf(`{"stream":"other","record_id":"a","revision":1,"digest":%q}`, d1)
+	tombForeignTarget := makeReq("hft", "tombstone", "revision", foreignTarget, "", at(2))
+	untombWrongScope := makeReq("uws", "restore", "record", target, `"restores":3`, at(3))
+	untombOldObs := makeReq("uoo", "restore", "revision", target, `"restores":3`, at(1))
+
+	for _, c := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"tombstone and restore revision", []string{opened(1), content(t, "appended", 2, r1), makeEntry(3, "tombstoned", at(3), tombRev), makeEntry(4, "untombstoned", at(4), untombRev)}, ""},
+		{"tombstone body with extra record body fields", []string{opened(1), content(t, "appended", 2, r1), makeEntry(3, "tombstoned", at(3), tombBody)}, ""},
+		{"request_digest mismatch", []string{opened(1), content(t, "appended", 2, r1), set(makeEntry(3, "tombstoned", at(3), tombRev), "request_digest", `"sha256:`+strings.Repeat("0", 64)+`"`)}, ReasonRequestDigest},
+		{"operation_type mismatch", []string{opened(1), content(t, "appended", 2, r1), makeEntry(3, "untombstoned", at(3), tombRev)}, ReasonOperationType},
+		{"accepted_key_reuse against content key", []string{opened(1), content(t, "appended", 2, r1), makeEntry(3, "tombstoned", at(3), makeReq("k2", "tombstone", "revision", target, "", at(2)))}, ReasonAcceptedKeyReuse},
+		{"target_not_found foreign target", []string{opened(1), content(t, "appended", 2, r1), makeEntry(3, "tombstoned", at(3), tombForeignTarget)}, ReasonTargetNotFound},
+		{"body_mismatch wrong length", []string{opened(1), content(t, "appended", 2, r1), makeEntry(3, "tombstoned", at(3), tombWrongBody)}, ReasonBodyMismatch},
+		{"observation_order observed_at after entry at", []string{opened(1), content(t, "appended", 2, r1), makeEntry(3, "tombstoned", at(3), tombFutureObs)}, ReasonObservationOrder},
+		{"hold_not_active restore before tombstone", []string{opened(1), content(t, "appended", 2, r1), makeEntry(3, "untombstoned", at(3), untombRev)}, ReasonHoldNotActive},
+		{"hold_mismatch wrong scope", []string{opened(1), content(t, "appended", 2, r1), makeEntry(3, "tombstoned", at(3), tombRev), makeEntry(4, "untombstoned", at(4), untombWrongScope)}, ReasonHoldMismatch},
+		{"observation_order restore before hold observed_at", []string{opened(1), content(t, "appended", 2, r1), makeEntry(3, "tombstoned", at(3), tombRev), makeEntry(4, "untombstoned", at(4), untombOldObs)}, ReasonObservationOrder},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := window(t)
+			if got := ingestAll(t, s, c.lines...); got != c.want {
+				t.Fatalf("%q, want %q", got, c.want)
+			}
+			if c.want == "" && s.Partial() {
+				t.Fatalf("expected non-partial State")
+			}
+		})
+	}
+
+	// Request step: accept, replay, conflict, and Blocked checks.
+	s := window(t)
+	if got := ingestAll(t, s, opened(1), content(t, "appended", 2, r1)); got != "" {
+		t.Fatal(got)
+	}
+	p1 := Pin{Stream: stream, RecordID: "a", Revision: 1, Digest: d1}
+	rcpt1, err := s.Request(node(t, wire.KindProtectionRequest, tombRev), at(3))
+	if err != nil {
+		t.Fatalf("Request tombstone: %v", err)
+	}
+	if holds := s.ActiveHolds(); len(holds) != 1 || holds[0] != 3 {
+		t.Fatalf("ActiveHolds after tombstone: %v, want [3]", holds)
+	}
+	if b, err := s.Blocked(p1); err != nil || !b {
+		t.Fatalf("Blocked(p1): %v, %v, want true", b, err)
+	}
+	// Replay of identical request within window returns identical receipt without appending.
+	replay, err := s.Request(node(t, wire.KindProtectionRequest, tombRev), at(4))
+	if err != nil || !Equal(replay, rcpt1) || s.Len() != 3 {
+		t.Fatalf("Request replay: err=%v equal=%v len=%d", err, Equal(replay, rcpt1), s.Len())
+	}
+	// Different request under same live key returns idempotency_conflict receipt.
+	diffReq := makeReq("h1", "tombstone", "record", target, "", at(2))
+	conflictRcpt, err := s.Request(node(t, wire.KindProtectionRequest, diffReq), at(4))
+	if err != nil || conflictRcpt.Get("outcome").Str != ReasonIdempotencyConflict || s.Len() != 3 {
+		t.Fatalf("Request conflict: err=%v rcpt=%s len=%d", err, wire.Encode(conflictRcpt), s.Len())
+	}
+	// Foreign stream request with same key does not replay; refuses target_not_found.
+	foreignStreamReq := set(tombRev, "stream", `"other"`)
+	foreignRcpt, err := s.Request(node(t, wire.KindProtectionRequest, foreignStreamReq), at(4))
+	if err != nil || foreignRcpt.Get("outcome").Str != ReasonTargetNotFound {
+		t.Fatalf("Request foreign stream: err=%v rcpt=%s", err, wire.Encode(foreignRcpt))
+	}
+	// Restore clears active hold.
+	if _, err := s.Request(node(t, wire.KindProtectionRequest, untombRev), at(5)); err != nil {
+		t.Fatalf("Request restore: %v", err)
+	}
+	if holds := s.ActiveHolds(); len(holds) != 0 {
+		t.Fatalf("ActiveHolds after restore: %v, want []", holds)
+	}
+	if b, err := s.Blocked(p1); err != nil || b {
+		t.Fatalf("Blocked(p1) after restore: %v, %v, want false", b, err)
+	}
+}
+
+func TestRetirement(t *testing.T) {
+	r1 := record("a", 1, "")
+	retReq := fmt.Sprintf(`{"stream":%q,"record_id":"a","reason":"retention_expired","idempotency_key":"ret-1"}`, stream)
+	retDig := digestOf(t, retReq)
+	keyedRet := fmt.Sprintf(`{"v":1,"seq":3,"group":3,"group_size":1,"stream":%q,"type":"retired","at":%q,"record_id":"a","reason":"retention_expired","idempotency_key":"ret-1","request_digest":%q}`, stream, at(3), retDig)
+	unkeyedRet := fmt.Sprintf(`{"v":1,"seq":3,"group":3,"group_size":1,"stream":%q,"type":"retired","at":%q,"record_id":"a","reason":"retention_expired"}`, stream, at(3))
+
+	for _, c := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"keyed retirement accepted", []string{opened(1), content(t, "appended", 2, r1), keyedRet}, ""},
+		{"unkeyed retirement accepted", []string{opened(1), content(t, "appended", 2, r1), unkeyedRet}, ""},
+		{"retire absent record", []string{opened(1), content(t, "appended", 2, r1), set(unkeyedRet, "record_id", `"missing"`)}, ReasonTargetNotFound},
+		{"keyed retirement digest mismatch", []string{opened(1), content(t, "appended", 2, r1), set(keyedRet, "request_digest", `"sha256:`+strings.Repeat("0", 64)+`"`)}, ReasonRequestDigest},
+		{"keyed retirement live key reuse", []string{opened(1), content(t, "appended", 2, r1), set(set(keyedRet, "idempotency_key", `"k2"`), "request_digest", fmt.Sprintf("%q", digestOf(t, set(retReq, "idempotency_key", `"k2"`))))}, ReasonAcceptedKeyReuse},
+		{"write to retired record refused", []string{opened(1), content(t, "appended", 2, r1), unkeyedRet, content(t, "revised", 4, record("a", 2, fmt.Sprintf(`{"revision":1,"digest":%q}`, digestOf(t, r1))))}, ReasonRetiredRecord},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := window(t)
+			if got := ingestAll(t, s, c.lines...); got != c.want {
+				t.Fatalf("%q, want %q", got, c.want)
+			}
+			if c.want == "" && s.Partial() {
+				t.Fatalf("expected non-partial State")
+			}
+		})
+	}
+
+	// State.Retire step: accept, replay, conflict, foreign stream, target_not_found.
+	s := window(t)
+	if got := ingestAll(t, s, opened(1), content(t, "appended", 2, r1)); got != "" {
+		t.Fatal(got)
+	}
+	reqNode, _ := wire.ParseJSON([]byte(retReq))
+	rcpt, err := s.Retire(reqNode, at(3))
+	if err != nil || rcpt.Get("outcome").Str != "retired" || s.Len() != 3 {
+		t.Fatalf("Retire accept: err=%v rcpt=%s len=%d", err, wire.Encode(rcpt), s.Len())
+	}
+	replay, err := s.Retire(reqNode, at(4))
+	if err != nil || !Equal(replay, rcpt) || s.Len() != 3 {
+		t.Fatalf("Retire replay: err=%v equal=%v len=%d", err, Equal(replay, rcpt), s.Len())
+	}
+	conflictNode, _ := wire.ParseJSON([]byte(set(retReq, "reason", `"operator"`)))
+	conflictRcpt, err := s.Retire(conflictNode, at(4))
+	if err != nil || conflictRcpt.Get("outcome").Str != ReasonIdempotencyConflict || s.Len() != 3 {
+		t.Fatalf("Retire conflict: err=%v rcpt=%s", err, wire.Encode(conflictRcpt))
+	}
+	foreignNode, _ := wire.ParseJSON([]byte(set(retReq, "stream", `"other"`)))
+	foreignRcpt, err := s.Retire(foreignNode, at(4))
+	if err != nil || foreignRcpt.Get("outcome").Str != ReasonTargetNotFound {
+		t.Fatalf("Retire foreign stream: err=%v rcpt=%s", err, wire.Encode(foreignRcpt))
 	}
 }
 

@@ -3,6 +3,7 @@ package journal
 import (
 	"math/big"
 	"regexp"
+	"slices"
 	"strconv"
 	"time"
 
@@ -43,8 +44,11 @@ type State struct {
 	stream        string
 	failureModel  string
 	records       map[Pin]*wire.Node
+	holds         map[int64]*wire.Node
+	active        map[int64]bool
 	keys          map[string]liveEntry
 	retired       map[string]bool
+	restrictedAt  []int64
 	removalStream string
 	hasRemoval    bool
 	partial       bool
@@ -67,6 +71,8 @@ func New(window *wire.Node) (*State, error) {
 	return &State{
 		window:  v.Int64(),
 		records: map[Pin]*wire.Node{},
+		holds:   map[int64]*wire.Node{},
+		active:  map[int64]bool{},
 		keys:    map[string]liveEntry{},
 		retired: map[string]bool{},
 	}, nil
@@ -108,6 +114,26 @@ func (s *State) Records() map[Pin]*wire.Node {
 	return out
 }
 
+// ActiveHolds returns the sequence numbers of active protection holds in
+// ascending order.
+func (s *State) ActiveHolds() []int64 {
+	out := make([]int64, 0, len(s.active))
+	for seq := range s.active {
+		out = append(out, seq)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func (s *State) hasRecordID(recordID string) bool {
+	for p := range s.records {
+		if p.RecordID == recordID {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *State) remember(key string, id keyIdentity, at time.Time, recordID string, receipt *wire.Node) {
 	s.keys[key] = liveEntry{
 		id:       id,
@@ -127,6 +153,188 @@ func (s *State) live(key string, at time.Time) (liveEntry, bool) {
 		return prior, true
 	}
 	return liveEntry{}, false
+}
+
+func pinFromNode(n *wire.Node, where string) (Pin, error) {
+	if n == nil || n.Kind != wire.Object {
+		return Pin{}, reject(ReasonShape, "%s is not an object", where)
+	}
+	stream, err := strOf(n, "stream")
+	if err != nil {
+		return Pin{}, err
+	}
+	rid, err := strOf(n, "record_id")
+	if err != nil {
+		return Pin{}, err
+	}
+	rev, err := intOf(n, "revision")
+	if err != nil {
+		return Pin{}, err
+	}
+	dig, err := strOf(n, "digest")
+	if err != nil {
+		return Pin{}, err
+	}
+	return Pin{Stream: stream, RecordID: rid, Revision: rev, Digest: dig}, nil
+}
+
+func bodyMatches(recBody, targetBody *wire.Node) (bool, error) {
+	if recBody == nil || recBody.Kind != wire.Object {
+		return false, nil
+	}
+	if targetBody == nil || targetBody.Kind != wire.Object {
+		return false, reject(ReasonShape, "body is not an object")
+	}
+	d1, err := strOf(recBody, "digest")
+	if err != nil {
+		return false, err
+	}
+	l1, err := intOf(recBody, "length")
+	if err != nil {
+		return false, err
+	}
+	d2, err := strOf(targetBody, "digest")
+	if err != nil {
+		return false, err
+	}
+	l2, err := intOf(targetBody, "length")
+	if err != nil {
+		return false, err
+	}
+	return d1 == d2 && l1 == l2, nil
+}
+
+func (s *State) refusal(r *wire.Node, at time.Time) (string, error) {
+	if r == nil || r.Kind != wire.Object {
+		return "", reject(ReasonShape, "protection request is not an object")
+	}
+	rStream, err := strOf(r, "stream")
+	if err != nil {
+		return "", err
+	}
+	targetPin, err := pinFromNode(r.Get("target"), "request.target")
+	if err != nil {
+		return "", err
+	}
+	if rStream != s.stream || targetPin.Stream != s.stream {
+		return ReasonTargetNotFound, nil
+	}
+	record, ok := s.records[targetPin]
+	if !ok {
+		return ReasonTargetNotFound, nil
+	}
+	scope, err := strOf(r, "scope")
+	if err != nil {
+		return "", err
+	}
+	if scope == "body" {
+		match, err := bodyMatches(record.Get("body"), r.Get("body"))
+		if err != nil {
+			return "", err
+		}
+		if !match {
+			return ReasonBodyMismatch, nil
+		}
+	}
+	obsStr, err := strOf(r, "observed_at")
+	if err != nil {
+		return "", err
+	}
+	obsAt, err := instantOf(obsStr, "request.observed_at")
+	if err != nil {
+		return "", err
+	}
+	if obsAt.After(at) {
+		return ReasonObservationOrder, nil
+	}
+	action, err := strOf(r, "action")
+	if err != nil {
+		return "", err
+	}
+	if action == "restore" {
+		restores, err := intOf(r, "restores")
+		if err != nil {
+			return "", err
+		}
+		if !s.active[restores] {
+			return ReasonHoldNotActive, nil
+		}
+		hold := s.holds[restores]
+		if !Equal(r.Get("target"), hold.Get("target")) ||
+			!Equal(r.Get("scope"), hold.Get("scope")) ||
+			!Equal(r.Get("body"), hold.Get("body")) {
+			return ReasonHoldMismatch, nil
+		}
+		holdObsStr, err := strOf(hold, "observed_at")
+		if err != nil {
+			return "", err
+		}
+		holdObsAt, err := instantOf(holdObsStr, "hold.observed_at")
+		if err != nil {
+			return "", err
+		}
+		if obsAt.Before(holdObsAt) {
+			return ReasonObservationOrder, nil
+		}
+	}
+	return "", nil
+}
+
+func (s *State) apply(r *wire.Node, seq int64) error {
+	action, err := strOf(r, "action")
+	if err != nil {
+		return err
+	}
+	if action == "tombstone" {
+		s.holds[seq] = cloneNode(r)
+		s.active[seq] = true
+		return nil
+	}
+	restores, err := intOf(r, "restores")
+	if err != nil {
+		return err
+	}
+	delete(s.active, restores)
+	return nil
+}
+
+// Blocked reports whether any active hold on the stream blocks Pin p (by
+// record scope, revision scope, or body scope).
+func (s *State) Blocked(p Pin) (bool, error) {
+	record, ok := s.records[p]
+	if !ok {
+		return false, nil
+	}
+	for seq := range s.active {
+		h := s.holds[seq]
+		scope, err := strOf(h, "scope")
+		if err != nil {
+			return false, err
+		}
+		target, err := pinFromNode(h.Get("target"), "hold.target")
+		if err != nil {
+			return false, err
+		}
+		switch scope {
+		case "record":
+			if p.RecordID == target.RecordID {
+				return true, nil
+			}
+		case "revision":
+			if p == target {
+				return true, nil
+			}
+		case "body":
+			match, err := bodyMatches(record.Get("body"), h.Get("body"))
+			if err != nil {
+				return false, err
+			}
+			if match {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func pinOf(e *wire.Node, where string) (Pin, error) {
@@ -404,12 +612,280 @@ func (s *State) Ingest(e *wire.Node) error {
 		if !ok || prior.id.kind != "content" || prior.recordID != rid {
 			return reject(ReasonInvalidDeduplication, "%s: key %q does not name a live content write of record %q", where, key, rid)
 		}
+	case typ == "tombstoned" || typ == "untombstoned":
+		req := e.Get("request")
+		if req == nil || req.Kind != wire.Object {
+			return reject(ReasonShape, "%s: request is not an object", where)
+		}
+		wantDig, err := strOf(e, "request_digest")
+		if err != nil {
+			return err
+		}
+		gotDig, err := recordDigest(req)
+		if err != nil {
+			return err
+		}
+		if wantDig != gotDig {
+			return reject(ReasonRequestDigest, "%s: request_digest mismatch", where)
+		}
+		action, err := strOf(req, "action")
+		if err != nil {
+			return err
+		}
+		wantTyp := "untombstoned"
+		if action == "tombstone" {
+			wantTyp = "tombstoned"
+		}
+		if typ != wantTyp {
+			return reject(ReasonOperationType, "%s: entry type %q does not match request action %q", where, typ, action)
+		}
+		key, err := strOf(req, "idempotency_key")
+		if err != nil {
+			return err
+		}
+		if _, ok := s.live(key, at); ok {
+			return reject(ReasonAcceptedKeyReuse, "%s: idempotency key %q is still live", where, key)
+		}
+		reason, err := s.refusal(req, at)
+		if err != nil {
+			return err
+		}
+		if reason != "" {
+			return reject(reason, "%s: protection journal operation refused", where)
+		}
+		rcpt, err := s.protectionReceipt(req, seq)
+		if err != nil {
+			return err
+		}
+		if err := s.apply(req, seq); err != nil {
+			return err
+		}
+		s.remember(key, keyIdentity{kind: "protection", value: gotDig}, at, "", rcpt)
+		s.restrictedAt = append(s.restrictedAt, seq)
+	case typ == "retired":
+		rid, err := strOf(e, "record_id")
+		if err != nil {
+			return err
+		}
+		if !s.hasRecordID(rid) {
+			return reject(ReasonTargetNotFound, "%s: record %q not found", where, rid)
+		}
+		if present(e, "idempotency_key") {
+			key, err := strOf(e, "idempotency_key")
+			if err != nil {
+				return err
+			}
+			r := retirementRequest(e)
+			wantDig, err := strOf(e, "request_digest")
+			if err != nil {
+				return err
+			}
+			gotDig, err := recordDigest(r)
+			if err != nil {
+				return err
+			}
+			if wantDig != gotDig {
+				return reject(ReasonRequestDigest, "%s: request_digest mismatch", where)
+			}
+			if _, ok := s.live(key, at); ok {
+				return reject(ReasonAcceptedKeyReuse, "%s: idempotency key %q is still live", where, key)
+			}
+			rcpt, err := s.retirementReceipt(r, seq)
+			if err != nil {
+				return err
+			}
+			s.remember(key, keyIdentity{kind: "retirement", value: gotDig}, at, rid, rcpt)
+		}
+		s.retired[rid] = true
+		s.restrictedAt = append(s.restrictedAt, seq)
 	case typ == "conflicted":
 	default:
 		s.partial = true
 	}
 	s.journal = append(s.journal, e)
 	return nil
+}
+
+// Request evaluates a protection request r at decision time atStr, appending
+// a tombstoned or untombstoned entry when accepted and returning the
+// protection receipt. Stream-scoped live-key replay precedes target and
+// current-state checks, matching the reference interpreter's request method.
+func (s *State) Request(r *wire.Node, atStr string) (*wire.Node, error) {
+	if r == nil || r.Kind != wire.Object {
+		return nil, reject(ReasonShape, "request: not an object")
+	}
+	if err := CheckJournal(s.journal); err != nil {
+		return nil, err
+	}
+	at, err := instantOf(atStr, "request at")
+	if err != nil {
+		return nil, err
+	}
+	lastAt, _ := ParseInstant(s.journal[len(s.journal)-1].Get("at").Str)
+	if at.Before(lastAt) {
+		return nil, reject(ReasonJournalTime, "request: at precedes the journal")
+	}
+	obsStr, err := strOf(r, "observed_at")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := instantOf(obsStr, "request.observed_at"); err != nil {
+		return nil, err
+	}
+	rStream, err := strOf(r, "stream")
+	if err != nil {
+		return nil, err
+	}
+	key, err := strOf(r, "idempotency_key")
+	if err != nil {
+		return nil, err
+	}
+	rdig, err := recordDigest(r)
+	if err != nil {
+		return nil, err
+	}
+	var reason string
+	if rStream == s.stream {
+		if prior, ok := s.live(key, at); ok {
+			if prior.id.kind == "protection" && prior.id.value == rdig {
+				return cloneNode(prior.receipt), nil
+			}
+			reason = ReasonIdempotencyConflict
+		}
+	}
+	if reason == "" {
+		reason, err = s.refusal(r, at)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if reason != "" {
+		return &wire.Node{
+			Kind: wire.Object,
+			Fields: []wire.Member{
+				{Name: "v", Value: intNode(1)},
+				{Name: "stream", Value: strNode(rStream)},
+				{Name: "idempotency_key", Value: strNode(key)},
+				{Name: "outcome", Value: strNode(reason)},
+			},
+		}, nil
+	}
+	seq := int64(len(s.journal)) + 1
+	if seq > wire.MaxSafeInteger {
+		return nil, reject(wire.ReasonNumericDomain, "request: seq exceeds %d", int64(wire.MaxSafeInteger))
+	}
+	rcpt, err := s.protectionReceipt(r, seq)
+	if err != nil {
+		return nil, err
+	}
+	outcome, _ := strOf(rcpt, "outcome")
+	entry := &wire.Node{
+		Kind: wire.Object,
+		Fields: []wire.Member{
+			{Name: "v", Value: intNode(1)},
+			{Name: "seq", Value: intNode(seq)},
+			{Name: "group", Value: intNode(seq)},
+			{Name: "group_size", Value: intNode(1)},
+			{Name: "stream", Value: strNode(s.stream)},
+			{Name: "type", Value: strNode(outcome)},
+			{Name: "at", Value: strNode(atStr)},
+			{Name: "request", Value: cloneNode(r)},
+			{Name: "request_digest", Value: strNode(rdig)},
+		},
+	}
+	if err := s.Ingest(entry); err != nil {
+		return nil, err
+	}
+	return rcpt, nil
+}
+
+// Retire evaluates a keyed retirement request r at decision time atStr,
+// appending a retired entry when accepted and returning the write receipt.
+// Stream-scoped live-key replay precedes target and current-state checks,
+// matching the reference interpreter's retire method.
+func (s *State) Retire(r *wire.Node, atStr string) (*wire.Node, error) {
+	if r == nil || r.Kind != wire.Object {
+		return nil, reject(ReasonShape, "retire: not an object")
+	}
+	if err := CheckJournal(s.journal); err != nil {
+		return nil, err
+	}
+	at, err := instantOf(atStr, "retire at")
+	if err != nil {
+		return nil, err
+	}
+	lastAt, _ := ParseInstant(s.journal[len(s.journal)-1].Get("at").Str)
+	if at.Before(lastAt) {
+		return nil, reject(ReasonJournalTime, "retire: at precedes the journal")
+	}
+	rStream, err := strOf(r, "stream")
+	if err != nil {
+		return nil, err
+	}
+	key, err := strOf(r, "idempotency_key")
+	if err != nil {
+		return nil, err
+	}
+	rid, err := strOf(r, "record_id")
+	if err != nil {
+		return nil, err
+	}
+	retireReason, err := strOf(r, "reason")
+	if err != nil {
+		return nil, err
+	}
+	rdig, err := recordDigest(r)
+	if err != nil {
+		return nil, err
+	}
+	var reason string
+	if rStream == s.stream {
+		if prior, ok := s.live(key, at); ok {
+			if prior.id.kind == "retirement" && prior.id.value == rdig {
+				return cloneNode(prior.receipt), nil
+			}
+			reason = ReasonIdempotencyConflict
+		}
+	}
+	if reason == "" && (rStream != s.stream || !s.hasRecordID(rid)) {
+		reason = ReasonTargetNotFound
+	}
+	if reason != "" {
+		return &wire.Node{
+			Kind: wire.Object,
+			Fields: []wire.Member{
+				{Name: "v", Value: intNode(1)},
+				{Name: "kind", Value: strNode("receipt")},
+				{Name: "stream", Value: strNode(rStream)},
+				{Name: "idempotency_key", Value: strNode(key)},
+				{Name: "outcome", Value: strNode(reason)},
+			},
+		}, nil
+	}
+	seq := int64(len(s.journal)) + 1
+	if seq > wire.MaxSafeInteger {
+		return nil, reject(wire.ReasonNumericDomain, "retire: seq exceeds %d", int64(wire.MaxSafeInteger))
+	}
+	entry := &wire.Node{
+		Kind: wire.Object,
+		Fields: []wire.Member{
+			{Name: "v", Value: intNode(1)},
+			{Name: "seq", Value: intNode(seq)},
+			{Name: "group", Value: intNode(seq)},
+			{Name: "group_size", Value: intNode(1)},
+			{Name: "stream", Value: strNode(s.stream)},
+			{Name: "type", Value: strNode("retired")},
+			{Name: "at", Value: strNode(atStr)},
+			{Name: "record_id", Value: strNode(rid)},
+			{Name: "reason", Value: strNode(retireReason)},
+			{Name: "idempotency_key", Value: strNode(key)},
+			{Name: "request_digest", Value: strNode(rdig)},
+		},
+	}
+	if err := s.Ingest(entry); err != nil {
+		return nil, err
+	}
+	return s.retirementReceipt(r, seq)
 }
 
 // Reconcile looks up idempotencyKey at decision time atStr for an attempt at

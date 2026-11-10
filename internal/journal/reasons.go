@@ -43,6 +43,14 @@ const (
 	ReasonReconciliationMismatch = "reconciliation_mismatch"
 	ReasonCoverage               = "coverage"
 	ReasonRetiredRecord          = "retired_record"
+	ReasonRequestDigest          = "request_digest"
+	ReasonOperationType          = "operation_type"
+	ReasonIdempotencyConflict    = "idempotency_conflict"
+	ReasonTargetNotFound         = "target_not_found"
+	ReasonBodyMismatch           = "body_mismatch"
+	ReasonHoldNotActive          = "hold_not_active"
+	ReasonHoldMismatch           = "hold_mismatch"
+	ReasonObservationOrder       = "observation_order"
 	// ReasonShape is the shape stage's refusal. This package reaches it only
 	// when a document that should have passed shape lacks a member or has
 	// the wrong type for one, so it fails closed instead of guessing.

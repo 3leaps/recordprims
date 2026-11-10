@@ -71,6 +71,13 @@ func TestVectorShapes(t *testing.T) {
 				invalidReceipts[int(x)] = true
 			}
 		}
+		invalidRequests := map[int]bool{}
+		if l := v.Get("invalid_request_steps"); l != nil {
+			for _, e := range l.Elems {
+				x, _ := wire.SafeInt(e.Token)
+				invalidRequests[int(x)] = true
+			}
+		}
 		check := func(doc *wire.Node, schema string, want bool, where string) {
 			checked++
 			err := shape.Validate(schema, doc)
@@ -122,6 +129,14 @@ func TestVectorShapes(t *testing.T) {
 		if steps := v.Get("steps"); steps != nil {
 			for i, s := range steps.Elems {
 				switch {
+				case s.Get("raw_request") != nil:
+					n := ingest(s.Get("raw_request").Str, wire.KindProtectionRequest)
+					if n == nil {
+						goto nextVector
+					}
+					check(n, "v1/protection-request.schema.json", !invalidRequests[i], "raw_request step")
+				case s.Get("request") != nil:
+					check(s.Get("request"), "v1/protection-request.schema.json", !invalidRequests[i], "request step")
 				case s.Get("raw_receipt") != nil:
 					n, err := wire.IngestReceipt([]byte(s.Get("raw_receipt").Str))
 					if err != nil {
