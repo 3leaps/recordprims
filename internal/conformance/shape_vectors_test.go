@@ -85,6 +85,27 @@ func TestVectorShapes(t *testing.T) {
 				invalidStates[int(x)] = true
 			}
 		}
+		invalidUses := map[int]bool{}
+		if l := v.Get("invalid_use_steps"); l != nil {
+			for _, e := range l.Elems {
+				x, _ := wire.SafeInt(e.Token)
+				invalidUses[int(x)] = true
+			}
+		}
+		invalidRemovals := map[int]bool{}
+		if l := v.Get("invalid_removal_steps"); l != nil {
+			for _, e := range l.Elems {
+				x, _ := wire.SafeInt(e.Token)
+				invalidRemovals[int(x)] = true
+			}
+		}
+		invalidSeals := map[int]bool{}
+		if l := v.Get("invalid_seal_steps"); l != nil {
+			for _, e := range l.Elems {
+				x, _ := wire.SafeInt(e.Token)
+				invalidSeals[int(x)] = true
+			}
+		}
 		check := func(doc *wire.Node, schema string, want bool, where string) {
 			checked++
 			err := shape.Validate(schema, doc)
@@ -181,6 +202,47 @@ func TestVectorShapes(t *testing.T) {
 					check(n, "v1/body-state-request.schema.json", !invalidStates[i], "raw_body_state step")
 				case s.Get("body_state") != nil:
 					check(s.Get("body_state"), "v1/body-state-request.schema.json", !invalidStates[i], "body_state step")
+				case s.Get("raw_use") != nil:
+					n := ingest(s.Get("raw_use").Str, wire.KindExportRequest)
+					if n == nil {
+						goto nextVector
+					}
+					check(n, "v1/export-request.schema.json", !invalidUses[i], "raw_use step")
+				case s.Get("use") != nil:
+					check(s.Get("use"), "v1/export-request.schema.json", !invalidUses[i], "use step")
+				case s.Get("raw_removal_eligibility") != nil:
+					n := ingest(s.Get("raw_removal_eligibility").Str, wire.KindRemovalEligibility)
+					if n == nil {
+						goto nextVector
+					}
+					check(n, "v1/removal-eligibility-request.schema.json", !invalidRemovals[i], "raw_removal_eligibility step")
+				case s.Get("removal_eligibility") != nil:
+					check(s.Get("removal_eligibility"), "v1/removal-eligibility-request.schema.json", !invalidRemovals[i], "removal_eligibility step")
+				case s.Get("raw_verify_seal") != nil:
+					vctx := ingest(s.Get("raw_verify_seal").Str, "seal_context")
+					if vctx == nil {
+						goto nextVector
+					}
+					if rs := vctx.Get("raw_seal"); rs != nil && rs.Kind == wire.String {
+						sn := ingest(rs.Str, wire.KindStreamSeal)
+						if sn == nil {
+							goto nextVector
+						}
+						check(sn, "v1/stream-seal.schema.json", !invalidSeals[i], "raw_verify_seal.raw_seal step")
+					} else if sl := vctx.Get("seal"); sl != nil {
+						check(sl, "v1/stream-seal.schema.json", !invalidSeals[i], "raw_verify_seal.seal step")
+					}
+				case s.Get("verify_seal") != nil:
+					vctx := s.Get("verify_seal")
+					if rs := vctx.Get("raw_seal"); rs != nil && rs.Kind == wire.String {
+						sn := ingest(rs.Str, wire.KindStreamSeal)
+						if sn == nil {
+							goto nextVector
+						}
+						check(sn, "v1/stream-seal.schema.json", !invalidSeals[i], "verify_seal.raw_seal step")
+					} else if sl := vctx.Get("seal"); sl != nil {
+						check(sl, "v1/stream-seal.schema.json", !invalidSeals[i], "verify_seal.seal step")
+					}
 				}
 			}
 		}

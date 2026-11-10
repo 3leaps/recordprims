@@ -316,13 +316,13 @@ func TestPartial(t *testing.T) {
 		t.Fatalf("appended without imported_from: %q partial=%v, want false", got, s.Partial())
 	}
 	imp := window(t)
-	aImp := set(content(t, "appended", 2, r1), "idempotency_key", `"k2","imported_from":{"source":{"capability":"contract: durable-record/v1","stream":"src","cut_seq":1,"cut_digest":"sha256:`+strings.Repeat("0", 64)+`"},"pin":{"stream":"src","record_id":"a","revision":1,"digest":`+fmt.Sprintf("%q", digestOf(t, r1))+`}}`)
-	if got := ingestAll(t, imp, opened(1), aImp); got != "" || !imp.Partial() {
-		t.Fatalf("appended with imported_from: %q partial=%v, want partial", got, imp.Partial())
+	aImp := set(content(t, "appended", 2, r1), "idempotency_key", `"k2","imported_from":{"capability":"contract: durable-record/v1","pin":{"stream":"src","record_id":"a","revision":1,"digest":`+fmt.Sprintf("%q", digestOf(t, r1))+`}}`)
+	if got := ingestAll(t, imp, opened(1), aImp); got != ReasonContinuation || imp.Partial() {
+		t.Fatalf("appended with imported_from on non-continuation stream: %q partial=%v, want %q/false", got, imp.Partial(), ReasonContinuation)
 	}
 	c := window(t)
-	if got := ingestAll(t, c, set(opened(1), "failure_model", `"survives_power_loss","continues":{}`)); got != "" || !c.Partial() {
-		t.Fatalf("continuation: %q partial=%v, want partial", got, c.Partial())
+	if got := ingestAll(t, c, set(opened(1), "failure_model", `"survives_power_loss","continues":{}`)); got != ReasonContinuation || c.Partial() {
+		t.Fatalf("continuation without source: %q partial=%v, want %q/false", got, c.Partial(), ReasonContinuation)
 	}
 	r := window(t)
 	if got := ingestAll(t, r, set(opened(1), "failure_model", `"survives_power_loss","recovery":{}`)); got != "" || r.Partial() {
@@ -737,5 +737,31 @@ func TestCheckProfile(t *testing.T) {
 				t.Fatalf("%q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+func TestUseAndRemovalEligibility(t *testing.T) {
+	s := window(t)
+	r1 := record("a", 1, "")
+	d1 := digestOf(t, r1)
+	if got := ingestAll(t, s, opened(1), content(t, "appended", 2, r1)); got != "" {
+		t.Fatal(got)
+	}
+	useOK := node(t, wire.KindExportRequest, fmt.Sprintf(`{"v":1,"stream":%q,"purpose":"export","closure":"full_content","protection_state":"verified","protection_cut":2,"current_cut":2,"inherited_block":false,"selection":[{"stream":%q,"record_id":"a","revision":1,"digest":%q}],"omitted":[],"bodies":[]}`, stream, stream, d1))
+	res, err := s.Use(useOK)
+	if err != nil || res.Get("outcome").Str != "allowed" {
+		t.Fatalf("Use allowed: err=%v res=%v", err, res)
+	}
+	useBadPurpose := node(t, wire.KindExportRequest, fmt.Sprintf(`{"v":1,"stream":%q,"purpose":"archive","closure":"full_content","protection_state":"verified","protection_cut":2,"current_cut":2,"inherited_block":false,"selection":[],"omitted":[]}`, stream))
+	res, err = s.Use(useBadPurpose)
+	if err != nil || res.Get("outcome").Str != "refused" || res.Get("reason").Str != ReasonInvalidPurpose {
+		t.Fatalf("Use invalid_purpose: err=%v res=%v", err, res)
+	}
+
+	// RemovalEligibility on non-designated stream refuses body_removal_stream.
+	remStep := node(t, wire.KindRemovalEligibility, fmt.Sprintf(`{"store":"store.alpha","store_streams":[%q],"observed_streams":[],"body":{"digest":"sha256:%s","length":8},"incarnation":1,"mode":"start","reason":"retention","decision_time":%q,"expected_policy":{"id":"ret-1","version":"1"}}`, stream, strings.Repeat("1", 64), at(10)))
+	remRes, err := s.RemovalEligibility(remStep)
+	if err != nil || remRes.Get("verdict").Str != "refused" || remRes.Get("reason").Str != ReasonBodyRemovalStream {
+		t.Fatalf("RemovalEligibility non-designated: err=%v res=%v", err, remRes)
 	}
 }

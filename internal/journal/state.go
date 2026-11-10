@@ -39,25 +39,34 @@ type liveEntry struct {
 // State replays one v1 stream entry by entry, in the reference interpreter's
 // order.
 type State struct {
-	window                int64
-	journal               []*wire.Node
-	stream                string
-	failureModel          string
-	records               map[Pin]*wire.Node
-	holds                 map[int64]*wire.Node
-	active                map[int64]bool
-	keys                  map[string]liveEntry
-	retired               map[string]bool
-	restrictedAt          []int64
-	removalStream         string
-	hasRemoval            bool
-	incarnationAllocation string
-	quarantinedDesignated []string
-	expectedQuarantined   []string
-	referencedBodies      map[BodyKey]bool
-	bodies                map[BodyKey]bodyState
-	openStarts            map[BodyKey]map[int64]bool
-	partial               bool
+	window                  int64
+	journal                 []*wire.Node
+	stream                  string
+	failureModel            string
+	records                 map[Pin]*wire.Node
+	holds                   map[int64]*wire.Node
+	active                  map[int64]bool
+	keys                    map[string]liveEntry
+	retired                 map[string]bool
+	restrictedAt            []int64
+	source                  []*wire.Node
+	continues               *wire.Node
+	imports                 []importItem
+	review                  *wire.Node
+	upstream                *State
+	upstreamUnobserved      bool
+	upstreamUncurrentSealed bool
+	sourceSealFinal         bool
+	sealedAncestorHold      bool
+	removalStream           string
+	hasRemoval              bool
+	incarnationAllocation   string
+	quarantinedDesignated   []string
+	expectedQuarantined     []string
+	referencedBodies        map[BodyKey]bool
+	bodies                  map[BodyKey]bodyState
+	openStarts              map[BodyKey]map[int64]bool
+	partial                 bool
 }
 
 var integerToken = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
@@ -608,8 +617,10 @@ func (s *State) Ingest(e *wire.Node) error {
 			return err
 		}
 		s.stream, s.failureModel = stream, fm
-		if e.Get("continues") != nil {
-			s.partial = true
+		if cont := e.Get("continues"); cont != nil {
+			if err := s.openContinuation(cont); err != nil {
+				return err
+			}
 		}
 	case typ == "appended" || typ == "revised":
 		p, err := pinOf(e, where)
@@ -620,7 +631,9 @@ func (s *State) Ingest(e *wire.Node) error {
 			return reject(ReasonRetiredRecord, "%s: record %q is retired", where, p.RecordID)
 		}
 		if present(e, "imported_from") {
-			s.partial = true
+			if err := s.importRecord(e, seq); err != nil {
+				return err
+			}
 		}
 		key, err := strOf(e, "idempotency_key")
 		if err != nil {
@@ -737,6 +750,10 @@ func (s *State) Ingest(e *wire.Node) error {
 		}
 		s.retired[rid] = true
 		s.restrictedAt = append(s.restrictedAt, seq)
+	case typ == "restrictions_reviewed":
+		if err := s.checkReview(e, seq); err != nil {
+			return err
+		}
 	case typ == "conflicted":
 	default:
 		s.partial = true
