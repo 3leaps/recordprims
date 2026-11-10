@@ -110,6 +110,7 @@ var (
 // IndeterminateError wraps a failure whose commit outcome is CommitUnknown.
 type IndeterminateError struct {
 	Op  string
+	Key string
 	Err error
 }
 

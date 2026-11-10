@@ -270,11 +270,22 @@ type replayedStream struct {
 	st        *journal.State
 	jpath     string
 	sdir      string
+	raw       []byte
 	cutOffset int64
 	lastSeq   int64
 	lastAt    time.Time
 	mode      Mode
 	continues *Continues
+}
+
+func (rep *replayedStream) appendLine(s *Store, line []byte) error {
+	if err := s.appender.Append(rep.jpath, rep.cutOffset, line, false); err != nil {
+		return mapJFileErr(err)
+	}
+	rep.raw = append(rep.raw, line...)
+	rep.cutOffset = int64(len(rep.raw))
+	rep.lastSeq = int64(rep.st.Len())
+	return s.syncStreamIndexes(rep, rep.raw)
 }
 
 // OpenStream opens or creates a content stream on s. It refuses the store's
@@ -466,16 +477,21 @@ func (s *Store) replayStream(id string) (*replayedStream, error) {
 	if st.Stream() != id {
 		return nil, &ErrJournalInvalid{Reason: journal.ReasonStreamMismatch}
 	}
-	return &replayedStream{
+	rep := &replayedStream{
 		st:        st,
 		jpath:     jpath,
 		sdir:      sdir,
+		raw:       raw,
 		cutOffset: int64(len(raw)),
 		lastSeq:   int64(st.Len()),
 		lastAt:    lastAt,
 		mode:      mode,
 		continues: cont,
-	}, nil
+	}
+	if err := s.syncStreamIndexes(rep, raw); err != nil {
+		return nil, err
+	}
+	return rep, nil
 }
 
 func parseStreamPrefix(raw []byte) (nodes []*wire.Node, lastCutSeq uint64, lastCutOff int64, dmgKind DamagedTailKind, dmgBytes int64, err error) {
@@ -701,8 +717,8 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 				return &ErrJournalInvalid{Reason: rejectReason(err)}
 			}
 			line := append(wire.Encode(confEntry), '\n')
-			if err := st.store.appender.Append(rep.jpath, rep.cutOffset, line, false); err != nil {
-				return mapJFileErr(err)
+			if err := rep.appendLine(st.store, line); err != nil {
+				return err
 			}
 			out = Receipt{
 				V:              1,
@@ -772,8 +788,8 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 			return fmt.Errorf("%w: %s", ErrSchema, rejectReason(err))
 		}
 		line := append(wire.Encode(entry), '\n')
-		if err := st.store.appender.Append(rep.jpath, rep.cutOffset, line, false); err != nil {
-			return mapJFileErr(err)
+		if err := rep.appendLine(st.store, line); err != nil {
+			return err
 		}
 		if hasBody && w.Lease != nil {
 			_ = st.store.consumeLease(bodyHex, *w.Lease)
@@ -866,8 +882,8 @@ func (st *Stream) Retire(ctx context.Context, recordID string, reason RetireReas
 			if rep.st.Len() > prevLen {
 				entry := rep.st.Journal()[prevLen]
 				line := append(wire.Encode(entry), '\n')
-				if err := st.store.appender.Append(rep.jpath, rep.cutOffset, line, false); err != nil {
-					return mapJFileErr(err)
+				if err := rep.appendLine(st.store, line); err != nil {
+					return err
 				}
 			}
 			sq := uint64(rcNode.Get("seq").Int)
@@ -916,8 +932,8 @@ func (st *Stream) Retire(ctx context.Context, recordID string, reason RetireReas
 			return &ErrJournalInvalid{Reason: rejectReason(err)}
 		}
 		line := append(wire.Encode(entry), '\n')
-		if err := st.store.appender.Append(rep.jpath, rep.cutOffset, line, false); err != nil {
-			return mapJFileErr(err)
+		if err := rep.appendLine(st.store, line); err != nil {
+			return err
 		}
 		res = RetireResult{
 			Outcome: RetireOutcomeRetired,
@@ -979,8 +995,8 @@ func (st *Stream) Protect(ctx context.Context, req ProtectionRequest) (Protectio
 		if rep.st.Len() > prevLen {
 			entry := rep.st.Journal()[prevLen]
 			line := append(wire.Encode(entry), '\n')
-			if err := st.store.appender.Append(rep.jpath, rep.cutOffset, line, false); err != nil {
-				return mapJFileErr(err)
+			if err := rep.appendLine(st.store, line); err != nil {
+				return err
 			}
 		}
 		sq := uint64(rcNode.Get("seq").Int)
