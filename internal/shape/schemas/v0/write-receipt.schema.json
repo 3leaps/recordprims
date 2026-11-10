@@ -205,7 +205,8 @@
         },
         "attempted_at": {
           "type": "string",
-          "format": "date-time"
+          "format": "date-time",
+          "pattern": "^([^Tt]*|[^Tt]*[Tt][^:]*(:[^:]*)?|[^Tt]*[Tt][^:]*:[^:]*:[0-5][0-9].*)$"
         },
         "result": {
           "enum": [
@@ -221,11 +222,13 @@
         "window_covers_from": {
           "type": "string",
           "format": "date-time",
+          "pattern": "^([^Tt]*|[^Tt]*[Tt][^:]*(:[^:]*)?|[^Tt]*[Tt][^:]*:[^:]*:[0-5][0-9].*)$",
           "description": "Required for not_found: start of the store-clock interval in which every accepted key is retained; at or before the earliest instant the write could have been accepted."
         },
         "window_covers_until": {
           "type": "string",
           "format": "date-time",
+          "pattern": "^([^Tt]*|[^Tt]*[Tt][^:]*(:[^:]*)?|[^Tt]*[Tt][^:]*:[^:]*:[0-5][0-9].*)$",
           "description": "Required for not_found: end of that interval; at or after attempted_at."
         },
         "reason": {

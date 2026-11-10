@@ -410,7 +410,7 @@ def parse_wire_lines(
     out = []
     for i, ln in enumerate(text.split("\n")[:-1], start=1):
         if not ln.strip():
-            continue
+            raise Reject("ingest", f"{where}:{i}: blank NDJSON line")
         out.append(parse_wire(ln, kind, f"{where}:{i}"))
     return out
 
@@ -1541,8 +1541,8 @@ def self_test() -> None:
                 f"[!!] self-test accepted malformed/non-I-JSON input {bad_raw!r}"
             )
 
-    # Batched goneat suite negative controls: parse error, float64 range error, and missing
-    # schema MUST raise RuntimeError, never return False as a negative schema verdict.
+    # Malformed JSON and a missing schema MUST raise RuntimeError. Numeric decoding
+    # is profiled separately below because supported validator releases differ.
     if shutil.which("goneat"):
         verdicts = shape_suite(
             [
@@ -1565,10 +1565,6 @@ def self_test() -> None:
 
         for bad_label, bad_item in [
             ("malformed_json", ("bad", "v0/write-receipt.schema.json", "{\n")),
-            (
-                "float64_overflow",
-                ("huge", "v0/write-receipt.schema.json", '{"seq":1e400}\n'),
-            ),
             ("missing_schema", ("noschema", "v0/does-not-exist.schema.json", "{}\n")),
         ]:
             try:
@@ -1579,6 +1575,20 @@ def self_test() -> None:
                 raise SystemExit(
                     f"[!!] self-test {bad_label}: shape_suite did not raise RuntimeError"
                 )
+
+        # v0.6.5 may reject 1e400 while parsing through float64. Exact JSON
+        # decoders preserve the finite decimal and return a normal schema rejection
+        # for bounded seq. Probe that behavior rather than a reported version.
+        try:
+            huge_verdicts = shape_suite(
+                [("huge", "v0/write-receipt.schema.json", '{"seq":1e400}\n')],
+                default_ver="v0",
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            assert "1e400" in message and "float64" in message, message
+        else:
+            assert huge_verdicts == {"huge": False}, huge_verdicts
 
     # Synthetic suite report membership & diagnostics controls (catches unmapped, skipped,
     # missing, duplicate, fallback-to-builtin schema, error-field, or diagnostic-free rejects).
@@ -1784,13 +1794,17 @@ def self_test() -> None:
                     f"[!!] self-test {pos_label} ({bad_ts!r}): accepted invalid timestamp"
                 )
 
-    # NDJSON framing: final line missing terminating newline or containing CR is rejected at ingest.
+    # NDJSON framing: empty or whitespace-only lines, a missing final newline, and CR
+    # framing are all rejected at ingest. Blank lines are entries in the physical
+    # append stream, not ignorable decoration.
     valid_line = json.dumps(base_entry, separators=(",", ":"))
     assert len(parse_wire_lines(valid_line + "\n", "ndjson-ok")) == 1
     for ndjson_label, bad_ndjson in [
         ("missing-trailing-newline", valid_line),
         ("second-line-missing-newline", valid_line + "\n" + valid_line),
         ("cr-in-framing", valid_line + "\r\n"),
+        ("blank-line", valid_line + "\n\n"),
+        ("whitespace-only-line", valid_line + "\n   \n"),
     ]:
         try:
             parse_wire_lines(bad_ndjson, ndjson_label)
@@ -1878,12 +1892,10 @@ def self_test() -> None:
                 f"[!!] self-test {bad_schema_label}: check_schema_subset_admission did not fail"
             )
 
-    # 13. v0 stage-trace qualification against the active goneat validator:
-    #     - Stage 3 (shape=False) + Stage 4 defense-in-depth (timestamp):
-    #       non_string, impossible_date, leap_second, non_ascii_digits
-    #     - Stage 3 (shape=True) + Stage 4 refusal (timestamp):
-    #       bare_date, comma_fraction, one_digit_hour, bad_offset_24, year_zero,
-    #       utc_underflow, utc_overflow, seven_frac_digits
+    # 13. v0 stage-trace qualification against the active Goneat profile. The
+    # seconds pattern makes leap seconds unconditionally fail Stage 3. The pinned
+    # validator historically admits several noncanonical spellings there, whereas
+    # the strict format profile rejects them. Stage 4 refuses every one either way.
     base_v0_entry = {
         "v": 0,
         "seq": 1,
@@ -1900,10 +1912,10 @@ def self_test() -> None:
         ("impossible_date", "2026-02-30T00:00:00Z", False),
         ("leap_second", "2016-12-31T23:59:60Z", False),
         ("non_ascii_digits", "２０２６-11-05T12:34:56Z", False),
-        ("bare_date", "2026-10-12", True),
-        ("comma_fraction", "2026-10-12T00:00:00,123456Z", True),
-        ("one_digit_hour", "2026-10-12T0:00:00Z", True),
-        ("bad_offset_24", "2026-10-12T00:00:00+24:00", True),
+        ("bare_date", "2026-10-12", None),
+        ("comma_fraction", "2026-10-12T00:00:00,123456Z", None),
+        ("one_digit_hour", "2026-10-12T0:00:00Z", None),
+        ("bad_offset_24", "2026-10-12T00:00:00+24:00", None),
         ("year_zero", "0000-01-01T00:00:00Z", True),
         ("utc_underflow", "0001-01-01T00:00:00+01:00", True),
         ("utc_overflow", "9999-12-31T23:59:59-01:00", True),
@@ -1919,6 +1931,11 @@ def self_test() -> None:
     ]
     trace_verdicts = shape_suite(trace_items, default_ver="v0")
     for label, bad_at, expected_shape in stage_trace_cases:
+        # The bare-date probe identifies the observed format profile without
+        # relying on the binary's version text. Both known profile families make
+        # the same decision for all four lexical variants.
+        if expected_shape is None:
+            expected_shape = trace_verdicts["bare_date"]
         if trace_verdicts.get(label) is not expected_shape:
             raise SystemExit(
                 f"[!!] self-test v0 stage-trace {label}: expected shape={expected_shape}, got {trace_verdicts.get(label)}"

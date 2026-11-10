@@ -63,7 +63,15 @@ func stageResult(v *wire.Node) (string, error) {
 			return r, nil
 		}
 	}
-	if j := v.Get("raw_journal"); j != nil {
+	if nd := v.Get("raw_journal_ndjson"); nd != nil {
+		if _, err := wire.IngestLines([]byte(nd.Str), wire.KindJournalEntry); err != nil {
+			var r *wire.Reject
+			if errors.As(err, &r) {
+				return r.Reason, nil
+			}
+			return "", err
+		}
+	} else if j := v.Get("raw_journal"); j != nil {
 		for _, line := range j.Elems {
 			if r := first(line.Str, wire.KindJournalEntry); r != "" {
 				return r, nil
@@ -160,7 +168,12 @@ func semanticResult(v *wire.Node) (refusal string, results []*wire.Node, activeH
 		st.SetProfile(prof)
 	}
 	var entries []*wire.Node
-	if j := v.Get("raw_journal"); j != nil {
+	if nd := v.Get("raw_journal_ndjson"); nd != nil {
+		entries, err = wire.IngestLines([]byte(nd.Str), wire.KindJournalEntry)
+		if err != nil {
+			return reasonOf(err), nil, nil, 0, true
+		}
+	} else if j := v.Get("raw_journal"); j != nil {
 		for _, line := range j.Elems {
 			n, err := wire.Ingest([]byte(line.Str), wire.KindJournalEntry)
 			if err != nil {
@@ -570,7 +583,7 @@ func cloneAncestors(n *wire.Node) *wire.Node {
 }
 
 func hasRaw(v *wire.Node) bool {
-	for _, k := range []string{"raw_profile", "raw_journal", "raw_source_journal"} {
+	for _, k := range []string{"raw_profile", "raw_journal", "raw_journal_ndjson", "raw_source_journal"} {
 		if v.Get(k) != nil {
 			return true
 		}

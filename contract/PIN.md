@@ -6,9 +6,9 @@ immutable identity, never by branch.
 | Field | Value |
 | --- | --- |
 | Repository | `3leaps/crucible` (public) |
-| Commit | `0e1e5f9b1f2e262a72ff166086d9543199b59300` (tag `v0.2.9`) |
-| Family tree `schemas/durable-record/v1` | `ebc490a780d627d3d765879cb473f597b088d67e` |
-| Family tree `schemas/durable-record/v0` | `34b39c49c3feab9910fbba95f0b501c17fc83f40` (v1 reuses the v0 record envelope and helpers) |
+| Commit | `f1064b4f16a3e6018480c6dc3f030e070a3b506e` |
+| Family tree `schemas/durable-record/v1` | `64dd038bcc1aa596fdf0c9faed32c6ed6f0f8504` |
+| Family tree `schemas/durable-record/v0` | `5c4c03d3502fa500436f551d2d2d2018989be19f` (v1 reuses the v0 record envelope and helpers) |
 | Status | proposed / experimental (crucible ADR-0019) |
 
 ## Vendored set
@@ -18,21 +18,21 @@ crucible's own relative layout, so the reference interpreter runs unmodified:
 
 | Path | Git blob or tree |
 | --- | --- |
-| `schemas/durable-record/v1/` | tree `ebc490a780d627d3d765879cb473f597b088d67e` |
-| `schemas/durable-record/v0/` | tree `34b39c49c3feab9910fbba95f0b501c17fc83f40` |
-| `docs/standards/durable-record-v1-contract.md` | `4b6ce8c6076da7685c80bef9a72bcda46ad6e73c` |
-| `docs/standards/durable-record-contract.md` | `d0c9ed2a4d9f56117596e160a0186527ed41fec1` |
+| `schemas/durable-record/v1/` | tree `64dd038bcc1aa596fdf0c9faed32c6ed6f0f8504` |
+| `schemas/durable-record/v0/` | tree `5c4c03d3502fa500436f551d2d2d2018989be19f` |
+| `docs/standards/durable-record-v1-contract.md` | `ea7fa6aa431a45dfed2119cdc37995b8e029865a` |
+| `docs/standards/durable-record-contract.md` | `d62574c5fd51d9158d81609ac0e6406142e5cd2b` |
 | `docs/decisions/ADR-0019-durable-record-tombstoning.md` | `284445edac42519cff7b4909808edc7a1e4cb62e` |
-| `scripts/test-durable-record-v1-controls.py` | `6d7573801321e414bbc2996e9d3fa3a91c8d478e` |
-| `scripts/validate-durable-record-fixtures.py` | `65e20f236f1f319fecc25d3f5a199f6db92bec7e` |
+| `scripts/test-durable-record-v1-controls.py` | `e4fb1cc07970b17a515ebfd23256dcb3d23a6880` |
+| `scripts/validate-durable-record-fixtures.py` | `d7652f1b546ee11d5f7cc92bfc91d44606dfa3f5` |
 | `scripts/rfc8785-canonicalize.py` | `3fce69cb93ee4cd46cf595f6288cc0d53553e8a1` |
 | `scripts/rfc3339-instant.py` | `1fbb9f09a9ed505c958888f91bc67cafad827a94` |
 
 Archive identity, produced by
-`git archive 0e1e5f9 <the paths above, in table order> | shasum -a 256`:
+`git archive f1064b4 <the paths above, in table order> | shasum -a 256`:
 
 ```text
-266c3aa29025f1b6c74ad3aec5f58ceb8bbebf95884189b9f92fb0dd100da473
+02407a0f53a4b88a377ff28b414c0c6aa6f733c85ba648bdef72ba1325ee33fb
 ```
 
 `INVENTORY.sha256` lists the SHA-256 of every vendored file.

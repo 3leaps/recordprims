@@ -1,0 +1,8 @@
+{
+  "window_ms": 60000,
+  "raw_journal_ndjson": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"records.example\",\"type\":\"stream_opened\",\"at\":\"2026-10-20T00:00:01.000000Z\",\"mode\":\"revisioned\",\"failure_model\":\"survives_power_loss\"}\n\n",
+  "steps": [],
+  "expected": {
+    "refusal": "ingest"
+  }
+}
