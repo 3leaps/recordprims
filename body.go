@@ -462,13 +462,7 @@ func validWireString(s string, minRunes, maxRunes int) bool {
 	if !utf8.ValidString(s) {
 		return false
 	}
-	n := 0
-	for _, r := range s {
-		if r < 0x20 {
-			return false
-		}
-		n++
-	}
+	n := utf8.RuneCountInString(s)
 	return n >= minRunes && n <= maxRunes
 }
 

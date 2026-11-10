@@ -342,11 +342,15 @@ func TestAppendRefusesInvalidUTF8IdempotencyKeyBeforeWrite(t *testing.T) {
 	if !errors.Is(err, ErrSchema) || IsIndeterminate(err) {
 		t.Fatalf("Append with invalid UTF-8 key: rcpt=%+v err=%v, want determinate ErrSchema", rcpt, err)
 	}
-	// Stream journal remains valid for subsequent writes.
+	// Stream journal remains valid for subsequent writes, including valid control characters.
 	if _, err := st.Append(ctx, Write{
 		Record:         recordJSON("notes", "r1", 1, nil, `{"a":1}`, nil),
-		IdempotencyKey: "k-valid",
+		IdempotencyKey: "content\tkey",
 	}); err != nil {
-		t.Fatalf("subsequent valid Append failed: %v", err)
+		t.Fatalf("subsequent valid Append with escaped-control key failed: %v", err)
+	}
+	rec, err := st.Reconcile("content\tkey", time.Date(2026, 3, 29, 12, 0, 10, 0, time.UTC))
+	if err != nil || rec.Result != "found" {
+		t.Fatalf("Reconcile of valid control-char key: %+v, err=%v", rec, err)
 	}
 }
