@@ -92,6 +92,10 @@ const (
 	OutcomeRevised             WriteOutcome = "revised"
 	OutcomeRevisionConflict    WriteOutcome = "revision_conflict"
 	OutcomeIdempotencyConflict WriteOutcome = "idempotency_conflict"
+	OutcomeNoHead              WriteOutcome = "no_head"
+	OutcomeModeViolation       WriteOutcome = "mode_violation"
+	OutcomeBodyUnverified      WriteOutcome = "body_unverified"
+	OutcomeRetiredRecord       WriteOutcome = "retired_record"
 )
 
 // Receipt is the durable-record/v1 write receipt returned by Append.
@@ -102,12 +106,12 @@ type Receipt struct {
 	IdempotencyKey string       `json:"idempotency_key"`
 	Outcome        WriteOutcome `json:"outcome"`
 	Seq            uint64       `json:"seq,omitempty"`
-	At             string       `json:"at,omitempty"`
 	Pin            *Pin         `json:"pin,omitempty"`
 	BodyStatus     string       `json:"body_status,omitempty"`
 	FailureModel   string       `json:"failure_model,omitempty"`
-	Reason         string       `json:"reason,omitempty"`
 	Current        *Pin         `json:"current,omitempty"`
+	RecordID       string       `json:"record_id,omitempty"`
+	RequestDigest  string       `json:"request_digest,omitempty"`
 }
 
 // RetireReason is the closed vocabulary of retirement reasons.
@@ -167,6 +171,8 @@ type ProtectionReceipt struct {
 
 // Reconciliation is the durable-record/v1 reconciliation result.
 type Reconciliation struct {
+	V              int             `json:"v"`
+	Kind           string          `json:"kind"`
 	Result         string          `json:"result"` // "found" or "unknown"
 	Reason         string          `json:"reason,omitempty"`
 	Stream         string          `json:"stream"`
@@ -608,11 +614,10 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 			if kind != "content" || val != recDigest {
 				out = Receipt{
 					V:              1,
-					Kind:           "write_receipt",
+					Kind:           "receipt",
 					Stream:         st.id,
 					IdempotencyKey: w.IdempotencyKey,
 					Outcome:        OutcomeIdempotencyConflict,
-					Reason:         journal.ReasonIdempotencyConflict,
 				}
 				return nil
 			}
@@ -659,7 +664,14 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 				return err
 			}
 			if bst.kind != stateAvailable {
-				return fmt.Errorf("%w: referenced body is not available (state %s)", ErrSchema, bst.kind)
+				out = Receipt{
+					V:              1,
+					Kind:           "receipt",
+					Stream:         st.id,
+					IdempotencyKey: w.IdempotencyKey,
+					Outcome:        OutcomeBodyUnverified,
+				}
+				return nil
 			}
 			if w.Lease != nil {
 				if w.Lease.Digest != bDig || w.Lease.ID == "" || !now.Before(w.Lease.ExpiresAt) {
@@ -670,13 +682,37 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 
 		// Check retirement: a retired record refuses new revisions.
 		if rep.st.IsRetired(rid) {
-			return fmt.Errorf("%w: record %s is retired", ErrSchema, rid)
+			out = Receipt{
+				V:              1,
+				Kind:           "receipt",
+				Stream:         st.id,
+				IdempotencyKey: w.IdempotencyKey,
+				Outcome:        OutcomeRetiredRecord,
+			}
+			return nil
 		}
 
 		// Check revision chain against current head.
 		head, hasHead := rep.st.HeadPin(rid)
 		if rev > 1 && rep.mode == ModeSingleRevision {
-			return fmt.Errorf("%w: mode_violation", ErrSchema)
+			out = Receipt{
+				V:              1,
+				Kind:           "receipt",
+				Stream:         st.id,
+				IdempotencyKey: w.IdempotencyKey,
+				Outcome:        OutcomeModeViolation,
+			}
+			return nil
+		}
+		if rev > 1 && !hasHead {
+			out = Receipt{
+				V:              1,
+				Kind:           "receipt",
+				Stream:         st.id,
+				IdempotencyKey: w.IdempotencyKey,
+				Outcome:        OutcomeNoHead,
+			}
+			return nil
 		}
 		conflict := false
 		if rev == 1 {
@@ -685,7 +721,7 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 			}
 		} else {
 			sup := recNode.Get("supersedes")
-			if !hasHead || head.Revision != rev-1 || sup.Get("digest").Str != head.Digest {
+			if head.Revision != rev-1 || sup.Get("digest").Str != head.Digest {
 				conflict = true
 			}
 		}
@@ -711,21 +747,18 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 					},
 				}},
 			}
-			var curPin *Pin
-			if hasHead {
-				hTok := strconv.FormatInt(head.Revision, 10)
-				fields = append(fields, wire.Member{
-					Name: "current",
-					Value: &wire.Node{
-						Kind: wire.Object,
-						Fields: []wire.Member{
-							{Name: "revision", Value: &wire.Node{Kind: wire.Number, Token: hTok, IsInt: true, Int: head.Revision}},
-							{Name: "digest", Value: &wire.Node{Kind: wire.String, Str: head.Digest}},
-						},
+			hTok := strconv.FormatInt(head.Revision, 10)
+			fields = append(fields, wire.Member{
+				Name: "current",
+				Value: &wire.Node{
+					Kind: wire.Object,
+					Fields: []wire.Member{
+						{Name: "revision", Value: &wire.Node{Kind: wire.Number, Token: hTok, IsInt: true, Int: head.Revision}},
+						{Name: "digest", Value: &wire.Node{Kind: wire.String, Str: head.Digest}},
 					},
-				})
-				curPin = &Pin{Stream: head.Stream, RecordID: head.RecordID, Revision: uint64(head.Revision), Digest: head.Digest}
-			}
+				},
+			})
+			curPin := &Pin{Stream: head.Stream, RecordID: head.RecordID, Revision: uint64(head.Revision), Digest: head.Digest}
 			confEntry := &wire.Node{Kind: wire.Object, Fields: fields}
 			if err := rep.st.Ingest(confEntry); err != nil {
 				return &ErrJournalInvalid{Reason: rejectReason(err)}
@@ -736,23 +769,18 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 			}
 			out = Receipt{
 				V:              1,
-				Kind:           "write_receipt",
+				Kind:           "receipt",
 				Stream:         st.id,
 				IdempotencyKey: w.IdempotencyKey,
 				Outcome:        OutcomeRevisionConflict,
-				Seq:            uint64(seq),
-				At:             atStr,
-				Reason:         "revision_conflict",
 				Current:        curPin,
 			}
 			return nil
 		}
 
 		entryType := "appended"
-		outcome := OutcomeAppended
 		if rev > 1 {
 			entryType = "revised"
-			outcome = OutcomeRevised
 		}
 		seq := rep.lastSeq + 1
 		seqTok := strconv.FormatInt(seq, 10)
@@ -808,23 +836,25 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 		if hasBody && w.Lease != nil {
 			_ = st.store.consumeLease(bodyHex, *w.Lease)
 		}
-		pin := Pin{Stream: st.id, RecordID: rid, Revision: uint64(rev), Digest: recDigest}
-		out = Receipt{
-			V:              1,
-			Kind:           "write_receipt",
-			Stream:         st.id,
-			IdempotencyKey: w.IdempotencyKey,
-			Outcome:        outcome,
-			Seq:            uint64(seq),
-			At:             atStr,
-			Pin:            &pin,
-			BodyStatus:     bodyStatus,
-			FailureModel:   st.store.profile.Runtime.FailureModel,
+		_, _, _, savedReceipt, ok := rep.st.LiveKey(w.IdempotencyKey, now)
+		if !ok || savedReceipt == nil {
+			return &ErrJournalInvalid{Reason: "missing_accepted_receipt"}
 		}
-		return nil
+		return json.Unmarshal(wire.Encode(savedReceipt), &out)
 	})
 	if err != nil {
 		return Receipt{}, err
+	}
+	rawRcpt, err := json.Marshal(out)
+	if err != nil {
+		return Receipt{}, fmt.Errorf("%w: marshal write receipt", ErrSchema)
+	}
+	rcptNode, err := wire.Ingest(rawRcpt, wire.KindWriteReceipt)
+	if err != nil {
+		return Receipt{}, fmt.Errorf("%w: write receipt wire invalid", ErrSchema)
+	}
+	if err := shape.Validate("v1/write-receipt.schema.json", rcptNode); err != nil {
+		return Receipt{}, fmt.Errorf("%w: write receipt shape invalid", ErrSchema)
 	}
 	return out, nil
 }
@@ -1058,19 +1088,10 @@ func (st *Stream) Reconcile(key string, attemptedAt time.Time) (Reconciliation, 
 		if err != nil {
 			return fmt.Errorf("%w: %s", ErrSchema, rejectReason(err))
 		}
-		out = Reconciliation{
-			Result:         recNode.Get("result").Str,
-			Stream:         st.id,
-			IdempotencyKey: key,
-			AttemptedAt:    attStr,
+		if err := shape.Validate("v1/write-receipt.schema.json", recNode); err != nil {
+			return fmt.Errorf("%w: reconciliation shape invalid", ErrSchema)
 		}
-		if r := recNode.Get("reason"); r != nil && r.Kind == wire.String {
-			out.Reason = r.Str
-		}
-		if rc := recNode.Get("receipt"); rc != nil {
-			out.Receipt = wire.Encode(rc)
-		}
-		return nil
+		return json.Unmarshal(wire.Encode(recNode), &out)
 	})
 	if err != nil {
 		return Reconciliation{}, err

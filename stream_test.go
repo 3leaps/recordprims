@@ -11,6 +11,9 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/3leaps/recordprims/internal/shape"
+	"github.com/3leaps/recordprims/internal/wire"
 )
 
 func recordJSON(stream, recordID string, rev int, supersedes *Pin, payload string, body *BodyRef) json.RawMessage {
@@ -352,5 +355,90 @@ func TestAppendRefusesInvalidUTF8IdempotencyKeyBeforeWrite(t *testing.T) {
 	rec, err := st.Reconcile("content\tkey", time.Date(2026, 3, 29, 12, 0, 10, 0, time.UTC))
 	if err != nil || rec.Result != "found" {
 		t.Fatalf("Reconcile of valid control-char key: %+v, err=%v", rec, err)
+	}
+}
+
+func TestReceiptRoundTripAndSchemaAcrossOutcomes(t *testing.T) {
+	s, _, clk := openBodyStore(t)
+	st, err := s.OpenStream("notes", ModeRevisioned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := Write{
+		Record:         recordJSON("notes", "r1", 1, nil, `{"a":1}`, nil),
+		IdempotencyKey: "k1",
+	}
+	first, err := st.Append(ctx, w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dup, err := st.Append(ctx, w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := json.Marshal(first)
+	b, _ := json.Marshal(dup)
+	if !bytes.Equal(a, b) {
+		t.Fatalf("identical content retry returned different receipt: first=%s replay=%s", a, b)
+	}
+
+	rec, err := st.Reconcile("k1", clk.t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawRec, _ := json.Marshal(rec)
+	rn, err := wire.Ingest(rawRec, wire.KindWriteReceipt)
+	if err == nil {
+		err = shape.Validate("v1/write-receipt.schema.json", rn)
+	}
+	if err != nil {
+		t.Fatalf("public reconciliation is not contract-shaped: raw=%s err=%v", rawRec, err)
+	}
+	var obj, saved any
+	_ = json.Unmarshal(a, &obj)
+	_ = json.Unmarshal(rec.Receipt, &saved)
+	x, _ := json.Marshal(obj)
+	y, _ := json.Marshal(saved)
+	if !bytes.Equal(x, y) {
+		t.Fatalf("first public receipt differs from found reconciliation receipt: first=%s saved=%s", x, y)
+	}
+
+	changed := Write{
+		Record:         recordJSON("notes", "r1", 1, nil, `{"a":2}`, nil),
+		IdempotencyKey: "k2",
+	}
+	conflict, err := st.Append(ctx, changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed.IdempotencyKey = "k1"
+	keyConflict, err := st.Append(ctx, changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	noHead, err := st.Append(ctx, Write{
+		Record:         recordJSON("notes", "missing", 2, first.Pin, `{"a":3}`, nil),
+		IdempotencyKey: "k-nohead",
+	})
+	if err != nil || noHead.Outcome != OutcomeNoHead {
+		t.Fatalf("no_head: %+v, err=%v", noHead, err)
+	}
+
+	for name, r := range map[string]Receipt{
+		"accepted":             first,
+		"duplicate":            dup,
+		"revision_conflict":    conflict,
+		"idempotency_conflict": keyConflict,
+		"no_head":              noHead,
+	} {
+		raw, _ := json.Marshal(r)
+		n, err := wire.Ingest(raw, wire.KindWriteReceipt)
+		if err == nil {
+			err = shape.Validate("v1/write-receipt.schema.json", n)
+		}
+		if err != nil {
+			t.Fatalf("%s public receipt is not contract-shaped: raw=%s err=%v", name, raw, err)
+		}
 	}
 }

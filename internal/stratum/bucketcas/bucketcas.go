@@ -878,6 +878,32 @@ func validWireString(s string, minRunes, maxRunes int) bool {
 	return n >= minRunes && n <= maxRunes
 }
 
+func makeRefusalReceiptRaw(stream, key, outcome string, cur *journal.Pin) []byte {
+	fields := []wire.Member{
+		{Name: "v", Value: &wire.Node{Kind: wire.Number, Token: "1", IsInt: true, Int: 1}},
+		{Name: "kind", Value: &wire.Node{Kind: wire.String, Str: "receipt"}},
+		{Name: "stream", Value: &wire.Node{Kind: wire.String, Str: stream}},
+		{Name: "idempotency_key", Value: &wire.Node{Kind: wire.String, Str: key}},
+		{Name: "outcome", Value: &wire.Node{Kind: wire.String, Str: outcome}},
+	}
+	if cur != nil {
+		revTok := strconv.FormatInt(cur.Revision, 10)
+		fields = append(fields, wire.Member{
+			Name: "current",
+			Value: &wire.Node{
+				Kind: wire.Object,
+				Fields: []wire.Member{
+					{Name: "stream", Value: &wire.Node{Kind: wire.String, Str: cur.Stream}},
+					{Name: "record_id", Value: &wire.Node{Kind: wire.String, Str: cur.RecordID}},
+					{Name: "revision", Value: &wire.Node{Kind: wire.Number, Token: revTok, IsInt: true, Int: cur.Revision}},
+					{Name: "digest", Value: &wire.Node{Kind: wire.String, Str: cur.Digest}},
+				},
+			},
+		})
+	}
+	return wire.Encode(&wire.Node{Kind: wire.Object, Fields: fields})
+}
+
 // Append executes a content write against stream with bounded 412 CAS retry
 // and immediate GetCoherent("head.json") reconciliation on CommitUnknown.
 func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt, error) {
@@ -939,6 +965,7 @@ func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt
 				Outcome:        journal.ReasonIdempotencyConflict,
 				Stream:         in.Stream,
 				IdempotencyKey: in.IdempotencyKey,
+				Raw:            makeRefusalReceiptRaw(in.Stream, in.IdempotencyKey, journal.ReasonIdempotencyConflict, nil),
 			}, nil
 		}
 
@@ -961,6 +988,7 @@ func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt
 				Outcome:        journal.ReasonRetiredRecord,
 				Stream:         in.Stream,
 				IdempotencyKey: in.IdempotencyKey,
+				Raw:            makeRefusalReceiptRaw(in.Stream, in.IdempotencyKey, journal.ReasonRetiredRecord, nil),
 			}, nil
 		}
 
@@ -968,18 +996,20 @@ func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt
 		headPin, hasHead := ls.st.HeadPin(recID)
 		if ls.head.Mode == "single_revision" && (rev > 1 || supNode != nil) {
 			return AppendReceipt{
-				Outcome:        "revision_conflict",
+				Outcome:        "mode_violation",
 				Stream:         in.Stream,
 				IdempotencyKey: in.IdempotencyKey,
+				Raw:            makeRefusalReceiptRaw(in.Stream, in.IdempotencyKey, "mode_violation", nil),
 			}, nil
 		}
 		entryType := "appended"
 		if !hasHead {
 			if rev != 1 || supNode != nil {
 				return AppendReceipt{
-					Outcome:        "revision_conflict",
+					Outcome:        "no_head",
 					Stream:         in.Stream,
 					IdempotencyKey: in.IdempotencyKey,
+					Raw:            makeRefusalReceiptRaw(in.Stream, in.IdempotencyKey, "no_head", nil),
 				}, nil
 			}
 		} else {
@@ -988,6 +1018,7 @@ func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt
 					Outcome:        "revision_conflict",
 					Stream:         in.Stream,
 					IdempotencyKey: in.IdempotencyKey,
+					Raw:            makeRefusalReceiptRaw(in.Stream, in.IdempotencyKey, "revision_conflict", &headPin),
 				}, nil
 			}
 			if rev != headPin.Revision+1 || supNode == nil {
@@ -995,6 +1026,7 @@ func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt
 					Outcome:        "revision_conflict",
 					Stream:         in.Stream,
 					IdempotencyKey: in.IdempotencyKey,
+					Raw:            makeRefusalReceiptRaw(in.Stream, in.IdempotencyKey, "revision_conflict", &headPin),
 				}, nil
 			}
 			supRev := supNode.Get("revision").Int
@@ -1004,6 +1036,7 @@ func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt
 					Outcome:        "revision_conflict",
 					Stream:         in.Stream,
 					IdempotencyKey: in.IdempotencyKey,
+					Raw:            makeRefusalReceiptRaw(in.Stream, in.IdempotencyKey, "revision_conflict", &headPin),
 				}, nil
 			}
 			entryType = "revised"
