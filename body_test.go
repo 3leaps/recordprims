@@ -16,14 +16,19 @@ import (
 
 var ctx = context.Background()
 
+var testProv = Provenance{ActorKind: "process", Actor: "test"}
+
 type stepClock struct{ t time.Time }
 
 func (c *stepClock) Now() time.Time { return c.t }
 
 func openBodyStore(t *testing.T) (*Store, string, *stepClock) {
 	t.Helper()
-	dir := initStore(t)
+	dir := newStoreDir(t)
 	clk := &stepClock{t: time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)}
+	if err := Init(dir, InitOptions{Clock: clk, fs: testFS}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
 	s, err := Open(dir, OpenOptions{Clock: clk, fs: testFS})
 	if err != nil {
 		t.Fatal(err)
@@ -60,9 +65,18 @@ func state(t *testing.T, s *Store, b []byte) bodyStateKind {
 	return st.kind
 }
 
+func removeReq(b []byte) RemoveBodyRequest {
+	return RemoveBodyRequest{
+		Digest:     digestOf(b),
+		Length:     int64(len(b)),
+		Reason:     RemoveReasonRetention,
+		Provenance: testProv,
+	}
+}
+
 func remove(t *testing.T, s *Store, b []byte) RemoveBodyOutcome {
 	t.Helper()
-	res, err := s.RemoveBody(ctx, RemoveBodyRequest{Digest: digestOf(b), Length: int64(len(b))})
+	res, err := s.RemoveBody(ctx, removeReq(b))
 	if err != nil {
 		t.Fatalf("RemoveBody: %v", err)
 	}
@@ -84,7 +98,7 @@ func failAt(s *Store, phase string) {
 	}
 }
 
-func TestPutBodyPublishesLiveWithLease(t *testing.T) {
+func TestPutBodyPublishesAvailableWithLease(t *testing.T) {
 	s, dir, _ := openBodyStore(t)
 	b := []byte("hello body")
 	ref, l := put(t, s, b)
@@ -94,8 +108,8 @@ func TestPutBodyPublishesLiveWithLease(t *testing.T) {
 	if l.Digest != ref.Digest || len(l.ID) != 32 {
 		t.Fatalf("lease %+v", l)
 	}
-	if got := state(t, s, b); got != stateLive {
-		t.Fatalf("state %s, want live", got)
+	if got := state(t, s, b); got != stateAvailable {
+		t.Fatalf("state %s, want available", got)
 	}
 	h := digestHex(ref.Digest)
 	got, err := os.ReadFile(filepath.Join(dir, "bodies", "sha256", h[:2], h))
@@ -144,7 +158,9 @@ func TestRemoveBodyNeverPublishedIsAbsent(t *testing.T) {
 		t.Fatalf("got %s, want absent", got)
 	}
 	inc := uint64(1)
-	res, err := s.RemoveBody(ctx, RemoveBodyRequest{Digest: digestOf([]byte("never")), Length: 5, CompleteIncarnation: &inc})
+	req := removeReq([]byte("never"))
+	req.CompleteIncarnation = &inc
+	res, err := s.RemoveBody(ctx, req)
 	if err != nil || res.Outcome != BodySuperseded {
 		t.Fatalf("with complete_incarnation: %v %v", res, err)
 	}
@@ -189,7 +205,9 @@ func TestRemoveBodySupersededByNewerIncarnation(t *testing.T) {
 	put(t, s, b) // incarnation 2
 	expire(clk)
 	old := uint64(1)
-	res, err := s.RemoveBody(ctx, RemoveBodyRequest{Digest: digestOf(b), Length: int64(len(b)), CompleteIncarnation: &old})
+	req := removeReq(b)
+	req.CompleteIncarnation = &old
+	res, err := s.RemoveBody(ctx, req)
 	if err != nil || res.Outcome != BodySuperseded {
 		t.Fatalf("got %v %v, want superseded", res, err)
 	}
@@ -225,58 +243,78 @@ func TestMissingBodyIsIntegrityAlarm(t *testing.T) {
 	expire(clk)
 	h := digestHex(ref.Digest)
 	os.Remove(filepath.Join(dir, "bodies", "sha256", h[:2], h))
-	if got := state(t, s, b); got != stateMissing {
-		t.Fatalf("state %s, want missing", got)
+	if got := state(t, s, b); got != stateIntegrityLoss {
+		t.Fatalf("state %s, want integrity_loss", got)
 	}
 	if got := remove(t, s, b); got != BodyMissing {
 		t.Fatalf("got %s, want missing", got)
 	}
 }
 
-// A crash after the tombstone and before unlink leaves "removing"; a retry
-// completes it.
-func TestRemoveRetryCompletesRemoving(t *testing.T) {
+// A crash after body_removal_started and before unlink leaves
+// "removal_pending"; a retry completes it.
+func TestRemoveRetryCompletesRemovalPending(t *testing.T) {
 	s, _, clk := openBodyStore(t)
 	b := []byte("half removed")
 	put(t, s, b)
 	expire(clk)
 	failAt(s, "remove.tombstone_fsynced")
-	_, err := s.RemoveBody(ctx, RemoveBodyRequest{Digest: digestOf(b), Length: int64(len(b))})
+	_, err := s.RemoveBody(ctx, removeReq(b))
 	var bi *ErrBodyIncomplete
-	if !errors.As(err, &bi) || bi.State != string(stateRemoving) || !IsIndeterminate(err) {
-		t.Fatalf("want ErrBodyIncomplete{removing}, got %v", err)
+	if !errors.As(err, &bi) || bi.State != string(stateRemovalPending) || !IsIndeterminate(err) {
+		t.Fatalf("want ErrBodyIncomplete{removal_pending}, got %v", err)
 	}
 	if got := remove(t, s, b); got != BodyRemoved {
 		t.Fatalf("retry got %s, want removed", got)
 	}
 }
 
-// After the tombstone, a PutBody of identical bytes advances the incarnation
-// rather than reusing the tombstoned one; a later file loss is "missing".
-func TestPutAfterTombstoneAdvancesIncarnation(t *testing.T) {
+// After body_removal_started, a PutBody of identical bytes advances the
+// incarnation rather than reusing the open-removal one; a later file loss is
+// "integrity_loss".
+func TestPutAfterRemovalStartedAdvancesIncarnation(t *testing.T) {
 	s, dir, clk := openBodyStore(t)
 	b := []byte("resurrected")
 	put(t, s, b)
 	expire(clk)
 	failAt(s, "remove.tombstone_fsynced")
-	s.RemoveBody(ctx, RemoveBodyRequest{Digest: digestOf(b), Length: int64(len(b))})
+	s.RemoveBody(ctx, removeReq(b))
 	s.hook = nil
 	put(t, s, b)
 	h := digestHex(digestOf(b))
 	if n, _, _ := s.readIncarnation(h); n != 2 {
 		t.Fatalf("incarnation %d, want 2", n)
 	}
-	if got := state(t, s, b); got != stateLive {
-		t.Fatalf("state %s, want live (stale tombstone ignored)", got)
+	if got := state(t, s, b); got != stateAvailable {
+		t.Fatalf("state %s, want available", got)
 	}
 	os.Remove(filepath.Join(dir, "bodies", "sha256", h[:2], h))
-	if got := state(t, s, b); got != stateMissing {
-		t.Fatalf("state %s, want missing", got)
+	if got := state(t, s, b); got != stateIntegrityLoss {
+		t.Fatalf("state %s, want integrity_loss", got)
 	}
 }
 
-// A crash between rename and the published record leaves "publishing"; a
-// PutBody retry writes the record before the lease.
+// G2: With the local incarnation counter deleted or lowered, PutBody still
+// appends a valid body_published(n) using the journal's high-water mark + 1.
+func TestPutBodyWithDeletedOrLoweredCounterUsesJournalBound(t *testing.T) {
+	s, dir, clk := openBodyStore(t)
+	b := []byte("counter-resilience")
+	put(t, s, b)
+	expire(clk)
+	if got := remove(t, s, b); got != BodyRemoved {
+		t.Fatalf("remove: %s", got)
+	}
+	h := digestHex(digestOf(b))
+	// Delete the counter file entirely; journal has bound 1, so next is 2.
+	os.Remove(filepath.Join(dir, "bodies", "incarnation", h))
+	put(t, s, b)
+	if n, _, _ := s.readIncarnation(h); n != 2 {
+		t.Fatalf("incarnation after deleted counter = %d, want 2", n)
+	}
+}
+
+// A crash between rename and body_published leaves "publishing"; a PutBody
+// retry commits body_published before the lease.
 func TestPutRetryCompletesPublishing(t *testing.T) {
 	s, _, _ := openBodyStore(t)
 	b := []byte("half published")
@@ -292,8 +330,8 @@ func TestPutRetryCompletesPublishing(t *testing.T) {
 	var phases []string
 	s.hook = func(p string) error { phases = append(phases, p); return nil }
 	put(t, s, b)
-	if got := state(t, s, b); got != stateLive {
-		t.Fatalf("state %s, want live", got)
+	if got := state(t, s, b); got != stateAvailable {
+		t.Fatalf("state %s, want available", got)
 	}
 	if n, _, _ := s.readIncarnation(digestHex(digestOf(b))); n != 1 {
 		t.Fatalf("incarnation %d, want 1 (publishing resumes, no advance)", n)
@@ -304,19 +342,19 @@ func TestPutRetryCompletesPublishing(t *testing.T) {
 	}
 }
 
-// A crash between incarnation and link leaves publication_incomplete; the
-// retry advances to a new incarnation.
+// A crash between incarnation and link leaves unpublished with local counter 1;
+// the retry advances to incarnation 2.
 func TestPublicationIncompleteRetry(t *testing.T) {
 	s, _, _ := openBodyStore(t)
 	b := []byte("never linked")
 	failAt(s, "body.incarnation_fsynced")
 	_, _, err := s.PutBody(ctx, bytes.NewReader(b), "text/plain")
 	var bi *ErrBodyIncomplete
-	if !errors.As(err, &bi) || bi.State != string(statePublicationIncomplete) {
-		t.Fatalf("want ErrBodyIncomplete{publication_incomplete}, got %v", err)
+	if !errors.As(err, &bi) || bi.State != string(stateUnpublished) {
+		t.Fatalf("want ErrBodyIncomplete{unpublished}, got %v", err)
 	}
-	if got := remove(t, s, b); got != BodyPublicationIncomplete {
-		t.Fatalf("remove got %s", got)
+	if got := remove(t, s, b); got != BodyAbsent {
+		t.Fatalf("remove got %s, want absent", got)
 	}
 	put(t, s, b)
 	if n, _, _ := s.readIncarnation(digestHex(digestOf(b))); n != 2 {
@@ -334,8 +372,8 @@ func TestFailureBeforeDurableWriteIsDeterminate(t *testing.T) {
 	if err == nil || IsIndeterminate(err) {
 		t.Fatalf("want a determinate error, got %v", err)
 	}
-	if got := state(t, s, b); got != stateUnknownDigest {
-		t.Fatalf("state %s, want unknown_digest", got)
+	if got := state(t, s, b); got != stateUnpublished {
+		t.Fatalf("state %s, want unpublished", got)
 	}
 }
 
@@ -365,7 +403,7 @@ func TestPersistentDirFsyncFailureNeverAcknowledged(t *testing.T) {
 		return nil
 	}
 	for i := 0; i < 3; i++ {
-		if _, err := s.RemoveBody(ctx, RemoveBodyRequest{Digest: digestOf(b), Length: int64(len(b))}); err == nil {
+		if _, err := s.RemoveBody(ctx, removeReq(b)); err == nil {
 			t.Fatalf("removal attempt %d acknowledged a failing fsync", i)
 		}
 	}
@@ -375,44 +413,55 @@ func TestPersistentDirFsyncFailureNeverAcknowledged(t *testing.T) {
 	}
 }
 
-// Losing the published record during removing gives inconsistent.
-func TestLostPublishedRecordIsInconsistent(t *testing.T) {
-	s, dir, clk := openBodyStore(t)
-	b := []byte("orphan tomb")
-	put(t, s, b)
-	expire(clk)
-	failAt(s, "remove.tombstone_fsynced")
-	s.RemoveBody(ctx, RemoveBodyRequest{Digest: digestOf(b), Length: int64(len(b))})
-	s.hook = nil
-	os.Remove(filepath.Join(dir, "bodies", "published", digestHex(digestOf(b))+"-1"))
-	if got := state(t, s, b); got != stateInconsistent {
-		t.Fatalf("state %s, want inconsistent", got)
+// G7, G9: A missing or damaged designated body-removal stream returns
+// determinate ErrJournalInvalid on body operations.
+func TestDamagedOrMissingDesignatedStreamReturnsErrJournalInvalid(t *testing.T) {
+	s, dir, _ := openBodyStore(t)
+	b := []byte("desig-check")
+	jpath := filepath.Join(dir, "streams", streamHash(DefaultBodyRemovalStream), "journal.ndjson")
+	os.Remove(jpath)
+
+	var ji *ErrJournalInvalid
+	if _, _, err := s.PutBody(ctx, bytes.NewReader(b), "text/plain"); !errors.As(err, &ji) || IsIndeterminate(err) {
+		t.Fatalf("PutBody with missing designated stream: want determinate ErrJournalInvalid, got %v", err)
 	}
-	if got := remove(t, s, b); got != BodyConflict {
-		t.Fatalf("got %s, want body_conflict", got)
+	if _, err := s.RemoveBody(ctx, removeReq(b)); !errors.As(err, &ji) || IsIndeterminate(err) {
+		t.Fatalf("RemoveBody with missing designated stream: want determinate ErrJournalInvalid, got %v", err)
+	}
+}
+
+// G4f: Reason never changes eligibility across retention, operator, and rights_restricted.
+func TestRemoveBodyReasonDoesNotChangeEligibility(t *testing.T) {
+	for _, reason := range []RemoveBodyReason{RemoveReasonRetention, RemoveReasonOperator, RemoveReasonRightsRestricted} {
+		s, _, clk := openBodyStore(t)
+		b := []byte("reason-test")
+		put(t, s, b)
+		req := removeReq(b)
+		req.Reason = reason
+		res, err := s.RemoveBody(ctx, req)
+		if err != nil || res.Outcome != BodyPending {
+			t.Fatalf("reason %s while leased: got %v %v", reason, res, err)
+		}
+		expire(clk)
+		res, err = s.RemoveBody(ctx, req)
+		if err != nil || res.Outcome != BodyRemoved {
+			t.Fatalf("reason %s after lease expiry: got %v %v", reason, res, err)
+		}
 	}
 }
 
 func TestRemoveBodyValidatesRequest(t *testing.T) {
 	s, _, _ := openBodyStore(t)
 	for _, req := range []RemoveBodyRequest{
-		{Digest: "sha256:XYZ", Length: 1},
-		{Digest: digestOf(nil), Length: -1},
-		{Digest: digestOf(nil), DropSet: []Pin{{Stream: "s", RecordID: "r", Revision: 0, Digest: digestOf(nil)}}},
+		{Digest: "sha256:XYZ", Length: 1, Reason: RemoveReasonRetention, Provenance: testProv},
+		{Digest: digestOf(nil), Length: -1, Reason: RemoveReasonRetention, Provenance: testProv},
+		{Digest: digestOf(nil), Length: 0, Reason: "unknown", Provenance: testProv},
+		{Digest: digestOf(nil), Length: 0, Reason: RemoveReasonRetention, Provenance: Provenance{ActorKind: "invalid", Actor: "x"}},
+		{Digest: digestOf(nil), Length: 0, Reason: RemoveReasonRetention, Provenance: Provenance{ActorKind: "process", Actor: ""}},
 	} {
 		if _, err := s.RemoveBody(ctx, req); !errors.Is(err, ErrSchema) {
 			t.Errorf("%+v: want ErrSchema, got %v", req, err)
 		}
-	}
-}
-
-func TestDropSetHashIsOrderIndependent(t *testing.T) {
-	a := Pin{Stream: "a", RecordID: "r1", Revision: 1, Digest: digestOf([]byte("1"))}
-	b := Pin{Stream: "b", RecordID: "r2", Revision: 2, Digest: digestOf([]byte("2"))}
-	h1, _ := dropSetHash([]Pin{a, b})
-	h2, _ := dropSetHash([]Pin{b, a})
-	if h1 != h2 {
-		t.Fatal("drop set hash depends on order")
 	}
 }
 
@@ -431,7 +480,7 @@ func TestConcurrentProducersInProcess(t *testing.T) {
 			t.Fatalf("producer: %v", err)
 		}
 	}
-	if got := state(t, s, b); got != stateLive {
+	if got := state(t, s, b); got != stateAvailable {
 		t.Fatalf("state %s", got)
 	}
 }
@@ -465,23 +514,19 @@ func TestRemoveBodySafeIntegerDomain(t *testing.T) {
 	s, _, _ := openBodyStore(t)
 	d := digestOf([]byte("domain"))
 	zero, max, over := uint64(0), uint64(maxSafeInteger), uint64(maxSafeInteger+1)
-	pin := func(rev uint64) []Pin { return []Pin{{Stream: "s", RecordID: "r", Revision: rev, Digest: d}} }
 	for name, req := range map[string]RemoveBodyRequest{
-		"length over":               {Digest: d, Length: maxSafeInteger + 1},
-		"length max int64":          {Digest: d, Length: 1<<63 - 1},
-		"complete incarnation 0":    {Digest: d, Length: 6, CompleteIncarnation: &zero},
-		"complete incarnation over": {Digest: d, Length: 6, CompleteIncarnation: &over},
-		"drop-set revision over":    {Digest: d, Length: 6, DropSet: pin(maxSafeInteger + 1)},
-		"drop-set revision max u64": {Digest: d, Length: 6, DropSet: pin(1<<64 - 1)},
+		"length over":               {Digest: d, Length: maxSafeInteger + 1, Reason: RemoveReasonRetention, Provenance: testProv},
+		"length max int64":          {Digest: d, Length: 1<<63 - 1, Reason: RemoveReasonRetention, Provenance: testProv},
+		"complete incarnation 0":    {Digest: d, Length: 6, CompleteIncarnation: &zero, Reason: RemoveReasonRetention, Provenance: testProv},
+		"complete incarnation over": {Digest: d, Length: 6, CompleteIncarnation: &over, Reason: RemoveReasonRetention, Provenance: testProv},
 	} {
 		if _, err := s.RemoveBody(ctx, req); !errors.Is(err, ErrSchema) || IsIndeterminate(err) {
 			t.Errorf("%s: want determinate ErrSchema, got %v", name, err)
 		}
 	}
 	for name, req := range map[string]RemoveBodyRequest{
-		"length max":               {Digest: d, Length: maxSafeInteger},
-		"complete incarnation max": {Digest: d, Length: 6, CompleteIncarnation: &max},
-		"drop-set revision max":    {Digest: d, Length: 6, DropSet: pin(maxSafeInteger)},
+		"length max":               {Digest: d, Length: maxSafeInteger, Reason: RemoveReasonRetention, Provenance: testProv},
+		"complete incarnation max": {Digest: d, Length: 6, CompleteIncarnation: &max, Reason: RemoveReasonRetention, Provenance: testProv},
 	} {
 		if _, err := s.RemoveBody(ctx, req); err != nil {
 			t.Errorf("%s: want a result, got %v", name, err)
@@ -495,7 +540,7 @@ func TestPutBodyRefusesIncarnationExhaustion(t *testing.T) {
 	s, _, _ := openBodyStore(t)
 	b := []byte("exhausted")
 	setIncarnation(t, s, b, maxSafeInteger)
-	if got := state(t, s, b); got != statePublicationIncomplete {
+	if got := state(t, s, b); got != stateUnpublished {
 		t.Fatalf("setup state %s", got)
 	}
 	_, _, err := s.PutBody(ctx, bytes.NewReader(b), "text/plain")
@@ -505,7 +550,7 @@ func TestPutBodyRefusesIncarnationExhaustion(t *testing.T) {
 	if n, _, _ := s.readIncarnation(digestHex(digestOf(b))); n != maxSafeInteger {
 		t.Fatalf("incarnation %d, want unchanged %d", n, uint64(maxSafeInteger))
 	}
-	if got := state(t, s, b); got != statePublicationIncomplete {
+	if got := state(t, s, b); got != stateUnpublished {
 		t.Fatalf("state %s, want unchanged", got)
 	}
 	if names, _ := s.root.ReadDirNames(dirBodyTmp, s.fso); len(names) != 0 {
@@ -524,8 +569,8 @@ func TestPutBodyUsesLastIncarnation(t *testing.T) {
 		t.Fatalf("incarnation %d, want %d", n, uint64(maxSafeInteger))
 	}
 	put(t, s, b)
-	if got := state(t, s, b); got != stateLive {
-		t.Fatalf("state %s, want live", got)
+	if got := state(t, s, b); got != stateAvailable {
+		t.Fatalf("state %s, want available", got)
 	}
 	if names, _ := s.root.ReadDirNames(dirBodyTmp, s.fso); len(names) != 0 {
 		t.Fatalf("republishing a live body left staged files: %v", names)
@@ -541,7 +586,7 @@ func TestIncarnationAboveCeilingIsInvalidStore(t *testing.T) {
 	if _, _, err := s.PutBody(ctx, bytes.NewReader(b), "text/plain"); !errors.Is(err, ErrStoreInvalid) {
 		t.Fatalf("PutBody: want ErrStoreInvalid, got %v", err)
 	}
-	if _, err := s.RemoveBody(ctx, RemoveBodyRequest{Digest: digestOf(b), Length: int64(len(b))}); !errors.Is(err, ErrStoreInvalid) {
+	if _, err := s.RemoveBody(ctx, removeReq(b)); !errors.Is(err, ErrStoreInvalid) {
 		t.Fatalf("RemoveBody: want ErrStoreInvalid, got %v", err)
 	}
 }
@@ -560,8 +605,8 @@ func TestPutBodyRefusesLengthAboveCeiling(t *testing.T) {
 	if !errors.Is(err, ErrSchema) || IsIndeterminate(err) {
 		t.Fatalf("want determinate ErrSchema, got %v", err)
 	}
-	if got := state(t, s, b); got != stateUnknownDigest {
-		t.Fatalf("state %s, want unknown_digest", got)
+	if got := state(t, s, b); got != stateUnpublished {
+		t.Fatalf("state %s, want unpublished", got)
 	}
 	if names, _ := s.root.ReadDirNames(dirBodyTmp, s.fso); len(names) != 0 {
 		t.Fatalf("staged files left: %v", names)
@@ -634,8 +679,8 @@ func TestPutBodyPanicRemovesStagedFile(t *testing.T) {
 				t.Fatalf("staged files left after panic: %v", names)
 			}
 			put(t, s, b)
-			if got := state(t, s, b); got != stateLive {
-				t.Fatalf("state %s after retry, want live", got)
+			if got := state(t, s, b); got != stateAvailable {
+				t.Fatalf("state %s after retry, want available", got)
 			}
 		})
 	}

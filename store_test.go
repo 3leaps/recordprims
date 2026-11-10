@@ -58,6 +58,20 @@ func TestInitOpenRoundTrip(t *testing.T) {
 	if len(s.attemptKey) != keyLen || len(s.diagKey) != keyLen {
 		t.Fatal("keys not loaded")
 	}
+	prof := s.Profile()
+	if prof.Runtime.Stratum != "journal-files" || prof.Runtime.BodyRemovalStream != DefaultBodyRemovalStream || prof.Runtime.CommitStrategy != "fsync_file_and_dir" {
+		t.Fatalf("profile runtime %+v", prof.Runtime)
+	}
+}
+
+func TestOpenRefusesV1StoreFormat(t *testing.T) {
+	dir := initStore(t)
+	p := filepath.Join(dir, fileStore)
+	os.WriteFile(p, []byte(`{"format":"recordprims-fs/v1","store_id":"0123456789abcdef0123456789abcdef","key_generation":1,"created_at":"2026-11-10T00:00:00.000000Z","idempotency_window_ms":60000}`), 0o600)
+	_, err := Open(dir, OpenOptions{fs: testFS})
+	if !errors.Is(err, ErrStoreInvalid) || !contains(err.Error(), "pre-journal store format") {
+		t.Fatalf("want ErrStoreInvalid pre-journal store format, got %v", err)
+	}
 }
 
 func TestInitRecordsCustomWindow(t *testing.T) {

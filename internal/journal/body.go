@@ -227,6 +227,70 @@ func (s *State) BodyState(step *wire.Node) (*wire.Node, error) {
 	}, nil
 }
 
+// BodyLifecycle returns the durable-record/v1 reader state, current
+// incarnation high-water bound, and internal lifecycle phase for key given a
+// verified physical observation (present == true for intact bytes, false for
+// absent bytes).
+func (s *State) BodyLifecycle(key BodyKey, present bool) (readerState string, bound int64, phase string) {
+	bs := s.bodies[key]
+	obs := "absent"
+	if present {
+		obs = "present_valid"
+	}
+	st := computeRecoveryRow(bs.phase, bs.bound, bs.bound, obs, false, s.referencedBodies[key])
+	return st, bs.bound, bs.phase
+}
+
+// BodyHeld reports whether any active hold on s covers key (either directly via
+// a body-scoped hold or via a record/revision hold on a revision referencing key).
+func (s *State) BodyHeld(key BodyKey) bool {
+	for hSeq := range s.active {
+		h := s.holds[hSeq]
+		if h == nil || h.Kind != wire.Object {
+			continue
+		}
+		if sc, _ := strOf(h, "scope"); sc == "body" && bodyMatchesTarget(h.Get("body"), key) {
+			return true
+		}
+	}
+	for pk, rec := range s.records {
+		if bodyMatchesTarget(rec.Get("body"), key) {
+			if blk, err := s.Blocked(pk); err != nil || blk {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// BodyReferenced reports whether any accepted revision on s references key
+// (whether or not the record was subsequently retired).
+func (s *State) BodyReferenced(key BodyKey) bool {
+	for _, rec := range s.records {
+		if bodyMatchesTarget(rec.Get("body"), key) {
+			return true
+		}
+	}
+	return false
+}
+
+// ReviewPending reports whether s is a continuation stream whose restriction
+// review is currently pending.
+func (s *State) ReviewPending() bool {
+	p, err := s.reviewPending(&wire.Node{Kind: wire.Object})
+	return err != nil || p
+}
+
+// Stream returns the stream identifier established by stream_opened.
+func (s *State) Stream() string {
+	return s.stream
+}
+
+// IsRetired reports whether recordID has been retired on s.
+func (s *State) IsRetired(recordID string) bool {
+	return s.retired[recordID]
+}
+
 // ObserveSharingStream replays an observed sharing stream to record its
 // referenced bodies, matching the reference interpreter's sharing_streams
 // setup.
