@@ -148,7 +148,15 @@ func TestVectorShapes(t *testing.T) {
 				}
 			}
 		}
-		if j := v.Get("raw_journal"); j != nil {
+		if nd := v.Get("raw_journal_ndjson"); nd != nil {
+			entries, err := wire.IngestLines([]byte(nd.Str), wire.KindJournalEntry)
+			if err != nil {
+				continue
+			}
+			for i, n := range entries {
+				check(n, "v1/journal-entry.schema.json", !invalid[i], "raw_journal_ndjson entry")
+			}
+		} else if j := v.Get("raw_journal"); j != nil {
 			aborted := false
 			for i, line := range j.Elems {
 				n := ingest(line.Str, wire.KindJournalEntry)

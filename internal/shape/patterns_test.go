@@ -9,23 +9,26 @@ import (
 // below then check that $ does not match before a trailing newline, that the
 // patterns are anchored (no prefix or suffix slips through an unanchored
 // search), and that non-ASCII lookalikes are refused.
+const v0SecondsGuardPattern = `^([^Tt]*|[^Tt]*[Tt][^:]*(:[^:]*)?|[^Tt]*[Tt][^:]*:[^:]*:[0-5][0-9].*)$`
+
 var patternSamples = map[string]string{
-	`^(?:[0-9a-f]{2})*$`: "00ff",
-	`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$`:  "2026-10-20T00:00:01.000000Z",
-	`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`:                                 "Rec:1.a-b_c",
-	`^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$`:                                 "Key:1.a-b_c",
-	`^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$`:                                 "Key:1.a-b_c",
-	`^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$`: "text/plain",
-	`^[a-z0-9][a-z0-9.-]{0,63}$`:                                          "records.example",
-	`^[a-z0-9][a-z0-9._-]{0,127}$`:                                        "records.example_1",
-	`^[a-z0-9][a-z0-9._-]{0,63}$`:                                         "records.example_1",
-	`^[a-z0-9][a-z0-9._:-]{0,63}$`:                                        "store:bodies.1",
-	`^[a-z0-9][a-z0-9_-]{0,63}$`:                                          "standard_1",
-	`^[a-z][a-z0-9_]{0,31}$`:                                              "verified",
-	`^contract: [a-z0-9][a-z0-9-]*/v[0-9]+$`:                              "contract: example/v0",
-	`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`:                                  "Ab+1.c-d_e",
-	`^[a-z0-9][a-z0-9._:-]{0,127}$`:                                       "trust:profile.1-a_b",
-	`^sha256:[0-9a-f]{64}$`:                                               "sha256:" + strings.Repeat("ab", 32),
+	`^(?:[0-9a-f]{2})*$`:  "00ff",
+	v0SecondsGuardPattern: "2026-10-20T00:00:01Z",
+	`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-5][0-9]\.[0-9]{6}Z$`: "2026-10-20T00:00:01.000000Z",
+	`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`:                                  "Rec:1.a-b_c",
+	`^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$`:                                  "Key:1.a-b_c",
+	`^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$`:                                  "Key:1.a-b_c",
+	`^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$`:  "text/plain",
+	`^[a-z0-9][a-z0-9.-]{0,63}$`:                                           "records.example",
+	`^[a-z0-9][a-z0-9._-]{0,127}$`:                                         "records.example_1",
+	`^[a-z0-9][a-z0-9._-]{0,63}$`:                                          "records.example_1",
+	`^[a-z0-9][a-z0-9._:-]{0,63}$`:                                         "store:bodies.1",
+	`^[a-z0-9][a-z0-9_-]{0,63}$`:                                           "standard_1",
+	`^[a-z][a-z0-9_]{0,31}$`:                                               "verified",
+	`^contract: [a-z0-9][a-z0-9-]*/v[0-9]+$`:                               "contract: example/v0",
+	`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`:                                   "Ab+1.c-d_e",
+	`^[a-z0-9][a-z0-9._:-]{0,127}$`:                                        "trust:profile.1-a_b",
+	`^sha256:[0-9a-f]{64}$`:                                                "sha256:" + strings.Repeat("ab", 32),
 }
 
 // Every pinned pattern has a sample, and every pattern the schemas use is
@@ -78,15 +81,25 @@ func TestPatternSetIsPinned(t *testing.T) {
 func TestPatternSemantics(t *testing.T) {
 	for p, sample := range patternSamples {
 		v := compileTest(t, `,"type":"string","pattern":`+jsonString(p))
-		bad := []string{
-			sample + "\n",     // $ must not match before a trailing newline
-			"\n" + sample,     // ^ must not match after a leading newline
-			" " + sample,      // anchored: no unanchored-search prefix
-			sample + " ",      // anchored: no suffix
-			sample + "\u00a0", // a non-ASCII trailing space
+		var bad []string
+		if p == v0SecondsGuardPattern {
+			bad = []string{
+				"2026-10-20T23:59:60Z",
+				"2026-10-20t23:59:60.000000Z",
+				"2026-10-20T23:59:60Z\n",
+				"2026-10-20T23:59:99Z",
+				"2026-10-20T23:59:abZ",
+			}
+		} else {
+			bad = []string{
+				sample + "\n",     // $ must not match before a trailing newline
+				"\n" + sample,     // ^ must not match after a leading newline
+				" " + sample,      // anchored: no unanchored-search prefix
+				sample + " ",      // anchored: no suffix
+				sample + "\u00a0", // a non-ASCII trailing space
+				"\uff10" + sample[1:],
+			}
 		}
-		// A non-ASCII lookalike of the first character.
-		bad = append(bad, "\uff10"+sample[1:])
 		ok := []string{sample}
 		for _, b := range bad {
 			if err := v(jsonString(b)); err == nil {

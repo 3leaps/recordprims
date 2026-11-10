@@ -53,6 +53,7 @@
     "at": {
       "type": "string",
       "format": "date-time",
+      "pattern": "^([^Tt]*|[^Tt]*[Tt][^:]*(:[^:]*)?|[^Tt]*[Tt][^:]*:[^:]*:[0-5][0-9].*)$",
       "description": "Store clock, RFC 3339 UTC."
     },
     "mode": {

@@ -204,6 +204,37 @@ is validated against the `v0` RFC 3339 profile:
 | --- | --- | --- |
 | `journal-entry.at`, `reconciliation.attempted_at`, `reconciliation.window_covers_from`, `reconciliation.window_covers_until` (end-to-end staged gate under qualified `goneat` `v0.6.5`–`v0.6.7`, Draft 2020-12 with `format: "date-time"` assertion enabled, verified by `scripts/validate-durable-record-fixtures.py`) | Stage 3 `shape` (and Stage 4 `timestamp` if invoked directly or under a Stage 3 engine without `format: "date-time"`) | Passes `goneat` `format: "date-time"`; refused at Stage 4 as `timestamp` (or `continuation` when observed as a `v1` continuation source/ancestor) |
 
+The table describes the earlier schema and qualified validator profile. The
+`v0.6.5` formatter rejects lowercase `t`/`z` at Stage 3, although the v0
+semantic grammar accepts them. The current seconds guard preserves those
+spellings, numeric offsets including `-00:00`, and additional zero fractional
+digits. Stage 4 still enforces the complete v0 timestamp profile.
+
+A separate trial used Goneat module `v0.6.8-0.20261110123243-512d7e6a2bbd`
+(revision `512d7e6a2bbd2edf1c0c2c3f0d956002fc1966a3`; reported version
+`v0.6.7`; binary SHA-256 `290e7585b605048e411960f2c3a8544eb1a6cf48292c407f1c70a087a19f2555`).
+It reported engine `github.com/santhosh-tekuri/jsonschema/v6@v6.0.3`,
+Draft 2020-12, declared dialect, `format_mode: assert` and
+`leap_policy: structural-leap/v1`. With the schema bytes pinned below, Stage 3
+refuses `:60` via the seconds guard even though this format evaluator admits it.
+The candidate also refuses bare dates, comma fractions, one-digit hours and
+`+24:00` offsets at Stage 3; year zero and excess nonzero fractional precision
+still reach Stage 4. It accepts the v0 spelling variants above. This trial does
+not qualify the candidate or a later build for adoption; qualification requires
+the exact schema and validator bytes and their corresponding controls. The
+same schema inventory covers the [v1 timestamp profile](durable-record-v1-contract.md#production-time-instants-and-ordering).
+
+| Schema                                                      | SHA-256                                                            |
+| ----------------------------------------------------------- | ------------------------------------------------------------------ |
+| `durable-record/v0/journal-entry.schema.json`               | `d36b5b9684d967972d2b358ff3642251c6cd33b099c07e56c67d0e5723e91620` |
+| `durable-record/v0/write-receipt.schema.json`               | `a9d28dd388ba611713b86793243b01ab01d387c5246911281c7d0cfb8943fb5f` |
+| `durable-record/v1/journal-entry.schema.json`               | `b8fe8bf56916f73eac403ce7e03fe2ccbf20d8df6e50acf20af6e9de9784e1de` |
+| `durable-record/v1/protection-request.schema.json`          | `5ca0459b2e30ed493116adb5b4b2b524a0c6fd3253c0ccd78ded36ca06a3e6e4` |
+| `durable-record/v1/record.schema.json`                      | `84c314557c85fe90b554c0be250e0c123e26c9f82613f759b6319681bffe83ed` |
+| `durable-record/v1/removal-eligibility-request.schema.json` | `4a0a0da9a7dee85d622fa181cb1e751f11bb5f56dab274ff25049a6bd7800e61` |
+| `durable-record/v1/stream-seal.schema.json`                 | `687953021e2e3e449d14c141e9cd3be65927ba9cc94b462d0d8283b7eee9d654` |
+| `durable-record/v1/write-receipt.schema.json`               | `5a8a577799f121bef7e70506f916459203d5586ea3c7773375a1013fe9d0834a` |
+
 ## Governed objects
 
 ### Record

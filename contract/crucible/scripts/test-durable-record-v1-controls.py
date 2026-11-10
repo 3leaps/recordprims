@@ -2249,7 +2249,11 @@ def materialize_destination_wire(case):
         out["profile"] = legacy.parse_wire(
             out["raw_profile"], "stratum_profile", "raw_profile"
         )
-    if "raw_journal" in out:
+    if "raw_journal_ndjson" in out:
+        out["journal"] = legacy.parse_wire_lines(
+            out["raw_journal_ndjson"], "raw_journal_ndjson", "journal_entry"
+        )
+    elif "raw_journal" in out:
         out["journal"] = [
             legacy.parse_wire(raw, "journal_entry", f"raw_journal[{i}]")
             for i, raw in enumerate(out["raw_journal"])
@@ -2429,7 +2433,9 @@ def check_reason_table(rows, emitted, covered):
 def envelope_matches(original, amended):
     # A0: the v1 record schema equals the v0 record schema after changing v
     # from const 0 to const 1 and adding only the optional produced_at field
-    # (and the instant definition it references). Nothing else may differ.
+    # (and the instant definition it references). The latter owns the explicit
+    # seconds constraint that rejects leap seconds at Stage 3. Nothing else may
+    # differ.
     def structural(document):
         return {
             key: value
@@ -2452,7 +2458,10 @@ def envelope_matches(original, amended):
     record["properties"]["v"] = {"const": 0}
     if produced.get("properties", {}).get("instant") != {"$ref": "#/$defs/instant"}:
         return False
-    if instant_def.get("pattern") != "^" + CANONICAL_INSTANT.pattern + "$":
+    expected_instant_pattern = (
+        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-5][0-9]\\.[0-9]{6}Z$"
+    )
+    if instant_def.get("pattern") != expected_instant_pattern:
         return False
     return expected == candidate
 
@@ -3751,9 +3760,25 @@ def mutation_controls():
         (
             "_evaluate_seal_context",
             "compare",
+            "ac.get('closer_authenticated') is not True",
+            0,
+            "seal-ancestor-unauthenticated-closer",
+            None,
+        ),
+        (
+            "_evaluate_seal_context",
+            "compare",
             "ac.get('source_write_fenced') is not True",
             0,
             "seal-ancestor-four-level-unfenced-root",
+            None,
+        ),
+        (
+            "_evaluate_seal_context",
+            "compare",
+            "key in anc_journal_uncurrent",
+            0,
+            "seal-ancestor-live-journal-uncurrent",
             None,
         ),
         (
@@ -4188,7 +4213,15 @@ def _collect_case_shape_items(c, add_key):
     elif "profile" in c:
         add_key("stratum-profile", json.dumps(c["profile"]))
 
-    if "raw_journal" in c:
+    if "raw_journal_ndjson" in c:
+        try:
+            for raw in legacy.parse_wire_lines(
+                c["raw_journal_ndjson"], "raw_journal_ndjson", "journal_entry"
+            ):
+                add_key("journal-entry", json.dumps(raw))
+        except legacy.Reject:
+            return
+    elif "raw_journal" in c:
         for i, raw in enumerate(c["raw_journal"]):
             try:
                 legacy.parse_wire(raw, "journal_entry", f"raw_journal[{i}]")
@@ -4525,13 +4558,9 @@ def prewarm_shape_cache(cases, rejects, examples):
 
 
 def suite_error_controls():
-    """Verify batched goneat suite rejects parse/range/schema errors as RuntimeError."""
+    """Separate genuine suite failures from the validator's numeric-decoder profile."""
     for label, bad_item in (
         ("malformed_json", ("bad", "v1/record.schema.json", "{\n")),
-        (
-            "float64_overflow",
-            ("huge", "v1/record.schema.json", '{"v":1,"revision":1e400}\n'),
-        ),
         ("missing_schema", ("missing", "v1/nonexistent.schema.json", "{}\n")),
     ):
         try:
@@ -4540,6 +4569,20 @@ def suite_error_controls():
             pass
         else:
             raise AssertionError(f"suite_error_controls did not fail on {label}")
+
+    # Legacy float64 decoding fails before schema evaluation. Exact JSON decoding
+    # reaches the record's bounded revision check and returns an ordinary invalid
+    # verdict. Detect the profile from this behavior, never a version label.
+    try:
+        verdicts = legacy.shape_suite(
+            [("huge", "v1/record.schema.json", '{"v":1,"revision":1e400}\n')],
+            default_ver="v1",
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+        assert "1e400" in message and "float64" in message, message
+    else:
+        assert verdicts == {"huge": False}, verdicts
 
 
 class AbortWriter:
@@ -4908,9 +4951,9 @@ def timestamp_and_abort_controls():
             outcome,
         )
 
-    # 2. Pattern-only Stage 3 fallback control (F3 / E4): if a Stage 3 engine enforces
-    #    only pattern (not format: date-time), :60 and impossible calendar dates pass
-    #    Stage 3 and are deterministically refused at Stage 4 as instant_spelling.
+    # 2. The contract-owned seconds pattern makes leap seconds fail Stage 3; the
+    #    other calendar controls may be caught there by format enforcement. Force
+    #    each cached negative through Stage 4 as a defense-in-depth control.
     for vec_name, schema_rel, doc_fn in (
         (
             "instant-leap-second.json",
@@ -5034,6 +5077,26 @@ def timestamp_and_abort_controls():
     assert not w_pre.poisoned and w_pre.committed_cut_seq == 1
     assert w_pre.append_group([entry2]) == "committed"
     assert w_pre.committed_cut_seq == 2 and w_pre.state.journal[-1]["seq"] == 2
+
+    # A physical blank NDJSON line is invalid framing, whether a recovery scans it
+    # after a crash or the abort path revalidates the retained cut.
+    for blank_label, blank_line in (("empty", "\n"), ("whitespace", "   \n")):
+        w_blank = AbortWriter(60000)
+        assert w_blank.append_group([opened]) == "committed"
+        w_blank.disk_bytes += blank_line
+        try:
+            w_blank.reopen_from_disk()
+        except legacy.Reject as err:
+            assert err.reason == "ingest", (blank_label, err.reason)
+        else:
+            raise AssertionError(f"{blank_label} NDJSON line was accepted on reopen")
+
+        # Model an abort recovery whose durable cut incorrectly includes the blank
+        # physical line. Revalidation must poison rather than retain it.
+        w_blank.committed_cut_offset = len(w_blank.disk_bytes)
+        assert (
+            w_blank.append_group([entry2], k_written=0, errno="ENOSPC") == "poisoned"
+        ), blank_label
 
     # 3b. mid_line_without_newline (0 < k < L - 1) & line_bytes_without_trailing_newline (k == L - 1):
     #     In-process abort truncates back to byte_offset(C) and allows retry with same idempotency_key
@@ -5642,10 +5705,6 @@ def timestamp_and_abort_controls():
 def check_case_stage3_shapes(c, path):
     """Run Stage 3 (shape) on destination items in order, stopping if Stage 1+2 refuses."""
     invalid = c.get("invalid_journal_entries", [])
-    j_len = len(c["raw_journal"]) if "raw_journal" in c else len(c["journal"])
-    assert len(invalid) == len(set(invalid)) and all(0 <= i < j_len for i in invalid), (
-        path
-    )
     invalid_uses = c.get("invalid_use_steps", [])
     assert len(invalid_uses) == len(set(invalid_uses)) and all(
         0 <= i < len(c["steps"])
@@ -5690,6 +5749,22 @@ def check_case_stage3_shapes(c, path):
         assert err.reason in ("ingest", "numeric_domain"), (path, err)
         assert c["expected"] == {"refusal": err.reason}, (path, err, c["expected"])
 
+    if "raw_journal_ndjson" in c:
+        try:
+            journal_entries = legacy.parse_wire_lines(
+                c["raw_journal_ndjson"], "raw_journal_ndjson", "journal_entry"
+            )
+        except legacy.Reject as err:
+            abort_stage12(err)
+            return
+    elif "raw_journal" in c:
+        journal_entries = c["raw_journal"]
+    else:
+        journal_entries = c["journal"]
+    assert len(invalid) == len(set(invalid)) and all(
+        0 <= i < len(journal_entries) for i in invalid
+    ), path
+
     if "raw_profile" in c:
         try:
             legacy.parse_wire(c["raw_profile"], "stratum_profile", "raw_profile")
@@ -5708,7 +5783,10 @@ def check_case_stage3_shapes(c, path):
             for se in sj:
                 assert shape(se, "journal-entry"), path
 
-    if "raw_journal" in c:
+    if "raw_journal_ndjson" in c:
+        for i, entry in enumerate(journal_entries):
+            assert shape(entry, "journal-entry") == (i not in invalid), path
+    elif "raw_journal" in c:
         for i, raw in enumerate(c["raw_journal"]):
             try:
                 legacy.parse_wire(raw, "journal_entry", f"raw_journal[{i}]")
