@@ -210,19 +210,21 @@ semantic grammar accepts them. The current seconds guard preserves those
 spellings, numeric offsets including `-00:00`, and additional zero fractional
 digits. Stage 4 still enforces the complete v0 timestamp profile.
 
-A separate trial used Goneat module `v0.6.8-0.20261110123243-512d7e6a2bbd`
-(revision `512d7e6a2bbd2edf1c0c2c3f0d956002fc1966a3`; reported version
-`v0.6.7`; binary SHA-256 `290e7585b605048e411960f2c3a8544eb1a6cf48292c407f1c70a087a19f2555`).
-It reported engine `github.com/santhosh-tekuri/jsonschema/v6@v6.0.3`,
-Draft 2020-12, declared dialect, `format_mode: assert` and
+The repository's published validator profile uses [Goneat `v0.6.8`](https://github.com/fulmenhq/goneat/releases/tag/v0.6.8)
+from [source revision `3b700f87a11d8760e66882a829631527ff79bd9f`](https://github.com/fulmenhq/goneat/commit/3b700f87a11d8760e66882a829631527ff79bd9f).
+The verified `darwin/arm64` binary reports version and module `v0.6.8` and has
+SHA-256 `eb9ef352a120ef0910da40f22cc850963133961ed508f84dfebc98dcea1a4967`.
+It reports engine `github.com/santhosh-tekuri/jsonschema/v6@v6.0.3`,
+Draft 2020-12 with declared dialect, `format_mode: assert` and
 `leap_policy: structural-leap/v1`. With the schema bytes pinned below, Stage 3
 refuses `:60` via the seconds guard even though this format evaluator admits it.
-The candidate also refuses bare dates, comma fractions, one-digit hours and
-`+24:00` offsets at Stage 3; year zero and excess nonzero fractional precision
-still reach Stage 4. It accepts the v0 spelling variants above. This trial does
-not qualify the candidate or a later build for adoption; qualification requires
-the exact schema and validator bytes and their corresponding controls. The
-same schema inventory covers the [v1 timestamp profile](durable-record-v1-contract.md#production-time-instants-and-ordering).
+It also refuses bare dates, comma fractions, one-digit hours and `+24:00` offsets
+at Stage 3; year zero, UTC year underflow/overflow and excess nonzero fractional
+precision remain Stage 4 checks. It accepts the v0 spelling variants above.
+The binary digest and observations here cover the verified native `darwin/arm64`
+build; other platforms require their own published-artifact verification and
+contract checks. The same schema inventory covers the
+[v1 timestamp profile](durable-record-v1-contract.md#production-time-instants-and-ordering).
 
 | Schema                                                      | SHA-256                                                            |
 | ----------------------------------------------------------- | ------------------------------------------------------------------ |

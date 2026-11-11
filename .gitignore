@@ -24,6 +24,3 @@ __pycache__/
 *.swp
 *.swo
 *~
-
-# Pinned tools installed by make bootstrap
-/.tools/

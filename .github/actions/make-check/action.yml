@@ -1,5 +1,5 @@
 name: make check
-description: Install the pinned toolchains, run make check, and require an unchanged tree.
+description: Install the pinned toolchains, run make check-platform, and require an unchanged tree.
 inputs:
   target:
     description: Expected native host triple.
@@ -43,27 +43,12 @@ runs:
         python --version
         go version
 
-    - name: Install pinned tools
-      shell: bash
-      env:
-        TARGET: ${{ inputs.target }}
-      run: |
-        tmp="$(cygpath -u "${RUNNER_TEMP}" 2>/dev/null || echo "${RUNNER_TEMP}")"
-        dest="$(scripts/ci-install-tools.sh "${TARGET}" "${tmp}/ci-tools")"
-        (cygpath -w "${dest}" 2>/dev/null || echo "${dest}") >> "${GITHUB_PATH}"
-
-    - name: Install pinned Python packages
-      shell: bash
-      run: scripts/ci-install-pyyaml.sh python
-
-    - name: make check
+    - name: make check-platform
       shell: bash
       env:
         # Python's default encoding is cp1252 on Windows; keep reads UTF-8 everywhere.
         PYTHONUTF8: "1"
-      run: |
-        goneat version | grep '^Module: v0\.6\.1$'
-        make check PYTHON=python
+      run: make check-platform PYTHON=python
 
     - name: Working tree unchanged by the gate
       shell: bash

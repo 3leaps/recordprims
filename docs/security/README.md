@@ -29,8 +29,6 @@ signature is not independent authentication.
 | `keys/expected-fingerprints.ndjson` | The checker's fingerprint records for the same two keys |
 | `config/release/tagger-identity.txt` | The exact git tagger identity for release tags |
 | `config/release/release-workflow.sha256` | Digests of every reviewed workflow and local action |
-| `config/ci-tools.sha256` | Digests of the tools CI downloads |
-| `config/ci-python-requirements.txt` | Python packages the CI gates import, pinned by version and source-archive hash (copied in as pure Python; nothing built) |
 
 ## Workflows
 
