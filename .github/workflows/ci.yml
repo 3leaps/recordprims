@@ -1,27 +1,32 @@
 # recordprims CI
 #
-# Every cell runs the full gate, `make check`, natively:
+# Linux cells (x86_64 and aarch64) run the full `make check` gate inside the
+# digest-pinned `ghcr.io/fulmenhq/goneat-tools-runner-glibc` image (which
+# provides goneat v0.6.8, Go 1.26.10, cargo-deny, actionlint, Python 3 +
+# PyYAML, jq, and git):
 #   both implementations build and test (Go cgo-free; Rust at the MSRV),
 #   the vendored durable-record/v1 contract matches contract/PIN.md,
 #   the vendored v1 interpreter passes its vectors (the logical oracle),
 #   the sibling-prim allow-list and exported-API scan hold,
 #   and cargo-deny passes (licences, sources, bans, advisories).
 #
+# Native macOS and Windows cells run `make check-platform` via
+# `.github/actions/make-check` with zero external binary downloads.
+#
 # go-standalone (hosted): the Go module builds and tests on its own, copied
 # outside the repository.
 #
-# check (hosted, every push and PR):
-#   ubuntu-latest   x86_64-unknown-linux-gnu
+# Hosted (every push and PR):
+#   ubuntu-latest   x86_64-unknown-linux-gnu  (goneat-tools-runner-glibc:v0.5.15)
 #   macos-15        aarch64-apple-darwin
 #   windows-latest  x86_64-pc-windows-msvc
-# check-arm64 (organization larger runners; same-repo only, so fork PRs skip
-# these cells and they cannot be required checks):
-#   ubuntu-latest-arm64-s   aarch64-unknown-linux-gnu
+# Organization larger runners (same-repo only, so fork PRs skip these cells and
+# they cannot be required checks):
+#   ubuntu-latest-arm64-s   aarch64-unknown-linux-gnu  (goneat-tools-runner-glibc:v0.5.15)
 #   windows-latest-arm64-s  aarch64-pc-windows-msvc
 #
-# Tools are fetched by scripts/ci-install-tools.sh and checked against
-# config/ci-tools.sha256. Third-party actions are pinned by commit. Custom runner labels are declared
-# in .github/actionlint.yaml.
+# Third-party actions and container images are pinned by digest/commit. Custom
+# runner labels are declared in .github/actionlint.yaml.
 
 name: CI
 
@@ -43,6 +48,53 @@ env:
   GO_VERSION: 1.26.10
 
 jobs:
+  check-linux:
+    name: check (x86_64-unknown-linux-gnu)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.5.15@sha256:8c6324556e0e8c951b0ad2225f1cb87fad13445b6dcbc83717ace41c6959608e
+      options: --user 1001:1001
+    env:
+      HOME: /github/home
+      RUSTUP_HOME: /github/home/.rustup
+      CARGO_HOME: /github/home/.cargo
+      GOPATH: /github/home/go
+      PYTHONUTF8: "1"
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # reviewed 2026-08-04 commit
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - name: Verify runner and toolchains
+        run: |
+          set -euo pipefail
+          test "$(id -u):$(id -g)" = "1001:1001"
+          host=$(rustc -vV | awk '/^host:/{print $2}')
+          test "${host}" = "x86_64-unknown-linux-gnu"
+          rustc --version | grep "^rustc ${RUST_TOOLCHAIN} "
+          grep -qx "rust-version = \"${RUST_TOOLCHAIN}\"" Cargo.toml
+          go version | grep "go${GO_VERSION} "
+          goneat version | grep '^Module: v0\.6\.8$'
+          cargo deny --version
+          python3 --version
+          python3 -B -E -c 'import yaml'
+      - name: make check
+        run: make check PYTHON=python3
+      - name: Working tree unchanged by the gate
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git status --porcelain
+          test -z "$(git status --porcelain)"
+
   check:
     name: check (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
@@ -51,8 +103,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
           - runner: macos-15
             target: aarch64-apple-darwin
           - runner: windows-latest
@@ -65,12 +115,61 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: make check
+      - name: make check-platform
         uses: ./.github/actions/make-check
         with:
           target: ${{ matrix.target }}
           rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
           go-version: ${{ env.GO_VERSION }}
+
+  check-linux-arm64:
+    name: check (aarch64-unknown-linux-gnu)
+    # Same-repo only: fork PRs cannot use organization larger runners.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest-arm64-s
+    container:
+      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.5.15@sha256:8c6324556e0e8c951b0ad2225f1cb87fad13445b6dcbc83717ace41c6959608e
+      options: --user 1001:1001
+    env:
+      HOME: /github/home
+      RUSTUP_HOME: /github/home/.rustup
+      CARGO_HOME: /github/home/.cargo
+      GOPATH: /github/home/go
+      PYTHONUTF8: "1"
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # reviewed 2026-08-04 commit
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - name: Verify runner and toolchains
+        run: |
+          set -euo pipefail
+          test "$(id -u):$(id -g)" = "1001:1001"
+          host=$(rustc -vV | awk '/^host:/{print $2}')
+          test "${host}" = "aarch64-unknown-linux-gnu"
+          rustc --version | grep "^rustc ${RUST_TOOLCHAIN} "
+          grep -qx "rust-version = \"${RUST_TOOLCHAIN}\"" Cargo.toml
+          go version | grep "go${GO_VERSION} "
+          goneat version | grep '^Module: v0\.6\.8$'
+          cargo deny --version
+          python3 --version
+          python3 -B -E -c 'import yaml'
+      - name: make check
+        run: make check PYTHON=python3
+      - name: Working tree unchanged by the gate
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git status --porcelain
+          test -z "$(git status --porcelain)"
 
   check-arm64:
     name: check (${{ matrix.target }})
@@ -82,8 +181,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest-arm64-s
-            target: aarch64-unknown-linux-gnu
           - runner: windows-latest-arm64-s
             target: aarch64-pc-windows-msvc
     defaults:
@@ -94,7 +191,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: make check
+      - name: make check-platform
         uses: ./.github/actions/make-check
         with:
           target: ${{ matrix.target }}
@@ -104,6 +201,9 @@ jobs:
   workflow-lint:
     name: workflow-lint
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.5.15@sha256:8c6324556e0e8c951b0ad2225f1cb87fad13445b6dcbc83717ace41c6959608e
+      options: --user 1001:1001
     timeout-minutes: 10
     defaults:
       run:
@@ -115,14 +215,20 @@ jobs:
           persist-credentials: false
       - name: actionlint
         run: |
-          dest="$(scripts/ci-install-tools.sh x86_64-unknown-linux-gnu "${RUNNER_TEMP}/ci-tools" actionlint)"
-          "${dest}/actionlint" -color
+          actionlint --version
+          actionlint -color
 
   go-standalone:
     # The Go module must stand alone: copied outside the repository with only
     # its own files, built and tested with GOWORK off and cgo disabled.
     name: go-standalone
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.5.15@sha256:8c6324556e0e8c951b0ad2225f1cb87fad13445b6dcbc83717ace41c6959608e
+      options: --user 1001:1001
+    env:
+      HOME: /github/home
+      GOPATH: /github/home/go
     timeout-minutes: 15
     defaults:
       run:
@@ -132,10 +238,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
       - name: Go module outside the repository
-        run: scripts/go-standalone.sh
+        run: |
+          go version | grep "go${GO_VERSION} "
+          scripts/go-standalone.sh

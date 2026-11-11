@@ -7,13 +7,13 @@ SHELL := bash
 PYTHON ?= python3
 
 .DEFAULT_GOAL := help
-.PHONY: all help check precommit fmt fmt-check lint test test-go test-rust \
+.PHONY: all help check check-platform precommit fmt fmt-check lint test test-go test-rust \
         test-faultpoints faultpoint-exclusion contract-check contract-oracle conformance deps-check api-scan api-scan-test deny go-standalone surface-scan content-check \
         surface-tests prepush pr-final workflow-pin release-tooling-test checklist-targets doctor doctor-test \
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
         release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
         release-verify-remote-tag release-record-anchor \
-        license-check license-check-test bootstrap release-check version version-check version-sync version-set version-patch \
+        license-check license-check-test release-check version version-check version-sync version-set version-patch \
         version-minor version-major build clean
 
 all: check
@@ -21,7 +21,9 @@ all: check
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*## "} /^[a-z][a-z0-9-]*:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-check: fmt-check lint test test-faultpoints faultpoint-exclusion contract-check contract-oracle conformance deps-check api-scan api-scan-test content-check surface-tests workflow-pin release-tooling-test checklist-targets deny version-check license-check license-check-test ## Everything CI runs on one host
+check-platform: fmt-check lint test test-faultpoints faultpoint-exclusion contract-check conformance deps-check api-scan api-scan-test content-check surface-tests checklist-targets version-check license-check license-check-test ## Platform-native subset of check (no goneat, cargo-deny, or PyYAML required)
+
+check: check-platform contract-oracle workflow-pin release-tooling-test deny ## Everything CI runs on one host
 
 precommit: fmt-check lint ## Fast pre-commit gate
 
@@ -215,10 +217,6 @@ deny: ## cargo-deny: licences, bans, sources, advisories
 
 go-standalone: ## The Go module stands alone: copied outside the repo, no skipped tests
 	@scripts/go-standalone.sh
-
-bootstrap: ## Install the pinned CI tools (goneat, cargo-deny) into ./.tools and print the PATH to use
-	@dest="$$(scripts/ci-install-tools.sh "$$(rustc -vV | awk '/^host:/{print $$2}')" .tools)"; \
-	  echo "[ok] bootstrap: add $$dest to PATH"
 
 release-check: ## Release readiness (pre-release: no release machinery yet)
 	@echo "release-check: recordprims is pre-release; release machinery (signing, provenance, publish) lands before the first tag" >&2

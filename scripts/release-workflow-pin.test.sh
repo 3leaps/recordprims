@@ -7,7 +7,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 py="${PYTHON:-python3}"
 "$py" -c 'import yaml' 2>/dev/null || {
-	echo 'error: the workflow pin test needs PyYAML (scripts/ci-install-pyyaml.sh)' >&2
+	echo 'error: the workflow pin test needs PyYAML' >&2
 	exit 1
 }
 (cd "$root" && "$py" -B -E scripts/release-workflow-pin.py check) >/dev/null
