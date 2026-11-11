@@ -6,7 +6,7 @@ immutable identity, never by branch.
 | Field | Value |
 | --- | --- |
 | Repository | `3leaps/crucible` (public) |
-| Commit | `f1064b4f16a3e6018480c6dc3f030e070a3b506e` |
+| Commit | `24c8920dfafdd8a977c8873597562e4ed20e3204` (tag `v0.2.10`) |
 | Family tree `schemas/durable-record/v1` | `64dd038bcc1aa596fdf0c9faed32c6ed6f0f8504` |
 | Family tree `schemas/durable-record/v0` | `5c4c03d3502fa500436f551d2d2d2018989be19f` (v1 reuses the v0 record envelope and helpers) |
 | Status | proposed / experimental (crucible ADR-0019) |
@@ -20,8 +20,8 @@ crucible's own relative layout, so the reference interpreter runs unmodified:
 | --- | --- |
 | `schemas/durable-record/v1/` | tree `64dd038bcc1aa596fdf0c9faed32c6ed6f0f8504` |
 | `schemas/durable-record/v0/` | tree `5c4c03d3502fa500436f551d2d2d2018989be19f` |
-| `docs/standards/durable-record-v1-contract.md` | `ea7fa6aa431a45dfed2119cdc37995b8e029865a` |
-| `docs/standards/durable-record-contract.md` | `d62574c5fd51d9158d81609ac0e6406142e5cd2b` |
+| `docs/standards/durable-record-v1-contract.md` | `f17fc378ea1d907297cac233c63ac072a75f0ba9` |
+| `docs/standards/durable-record-contract.md` | `aac6b12939d6abba93c1c0bbbf159102473160b2` |
 | `docs/decisions/ADR-0019-durable-record-tombstoning.md` | `284445edac42519cff7b4909808edc7a1e4cb62e` |
 | `scripts/test-durable-record-v1-controls.py` | `e4fb1cc07970b17a515ebfd23256dcb3d23a6880` |
 | `scripts/validate-durable-record-fixtures.py` | `d7652f1b546ee11d5f7cc92bfc91d44606dfa3f5` |
@@ -29,10 +29,10 @@ crucible's own relative layout, so the reference interpreter runs unmodified:
 | `scripts/rfc3339-instant.py` | `1fbb9f09a9ed505c958888f91bc67cafad827a94` |
 
 Archive identity, produced by
-`git archive f1064b4 <the paths above, in table order> | shasum -a 256`:
+`git archive 24c8920 <the paths above, in table order> | shasum -a 256`:
 
 ```text
-02407a0f53a4b88a377ff28b414c0c6aa6f733c85ba648bdef72ba1325ee33fb
+04e8129ec61514d750ba5ef120654701cb63d83f0f1a452ee157eea5b4de24b6
 ```
 
 `INVENTORY.sha256` lists the SHA-256 of every vendored file.
