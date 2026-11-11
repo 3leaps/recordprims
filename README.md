@@ -29,10 +29,15 @@ plan is recorded in [ADR-0001](docs/decisions/ADR-0001-profile-b-twin-and-bindin
 
 ## Status
 
-Pre-release (0.0.x). The Go module has the store foundation: a verified,
-confined store root, the store lock, and content-addressed bodies with
-publication leases and removal. Records, the journal, restrictions and release
-are not yet implemented, and the API will change before 0.1.0.
+Pre-release (0.0.x). The pure-Go module implements the `durable-record/v1`
+store (`recordprims-fs/v2`), passing all 400 vectors of the pinned
+`3leaps/crucible` `v0.2.10` contract: a verified, confined store root, the
+store lock, content-addressed bodies with designated-stream lifecycle and
+removal eligibility, streams (`OpenStream`, `Append`, `Retire`, `Protect`,
+`Reconcile`, `Head`, `Revisions`, `Release`), continuations, detached stream
+seals, watermarked local stream indexes, and an internal conditional-PUT
+bucket CAS stratum. The Rust twin and the TypeScript and Python bindings land
+before 0.1.0.
 
 ## Releases
 
