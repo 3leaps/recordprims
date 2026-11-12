@@ -55,7 +55,11 @@ sign_tag() {
     local target="${2:-HEAD}"
     printf '%s\n' "$1" >"$scratch/msg"
     GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net \
-        git -C "$src" tag -fs -a --cleanup=verbatim -u "$subkey!" -F "$scratch/msg" v1.2.3 "$target" >/dev/null
+        git -C "$src" \
+        -c gpg.format=openpgp \
+        -c gpg.program=gpg \
+        -c gpg.openpgp.program=gpg \
+        tag -fs -a --cleanup=verbatim -u "$subkey!" -F "$scratch/msg" v1.2.3 "$target" >/dev/null
 }
 sign_tag 'Fixture release'
 git -C "$src" remote add origin "$scratch/remote.git"
@@ -92,6 +96,12 @@ export RECORDPRIMS_GPG_SIGNING_FINGERPRINT="$primary"
 # The operator's trusted checkout carries the current verifier and helpers.
 for script in "${verifier[@]}"; do cp "$root/scripts/$script" "$op/scripts/"; done
 gate() { (cd "$op" && ./scripts/release-verify-published-tag.sh); }
+pass_gate() {
+    gate >"$scratch/out" 2>&1 || {
+        cat "$scratch/out" >&2
+        exit 1
+    }
+}
 expect_fail() {
     if gate >"$scratch/out" 2>&1; then
         echo "error: expected rejection: $1" >&2
@@ -103,7 +113,7 @@ expect_fail() {
         exit 1
     }
 }
-gate >/dev/null
+pass_gate
 # The temporary verification worktree is always removed.
 [[ "$(git -C "$op" worktree list --porcelain | grep -c '^worktree ')" == 1 ]] || {
     echo 'error: verification worktree left behind' >&2
@@ -117,7 +127,7 @@ FIXTURE_GH_VERIFIED=false expect_fail 'GitHub does not report v1.2.3 verified'
 git -C "$src" commit -q --allow-empty -m 'stray module tag elsewhere'
 git -C "$src" tag -fa -m 'stray' go/canon/v1.2.3 HEAD
 git -C "$src" push -q origin main refs/tags/go/canon/v1.2.3
-gate >/dev/null
+pass_gate
 [[ -z "$(git -C "$op" for-each-ref refs/tags/go/)" ]] || {
     echo 'error: the gate installed a module tag ref' >&2
     exit 1
@@ -126,7 +136,7 @@ git -C "$scratch/remote.git" update-ref -d refs/tags/go/canon/v1.2.3
 git -C "$src" tag -d go/canon/v1.2.3 >/dev/null
 git -C "$src" reset -q --hard "$commit"
 git -C "$src" push -q --force origin main
-gate >/dev/null
+pass_gate
 
 # Same commit, different (unsigned) annotated object: must fail, and the
 # verified local tags must survive the attempt untouched.
@@ -134,7 +144,7 @@ signed_local="$(git -C "$op" rev-parse refs/tags/v1.2.3)"
 GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net \
     git -C "$src" tag -fa -m 'Replacement' v1.2.3 "$commit"
 git -C "$src" push -q --force origin refs/tags/v1.2.3
-expect_fail 'does not verify against the pin'
+expect_fail 'signature is invalid under the pin'
 [[ "$(git -C "$op" rev-parse refs/tags/v1.2.3)" == "$signed_local" ]] || {
     echo 'error: a failed verification replaced the local tag' >&2
     exit 1
@@ -151,7 +161,7 @@ expect_fail 'annotated tag required'
 # Restore a valid signed tag: passes again.
 sign_tag 'Fixture release'
 git -C "$src" push -q --force origin refs/tags/v1.2.3
-gate >/dev/null
+pass_gate
 
 # The approved primary must come from the maintainer environment.
 (
@@ -176,7 +186,11 @@ git -C "$src" add -A
 git -C "$src" commit -qm 'attacker pin'
 printf 'Fixture release\n' >"$scratch/msg"
 GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net \
-    git -C "$src" tag -fs -a --cleanup=verbatim -u "$attacker_sub!" -F "$scratch/msg" v1.2.3 >/dev/null
+    git -C "$src" \
+    -c gpg.format=openpgp \
+    -c gpg.program=gpg \
+    -c gpg.openpgp.program=gpg \
+    tag -fs -a --cleanup=verbatim -u "$attacker_sub!" -F "$scratch/msg" v1.2.3 >/dev/null
 git -C "$src" push -q origin main
 git -C "$src" push -q --force origin refs/tags/v1.2.3
 expect_fail 'not the approved primary'
@@ -185,7 +199,7 @@ export GNUPGHOME="$scratch/gpg"
 git -C "$src" reset -q --hard "$commit"
 sign_tag 'Fixture release'
 git -C "$src" push -q --force origin main refs/tags/v1.2.3
-gate >/dev/null
+pass_gate
 
 # An unverified target carrying a marker-writing fake verifier and helper must
 # never be executed: the gate runs only the operator's trusted scripts.
@@ -200,7 +214,7 @@ GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net
     git -C "$src" tag -fa -m 'Unsigned replacement' v1.2.3
 git -C "$src" push -q origin main
 git -C "$src" push -q --force origin refs/tags/v1.2.3
-expect_fail 'does not verify against the pin'
+expect_fail 'signature is invalid under the pin'
 [[ ! -e "$marker" ]] || {
     echo 'error: code from the unverified tag target was executed' >&2
     exit 1
@@ -208,11 +222,48 @@ expect_fail 'does not verify against the pin'
 # Even a correctly signed target cannot run its own scripts in the gate.
 sign_tag 'Fixture release'
 git -C "$src" push -q --force origin refs/tags/v1.2.3
-gate >/dev/null
+pass_gate
 [[ ! -e "$marker" ]] || {
     echo 'error: code from the tag target was executed' >&2
     exit 1
 }
+
+# Workflow-pin failures in the tagged commit must be reported with their real
+# cause, not mislabeled as a tag-signature failure.
+only_cause() {
+    local expected="$1"
+    if gate >"$scratch/out" 2>&1; then
+        echo "error: expected rejection: $expected" >&2
+        exit 1
+    fi
+    [[ "$(cat "$scratch/out")" == "$expected" ]] || {
+        echo "error: expected only '$expected', got:" >&2
+        cat "$scratch/out" >&2
+        exit 1
+    }
+}
+git -C "$src" reset -q --hard "$commit"
+printf '# unreviewed edit\n' >>"$src/.github/workflows/release.yml"
+git -C "$src" add .github/workflows/release.yml
+git -C "$src" commit -qm 'workflow digest mismatch'
+sign_tag 'Fixture release'
+git -C "$src" push -q --force origin main refs/tags/v1.2.3
+only_cause 'error: .github/workflows/release.yml differs from its reviewed digest in config/release/release-workflow.sha256'
+
+git -C "$src" reset -q --hard "$commit"
+printf 'on:\n  push:\n    tags: [v*]\npermissions:\n  contents: write\njobs: {}\n' >"$src/.github/workflows/release.yml"
+printf '%s  .github/workflows/release.yml\n' "$(shasum -a 256 "$src/.github/workflows/release.yml" | cut -c1-64)" \
+    >"$src/config/release/release-workflow.sha256"
+git -C "$src" add .github/workflows/release.yml config/release/release-workflow.sha256
+git -C "$src" commit -qm 'workflow permission violation'
+sign_tag 'Fixture release'
+git -C "$src" push -q --force origin main refs/tags/v1.2.3
+only_cause 'error: .github/workflows/release.yml must declare top-level permissions: contents: read'
+
+git -C "$src" reset -q --hard "$commit"
+sign_tag 'Fixture release'
+git -C "$src" push -q --force origin main refs/tags/v1.2.3
+pass_gate
 
 # Anchor binding with REAL signed replacements from the approved key. Packages
 # are staged against the anchor below; a later replacement must not pass.

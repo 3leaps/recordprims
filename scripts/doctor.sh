@@ -16,4 +16,4 @@ case "$scope" in release | dev) ;; *)
 	exit 2
 	;;
 esac
-exec python3 -I -B "$root/scripts/doctor.py" "$root/.goneat/tools.yaml" "$root/config/doctor-versions.txt" "$scope"
+exec "${PYTHON:-python3}" -I -B "$root/scripts/doctor.py" "$root/.goneat/tools.yaml" "$root/config/doctor-versions.txt" "$scope"

@@ -25,9 +25,16 @@ import sys
 # directory or the working directory (a yaml.py there would be the parser).
 import os  # noqa: E402
 
+sys.dont_write_bytecode = True
 _untrusted = {os.path.realpath(p) for p in (os.path.dirname(os.path.abspath(__file__)), os.getcwd())}
 sys.path[:] = [p for p in sys.path if p not in ("", ".") and os.path.realpath(p) not in _untrusted]
-import yaml  # noqa: E402
+try:
+    import yaml  # noqa: E402
+except ModuleNotFoundError:
+    sys.exit(
+        "error: the workflow pin check needs PyYAML "
+        "(install pyyaml or set PYTHON to a Python 3 interpreter with PyYAML)"
+    )
 
 PIN = "config/release/release-workflow.sha256"
 WORKFLOWS = ".github/workflows/"

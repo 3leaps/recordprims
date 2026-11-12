@@ -10,14 +10,20 @@ maintainer's machine. CI holds no signing, release or registry authority.
 
 ## Prerequisites
 
-- `gpg`, `minisign`, `gh`, `jq` and `python3` (3.11 or newer). `make doctor`
-  reports each tool's version against the recommended minimum in
-  `.goneat/tools.yaml` and fails on any tool that is missing, older, or whose
-  version it cannot read.
+- `gpg`, `minisign`, `gh`, `jq` and `python3` (3.11 or newer, with `PyYAML`
+  installed; `Makefile` selects the first of `python3`, `python3.14`,
+  `python3.13` or `python3.12` on `PATH` with `PyYAML`, or honors an explicit
+  `PYTHON=/path/to/python3`). `make doctor` reports each tool's version against
+  the recommended minimum in `.goneat/tools.yaml` and fails on any tool that is
+  missing, older, or whose version it cannot read.
 - decernor 0.1.8 or newer as a regular file at an absolute path.
 - limensafe and the maintainer's catalog, which the pre-tag gate requires for
   the public-surface scan (it never runs in CI).
-- The ceremony environment (outside this repository):
+- The ceremony environment (outside this repository), exported in the shell
+  (`scripts/release-tag-operator.sh` also accepts an optional
+  `RECORDPRIMS_APPROVED_ENV_LOADER` pointing to a readable absolute regular
+  file outside the repository for `release-prepare-tag-message`, `release-tag`
+  and `release-push-tag` after `RECORDPRIMS_RELEASE_TAG` is set):
 
   ```bash
   export RECORDPRIMS_RELEASE_TAG="vX.Y.Z"                  # explicit; never derived
@@ -32,7 +38,12 @@ maintainer's machine. CI holds no signing, release or registry authority.
   export LIMENSAFE_CATALOG_PATH=/path/outside/the/repository/catalog
   ```
 
-  A bare `RELEASE_TAG` is refused by `make`.
+  `RECORDPRIMS_TAG_MESSAGE_DIR` must already exist as a directory outside the
+  repository whose basename equals `$RECORDPRIMS_RELEASE_TAG` (`mkdir -p
+  "$RECORDPRIMS_TAG_MESSAGE_DIR"` before `make release-prepare-tag-message`), and
+  `RECORDPRIMS_RELEASE_ANCHOR_FILE` must lie in an existing directory outside
+  the repository and not yet exist before `make release-record-anchor`. A bare
+  `RELEASE_TAG` is refused by `make`.
 
 ## 0. First adoption only: public pins
 
@@ -86,10 +97,17 @@ pin in the tagged commit. To change one:
   (status, bindings, supported platforms and toolchains).
 - [ ] Merge the release pack with an exact squash message whose body ends with
   the standard attribution footer, then check it: `git log -1 --format=%B`.
+- [ ] `make release-github-preflight` (also run by `make release-preflight`):
+  verifies the GitHub-hosted repository settings that live outside git —
+  read-only default `GITHUB_TOKEN` permissions with PR review approval disabled,
+  the active `Tag Publish Protection` ruleset on `refs/tags/v*` restricting
+  tag creation, update, deletion and force-push to Organization Admin bypass,
+  and GitHub immutable releases enabled.
 - [ ] `make release-preflight` on the merged `main`: the checker, a clean tree
-  on `main` equal to `origin/main`, `make check`, the tool and ceremony
-  controls, the required release-scope surface scan, the changelog entry, the
-  release notes and `docs/releases/vX.Y.Z.md`.
+  on `main` equal to `origin/main`, `make release-github-preflight`,
+  `make check`, the tool and ceremony controls, the required release-scope
+  surface scan, the changelog entry, the release notes and
+  `docs/releases/vX.Y.Z.md`.
 - [ ] Main CI is green on this exact commit. Preflight alone is not enough.
 
 ## 2. Tag
@@ -116,4 +134,10 @@ pin in the tagged commit. To change one:
 ## 3. After the tag
 
 - [ ] `go list -m github.com/3leaps/recordprims@vX.Y.Z` resolves.
-- [ ] Someone other than the publisher verifies the tag and the anchors.
+- [ ] Someone other than the publisher independently runs
+  `make release-validate-pin` and `make release-verify-remote-tag` (with
+  `RECORDPRIMS_RELEASE_TAG=vX.Y.Z`, `RECORDPRIMS_GPG_SIGNING_FINGERPRINT`,
+  `RECORDPRIMS_EXPECTED_TAG_OBJECT` and `RECORDPRIMS_EXPECTED_COMMIT` set to the
+  recorded ceremony values) from a clean checkout to confirm the published tag
+  object, commit, OpenPGP subkey signature, committed anchors and GitHub
+  verification status match.

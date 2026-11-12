@@ -29,7 +29,11 @@ for tag in "${tags[@]}"; do
 done
 export GIT_COMMITTER_NAME="$RECORDPRIMS_TAGGER_NAME" GIT_COMMITTER_EMAIL="$RECORDPRIMS_TAGGER_EMAIL"
 for tag in "${tags[@]}"; do
-	git tag -s -a --cleanup=verbatim -u "$RECORDPRIMS_PGP_KEY_ID" -F "$(tag_message_file "$tag")" "$tag" HEAD
+	git \
+		-c gpg.format=openpgp \
+		-c gpg.program=gpg \
+		-c gpg.openpgp.program=gpg \
+		tag -s -a --cleanup=verbatim -u "$RECORDPRIMS_PGP_KEY_ID" -F "$(tag_message_file "$tag")" "$tag" HEAD
 done
 "$tag_root/scripts/release-verify-tag.sh"
 echo "[ok] ${#tags[@]} signed tag(s) created locally; nothing was pushed"

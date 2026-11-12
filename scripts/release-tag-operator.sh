@@ -54,7 +54,7 @@ cd "$root" || exit 1
 }
 export RECORDPRIMS_RELEASE_TAG RECORDPRIMS_TAG_MESSAGE_DIR
 if [[ "$mode" == prepare-message ]]; then
-	exec "$root/scripts/release-prepare-tag-message.py"
+	exec "${PYTHON:-python3}" -P -B -E "$root/scripts/release-prepare-tag-message.py"
 fi
 export RECORDPRIMS_TAGGER_NAME RECORDPRIMS_TAGGER_EMAIL RECORDPRIMS_PGP_KEY_ID RECORDPRIMS_GPG_HOMEDIR RECORDPRIMS_DECERNOR_BIN
 

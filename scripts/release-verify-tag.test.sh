@@ -28,7 +28,11 @@ sign() {
 	local name="${1:-3 Leaps Infosec Team}" message="${2:-$messages/$tag.txt}"
 	git -C "$repo" tag -d "$tag" >/dev/null 2>&1 || true
 	GNUPGHOME="$fixture_dir/gpg" GIT_COMMITTER_NAME="$name" GIT_COMMITTER_EMAIL=infosec@3leaps.net \
-		git -C "$repo" tag -s -a --cleanup=verbatim -u "$subkey!" -F "$message" "$tag" HEAD
+		git -C "$repo" \
+		-c gpg.format=openpgp \
+		-c gpg.program=gpg \
+		-c gpg.openpgp.program=gpg \
+		tag -s -a --cleanup=verbatim -u "$subkey!" -F "$message" "$tag" HEAD
 }
 verify() {
 	(cd "$repo" && RECORDPRIMS_RELEASE_TAG="$tag" RECORDPRIMS_TAG_MESSAGE_DIR="$messages" \

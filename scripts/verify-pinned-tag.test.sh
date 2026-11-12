@@ -29,7 +29,11 @@ fixture_messages "$messages" "$version" "${tags[@]}"
 sign() {
 	local home="$1" key="$2" tag="$3" target="${4:-HEAD}"
 	GNUPGHOME="$home" GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net \
-		git -C "$repo" tag -s -a --cleanup=verbatim -u "$key!" -F "$messages/${tag//\//__}.txt" "$tag" "$target"
+		git -C "$repo" \
+		-c gpg.format=openpgp \
+		-c gpg.program=gpg \
+		-c gpg.openpgp.program=gpg \
+		tag -s -a --cleanup=verbatim -u "$key!" -F "$messages/${tag//\//__}.txt" "$tag" "$target"
 }
 for tag in "${tags[@]}"; do sign "$fixture_dir/gpg" "$subkey" "$tag"; done
 
@@ -69,12 +73,17 @@ for tag in "${tags[@]}"; do git -C "$repo" update-ref -d "refs/recordprims-verif
 verify >/dev/null
 
 # A publishing workflow in the tagged commit that differs from its pin fails,
-# even though every tag is validly signed.
+# even though every tag is validly signed, and reports only the exact workflow
+# pin cause.
 git -C "$repo" tag -d "${tags[@]}" >/dev/null
 printf '# unreviewed\n' >>"$repo/.github/workflows/release.yml"
 fixture_commit "$repo" unreviewed-workflow
 for tag in "${tags[@]}"; do sign "$fixture_dir/gpg" "$subkey" "$tag"; done
-expect_fail_with 'publishing workflow in the tagged commit differs' verify
+expect_fail_with '^error: \.github/workflows/release\.yml differs from its reviewed digest in config/release/release-workflow\.sha256$' verify
+[[ "$(wc -l <"$fixture_dir/last.out" | tr -d ' ')" == 1 ]] || {
+	cat "$fixture_dir/last.out" >&2
+	exit 1
+}
 git -C "$repo" tag -d "${tags[@]}" >/dev/null
 git -C "$repo" reset -q --hard HEAD~1
 for tag in "${tags[@]}"; do sign "$fixture_dir/gpg" "$subkey" "$tag"; done
@@ -107,7 +116,11 @@ retag "go/canon/v$version"
 # A wrong tagger fails.
 retag "v$version"
 GNUPGHOME="$fixture_dir/gpg" GIT_COMMITTER_NAME='Someone Else' GIT_COMMITTER_EMAIL=else@example.invalid \
-	git -C "$repo" tag -s -a --cleanup=verbatim -u "$subkey!" -F "$messages/v$version.txt" "v$version" HEAD
+	git -C "$repo" \
+	-c gpg.format=openpgp \
+	-c gpg.program=gpg \
+	-c gpg.openpgp.program=gpg \
+	tag -s -a --cleanup=verbatim -u "$subkey!" -F "$messages/v$version.txt" "v$version" HEAD
 expect_fail_with 'tagger differs' verify
 retag "v$version"
 sign "$fixture_dir/gpg" "$subkey" "v$version"
