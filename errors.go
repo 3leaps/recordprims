@@ -126,11 +126,31 @@ func (e *ErrBodyIncomplete) Error() string {
 	return fmt.Sprintf("recordprims: body operation incomplete (state %s); retry the same call", e.State)
 }
 
+// ErrCompactionIncomplete is returned, indeterminately, when a sealed-continuation
+// compaction or predecessor reclamation failed after a durable step. Retry the
+// same call; it resumes from the durable state.
+type ErrCompactionIncomplete struct {
+	Phase string // e.g. "sealing_source", "importing_records", "reviewing_restrictions", "reclaiming_predecessor"
+	Cause error
+}
+
+func (e *ErrCompactionIncomplete) Error() string {
+	return fmt.Sprintf("recordprims: compaction incomplete (phase %s); retry the same call", e.Phase)
+}
+
+func (e *ErrCompactionIncomplete) Unwrap() error {
+	return e.Cause
+}
+
 // IsIndeterminate reports whether err means an operation may have taken effect.
 // A false result for a non-nil error means nothing changed.
 func IsIndeterminate(err error) bool {
 	if err == nil {
 		return false
+	}
+	var ci *ErrCompactionIncomplete
+	if errors.As(err, &ci) {
+		return true
 	}
 	var io *IOError
 	if errors.As(err, &io) {

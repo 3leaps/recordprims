@@ -62,6 +62,9 @@ var (
 
 	// ErrCASExhausted is returned when bounded 412 contention retries are exhausted.
 	ErrCASExhausted = errors.New("bucketcas: conditional-put contention retries exhausted")
+
+	// ErrStreamSealed is returned when a write targets a sealed or reclaimed stream.
+	ErrStreamSealed = errors.New("bucketcas: stream is sealed")
 )
 
 // Options configures Init and Open on a BucketStore.
@@ -129,6 +132,11 @@ type HeadDoc struct {
 	SegmentsTail                       []SegmentRef   `json:"segments_tail"`
 	LatestCheckpoint                   *CheckpointRef `json:"latest_checkpoint,omitempty"`
 	EffectiveRestrictionManifestDigest string         `json:"effective_restriction_manifest_digest"`
+	Sealed                             bool           `json:"sealed,omitempty"`
+	SealDigest                         string         `json:"seal_digest,omitempty"`
+	Reclaimed                          bool           `json:"reclaimed,omitempty"`
+	ReclaimedDigest                    string         `json:"reclaimed_digest,omitempty"`
+	ReclaimedBy                        string         `json:"reclaimed_by,omitempty"`
 }
 
 // CheckpointRecord summarizes a live revision in a compacted checkpoint.
@@ -446,6 +454,13 @@ func encodeHead(h HeadDoc) ([]byte, error) {
 // loadStream loads head.json + at most 1 checkpoint + tail segments in O(1)
 // requests, verifying all digests and cut invariants.
 func (s *BucketStore) loadStream(ctx context.Context, stream string) (*loadedStream, string, bool, error) {
+	return s.loadStreamWithSeen(ctx, stream, map[string]bool{stream: true})
+}
+
+func (s *BucketStore) loadStreamWithSeen(ctx context.Context, stream string, seen map[string]bool) (*loadedStream, string, bool, error) {
+	if len(seen) > 16 {
+		return nil, "", false, fmt.Errorf("%w: continuation depth exceeded", ErrInvalidStore)
+	}
 	hKey := s.headKey(stream)
 	hBytes, hVal, _, err := s.obj.GetCoherent(ctx, hKey)
 	if err != nil {
@@ -471,6 +486,19 @@ func (s *BucketStore) loadStream(ctx context.Context, stream string) (*loadedStr
 		return nil, "", false, err
 	}
 	st.SetRemovalStream(s.bodyRemovalStream)
+	if head.Reclaimed {
+		if !head.Sealed {
+			return nil, "", false, fmt.Errorf("%w: reclaimed head is not marked sealed", ErrInvalidStore)
+		}
+		if _, _, err := s.loadAndVerifyBucketReclaimed(ctx, stream, head, seen); err != nil {
+			return nil, "", false, err
+		}
+		return &loadedStream{
+			head:          head,
+			headValidator: hVal,
+			st:            st,
+		}, hVal, true, nil
+	}
 
 	var rawLines [][]byte
 	var expectedNextSeq int64 = 1
@@ -496,9 +524,14 @@ func (s *BucketStore) loadStream(ctx context.Context, stream string) (*loadedStr
 		if err != nil {
 			return nil, "", false, fmt.Errorf("%w: checkpoint journal ingest: %v", ErrInvalidStore, err)
 		}
-		for _, e := range entries {
+		for i, e := range entries {
 			if err := shape.Validate("v1/journal-entry.schema.json", e); err != nil {
 				return nil, "", false, fmt.Errorf("%w: checkpoint entry schema: %v", ErrInvalidStore, err)
+			}
+			if i == 0 && e.Get("continues") != nil {
+				if err := s.attachBucketContinuation(ctx, st, e.Get("continues"), seen); err != nil {
+					return nil, "", false, err
+				}
 			}
 			if err := st.Ingest(e); err != nil {
 				return nil, "", false, fmt.Errorf("%w: checkpoint entry ingest: %v", ErrInvalidStore, err)
@@ -535,6 +568,11 @@ func (s *BucketStore) loadStream(ctx context.Context, stream string) (*loadedStr
 			if err := shape.Validate("v1/journal-entry.schema.json", e); err != nil {
 				return nil, "", false, fmt.Errorf("%w: segment entry schema: %v", ErrInvalidStore, err)
 			}
+			if e.Get("seq").Int == 1 && e.Get("continues") != nil {
+				if err := s.attachBucketContinuation(ctx, st, e.Get("continues"), seen); err != nil {
+					return nil, "", false, err
+				}
+			}
 			if err := st.Ingest(e); err != nil {
 				return nil, "", false, fmt.Errorf("%w: segment entry ingest: %v", ErrInvalidStore, err)
 			}
@@ -553,6 +591,11 @@ func (s *BucketStore) loadStream(ctx context.Context, stream string) (*loadedStr
 	gotCutDig, err := st.CutDigest(head.CutSeq)
 	if err != nil || gotCutDig != head.CutDigest {
 		return nil, "", false, fmt.Errorf("%w: head cut_digest mismatch", ErrInvalidStore)
+	}
+	if head.Sealed {
+		if _, err := s.verifyBucketSealAgainstLoaded(ctx, stream, head, st, seen); err != nil {
+			return nil, "", false, err
+		}
 	}
 
 	return &loadedStream{
@@ -942,6 +985,9 @@ func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt
 		if !exists {
 			return AppendReceipt{}, fmt.Errorf("%w: stream %q not found", ErrInvalidStore, in.Stream)
 		}
+		if ls.head.Sealed || ls.head.Reclaimed {
+			return AppendReceipt{}, ErrStreamSealed
+		}
 
 		now := s.opts.Now().UTC().Truncate(time.Microsecond)
 		if now.Before(ls.lastAt) {
@@ -982,7 +1028,7 @@ func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt
 			}
 		}
 
-		// 2. Check retirement.
+		// 2. Check retirement (local or inherited from continuation ancestors).
 		if ls.st.IsRetired(recID) {
 			return AppendReceipt{
 				Outcome:        journal.ReasonRetiredRecord,
@@ -990,6 +1036,20 @@ func (s *BucketStore) Append(ctx context.Context, in AppendInput) (AppendReceipt
 				IdempotencyKey: in.IdempotencyKey,
 				Raw:            makeRefusalReceiptRaw(in.Stream, in.IdempotencyKey, journal.ReasonRetiredRecord, nil),
 			}, nil
+		}
+		if cn := ls.st.ContinuesNode(); cn != nil {
+			srcRetired, rerr := s.sourceRetiredRecordIDs(ctx, cn.Get("stream").Str, map[string]bool{in.Stream: true})
+			if rerr != nil {
+				return AppendReceipt{}, rerr
+			}
+			if srcRetired[recID] {
+				return AppendReceipt{
+					Outcome:        journal.ReasonRetiredRecord,
+					Stream:         in.Stream,
+					IdempotencyKey: in.IdempotencyKey,
+					Raw:            makeRefusalReceiptRaw(in.Stream, in.IdempotencyKey, journal.ReasonRetiredRecord, nil),
+				}, nil
+			}
 		}
 
 		// 3. Check revision / supersedes preconditions.
