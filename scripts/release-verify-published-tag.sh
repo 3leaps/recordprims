@@ -58,8 +58,10 @@ commit="$(git rev-parse "$staging$tag^{}")"
 pinned="$(git cat-file blob "$commit:keys/expected-fingerprints.txt" 2>/dev/null | awk '$1=="gpg" {print $2}')" ||
     die 'tagged commit has no fingerprint anchors'
 [[ "$pinned" == "$approved" ]] || die 'pin in the tagged commit is not the approved primary'
-RECORDPRIMS_RELEASE_TAG="$tag" "$root/scripts/verify-pinned-tag.sh" --published --staged-prefix "$staging" >/dev/null ||
-    die 'published tag signature does not verify against the pin committed in its commit'
+# Pin and anchor come from the commit the fetched tag points at, not the local
+# working tree. verify-pinned-tag.sh and release-workflow-pin.py print the
+# specific cause on stderr.
+RECORDPRIMS_RELEASE_TAG="$tag" "$root/scripts/verify-pinned-tag.sh" --published --staged-prefix "$staging" >/dev/null || exit 1
 tag_json="$(release_gh api "repos/3leaps/recordprims/git/tags/$remote_object")" || die "GitHub tag object for $tag unavailable"
 jq -e --arg tag "$tag" --arg commit "$commit" \
     '.tag == $tag and .object.type == "commit" and .object.sha == $commit and .verification.verified == true and .verification.reason == "valid"' \

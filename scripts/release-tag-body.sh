@@ -7,7 +7,7 @@ object="${1:?tag object required}"
 	echo 'error: annotated tag required' >&2
 	exit 1
 }
-git cat-file tag "$object" | python3 -c '
+git cat-file tag "$object" | "${PYTHON:-python3}" -I -B -c '
 import sys
 raw = sys.stdin.buffer.read()
 if b"\n\n" not in raw:

@@ -7,6 +7,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Release ceremony and preflight hardening: `make release-github-preflight`
+  (and `make release-preflight`) verifies GitHub-hosted workflow token
+  permissions, the active `Tag Publish Protection` ruleset on `refs/tags/v*`,
+  and immutable releases; tag verification reports the exact workflow-pin or
+  signature failure cause without masking it behind a second error line, pins
+  explicit OpenPGP `git` invocation flags, and honors `PYTHON` across ceremony
+  and doctor scripts
+
 ## [0.0.2] - 2026-11-11
 
 The pure-Go `durable-record/v1` store (`recordprims-fs/v2`), passing all 400

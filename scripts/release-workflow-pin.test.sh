@@ -90,17 +90,31 @@ pin_with
 refused 'grants more than read' check
 git -C "$repo" checkout -q -- .
 pin check
-# A yaml.py beside the checker is never imported (a script's own directory
-# is the one path Python adds by itself).
-mkdir "$scratch/shadow"
+# A yaml.py or yaml/__init__.py beside the checker or in the working directory
+# is never imported by the checker or by Makefile's PYTHON auto-selection probe
+# (-P -B -E).
+mkdir -p "$scratch/shadow" "$repo/scripts" "$repo/yaml"
 cp "$root/scripts/release-workflow-pin.py" "$scratch/shadow/"
+cp "$root/scripts/release-workflow-pin.py" "$repo/scripts/"
 printf 'raise SystemExit("shadow yaml imported")\n' >"$scratch/shadow/yaml.py"
-(cd "$repo" && "$py" -B -E "$scratch/shadow/release-workflow-pin.py" check) >"$scratch/out" 2>&1 || true
+printf 'raise SystemExit("cwd shadow yaml imported")\n' >"$repo/yaml.py"
+printf 'raise SystemExit("cwd shadow yaml package imported")\n' >"$repo/yaml/__init__.py"
+(cd "$repo" && "$py" -P -B -E "$scratch/shadow/release-workflow-pin.py" check) >"$scratch/out" 2>&1 || true
 if grep -q 'shadow' "$scratch/out"; then
-	echo 'error: a yaml.py beside the pin checker was imported' >&2
+	echo 'error: a yaml.py beside the pin checker or in cwd was imported' >&2
 	exit 1
 fi
 grep -q 'every workflow matches' "$scratch/out" || { cat "$scratch/out" >&2; exit 1; }
+(cd "$repo" && env -u PYTHON make -f "$root/Makefile" workflow-pin) >"$scratch/out" 2>&1 || {
+	cat "$scratch/out" >&2
+	exit 1
+}
+if grep -q 'shadow' "$scratch/out"; then
+	echo 'error: Makefile PYTHON probe imported yaml from the working directory' >&2
+	exit 1
+fi
+grep -q 'every workflow matches' "$scratch/out" || { cat "$scratch/out" >&2; exit 1; }
+rm -rf "$repo/yaml.py" "$repo/yaml" "$repo/scripts"
 # The ceremony reads the tagged commit, not the working tree: an uncommitted
 # fix does not rescue a bad commit, and an uncommitted edit does not break a
 # good one.
@@ -110,4 +124,14 @@ git -C "$repo" add .github/workflows/ci.yml
 git -C "$repo" commit -qm unreviewed
 git -C "$repo" checkout -q HEAD~1 -- .github/workflows/ci.yml
 refused 'differs from its reviewed digest' verify-commit HEAD
+# Without PyYAML (e.g. -S without site-packages), the checker reports a single
+# clean error line rather than an uncaught ModuleNotFoundError traceback.
+if (cd "$repo" && "$py" -B -E -S "$root/scripts/release-workflow-pin.py" check) >"$scratch/out" 2>&1; then
+	echo 'error: workflow pin check succeeded without site-packages' >&2
+	exit 1
+fi
+[[ "$(cat "$scratch/out")" == "error: the workflow pin check needs PyYAML (install pyyaml or set PYTHON to a Python 3 interpreter with PyYAML)" ]] || {
+	cat "$scratch/out" >&2
+	exit 1
+}
 echo '[ok] read-only workflow boundary and mutation controls'

@@ -65,9 +65,9 @@ committed() {
 [[ "$(git cat-file blob "$target:go.mod" | sed -n 's/^module[[:space:]]\{1,\}//p' | tr -d '\r')" == "$tag_go_module" ]] ||
 	die "go.mod in the tagged commit must declare module $tag_go_module"
 # Every workflow that can publish matches its reviewed digest, both read from
-# the tagged commit (never the working tree).
-python3 -B -E "$root/scripts/release-workflow-pin.py" verify-commit "$target" >/dev/null ||
-	die 'a publishing workflow in the tagged commit differs from its reviewed digest'
+# the tagged commit (never the working tree). release-workflow-pin.py prints
+# the exact cause on stderr.
+"${PYTHON:-python3}" -P -B -E "$root/scripts/release-workflow-pin.py" verify-commit "$target" >/dev/null || exit 1
 committed docs/security/release-signing-keys.asc "$keyring/keys.asc"
 committed docs/security/recordprims-minisign.pub "$keyring/minisign.pub"
 committed keys/expected-fingerprints.txt "$keyring/anchors.txt"
@@ -94,7 +94,11 @@ for tag in "${tag_names[@]}"; do
 	[[ "$(git rev-parse "${object}^{commit}")" == "$target" ]] || die "$tag does not point at the release commit $target"
 	tagger="$(git cat-file tag "$object" | sed -n 's/^tagger \(.*\) [0-9][0-9]* [+-][0-9][0-9][0-9][0-9]$/\1/p' | head -1)"
 	[[ "$tagger" == "$(cat "$keyring/tagger-identity.txt")" ]] || die "$tag tagger differs from the committed identity"
-	GNUPGHOME="$keyring/home" git -c gpg.program=gpg verify-tag --raw "$object" >"$keyring/status" 2>&1 || {
+	GNUPGHOME="$keyring/home" git \
+		-c gpg.format=openpgp \
+		-c gpg.program=gpg \
+		-c gpg.openpgp.program=gpg \
+		verify-tag --raw "$object" >"$keyring/status" 2>&1 || {
 		awk '$1=="[GNUPG:]" {print "signature status:", $2}' "$keyring/status" >&2
 		die "$tag signature is invalid under the pin"
 	}

@@ -4,14 +4,15 @@
 
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
-PYTHON ?= python3
+PYTHON ?= $(shell for p in python3 python3.14 python3.13 python3.12; do if command -v $$p >/dev/null 2>&1 && $$p -P -B -E -c 'import yaml' >/dev/null 2>&1; then echo $$p; exit 0; fi; done; echo python3)
+export PYTHON
 
 .DEFAULT_GOAL := help
 .PHONY: all help check check-platform precommit fmt fmt-check lint test test-go test-rust \
         test-faultpoints faultpoint-exclusion contract-check contract-oracle conformance deps-check api-scan api-scan-test deny go-standalone surface-scan content-check \
         surface-tests prepush pr-final workflow-pin release-tooling-test checklist-targets doctor doctor-test \
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
-        release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
+        release-github-preflight release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
         release-verify-remote-tag release-record-anchor \
         license-check license-check-test release-check version version-check version-sync version-set version-patch \
         version-minor version-major build clean
@@ -52,7 +53,7 @@ surface-tests: ## Controls for content-check and the surface scan (the scan suit
 	@PYTHON=$(PYTHON) scripts/surface-scan.test.sh
 
 workflow-pin: ## Every workflow and local action matches its reviewed digest and is read-only
-	@$(PYTHON) -B -E scripts/release-workflow-pin.py check
+	@$(PYTHON) -P -B -E scripts/release-workflow-pin.py check
 
 checklist-targets: ## Every make target named in RELEASE_CHECKLIST.md exists
 	@scripts/checklist-targets.sh
@@ -69,6 +70,7 @@ doctor-test: ## Controls for make doctor (maintainer hosts)
 # or decernor on PATH for tests). They use throwaway keys only and run on
 # maintainer hosts, not in CI.
 release-ceremony-test: ## Synthetic release-ceremony controls (throwaway keys; maintainer hosts)
+	@scripts/release-github-preflight.test.sh
 	@scripts/release-validate-pin.test.sh
 	@scripts/release-anchors.test.sh
 	@scripts/release-gh.test.sh
@@ -109,12 +111,16 @@ endif
 REQUIRE_RELEASE_TAG = @if [ -z "$(RECORDPRIMS_RELEASE_TAG)" ]; then \
 	echo "error: RECORDPRIMS_RELEASE_TAG=vX.Y.Z is required"; exit 1; fi
 
+release-github-preflight: ## Read-only preflight for GitHub-hosted release settings (workflow token, v* tag ruleset, immutable releases)
+	@scripts/release-github-preflight.sh
+
 release-preflight: ## Pre-tag gate on a clean main synced with origin
 	@source scripts/release-decernor.sh && resolve_release_decernor && echo "[ok] checker $$RELEASE_DECERNOR_BIN"
 	@test -z "$$(git status --porcelain)" || { echo "error: working tree not clean"; git status --short; exit 1; }
 	@test "$$(git symbolic-ref --quiet --short HEAD)" = main || { echo "error: release from main"; exit 1; }
 	git fetch --quiet origin main
 	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" || { echo "error: HEAD differs from origin/main"; exit 1; }
+	$(MAKE) release-github-preflight
 	$(MAKE) check doctor-test release-ceremony-test
 	RECORDPRIMS_SURFACE_SCAN_REQUIRED=1 RECORDPRIMS_SURFACE_SCOPE=release PYTHON=$(PYTHON) scripts/surface-scan.sh
 	@v="$$(cat VERSION)"; grep -q "^## \[$$v\]" CHANGELOG.md || { echo "error: CHANGELOG.md has no [$$v] section"; exit 1; }; \

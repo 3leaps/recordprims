@@ -97,6 +97,9 @@ fixture_repo() {
 	git -C "$repo" config user.email fixture@example.invalid
 	git -C "$repo" config commit.gpgsign false
 	git -C "$repo" config tag.gpgsign false
+	git -C "$repo" config gpg.format openpgp
+	git -C "$repo" config gpg.program gpg
+	git -C "$repo" config gpg.openpgp.program gpg
 	git -C "$repo" remote add origin https://github.com/3leaps/recordprims.git
 }
 
