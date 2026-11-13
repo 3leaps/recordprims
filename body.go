@@ -954,9 +954,9 @@ func (s *Store) checkRemovalEligibility(h string, length int64) (RemoveBodyOutco
 	if anyHeld {
 		return BodyHeld, nil
 	}
-	leased, err := s.unexpiredLease(h)
-	if err != nil {
-		return "", err
+	leased, leaseValid := s.unexpiredLease(h)
+	if !leaseValid {
+		return BodyProtectionUnknown, nil
 	}
 	if leased {
 		return BodyPending, nil
@@ -1036,32 +1036,48 @@ func (s *Store) attachContinuationChain(dst *journal.State, cont *wire.Node, see
 }
 
 // unexpiredLease reports whether any publication lease for the digest is
-// still live. An unreadable lease counts as live (fail closed).
-func (s *Store) unexpiredLease(h string) (bool, error) {
+// still live, and whether all present lease records are structurally valid.
+// An unreadable or malformed lease fails closed as invalid (ok == false).
+func (s *Store) unexpiredLease(h string) (live bool, ok bool) {
 	dir := dirBodyPending + "/" + h
 	names, err := s.root.ReadDirNames(dir, s.fso)
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
+		return false, true
 	}
 	if err != nil {
-		return true, nil
+		return false, false
 	}
 	now := s.opts.Clock.Now()
 	for _, n := range names {
 		b, err := readFileVerified(s.root, dir+"/"+n, s.fso, 1<<12)
 		if err != nil {
-			return true, nil
+			return false, false
 		}
-		var l leaseFile
-		if json.Unmarshal(b, &l) != nil {
-			return true, nil
+		node, err := wire.Ingest(b, wire.KindStratumProfile)
+		if err != nil || node.Kind != wire.Object {
+			return false, false
 		}
-		exp, err := ParseInstant(l.ExpiresAt)
-		if err != nil || now.Before(exp) {
-			return true, nil
+		inc := node.Get("incarnation")
+		if inc == nil || inc.Kind != wire.Number {
+			return false, false
+		}
+		incVal, err := strconv.ParseUint(inc.Token, 10, 64)
+		if err != nil || incVal < 1 || incVal > maxSafeInteger {
+			return false, false
+		}
+		expNode := node.Get("expires_at")
+		if expNode == nil || expNode.Kind != wire.String {
+			return false, false
+		}
+		exp, err := ParseInstant(expNode.Str)
+		if err != nil {
+			return false, false
+		}
+		if now.Before(exp) {
+			live = true
 		}
 	}
-	return false, nil
+	return live, true
 }
 
 // consumeLease removes a valid, unexpired publication lease for digest.

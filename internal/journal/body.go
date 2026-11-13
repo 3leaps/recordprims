@@ -277,8 +277,8 @@ func (s *State) BodyReferenced(key BodyKey) bool {
 // ReviewPending reports whether s is a continuation stream whose restriction
 // review is currently pending.
 func (s *State) ReviewPending() bool {
-	p, err := s.reviewPending(&wire.Node{Kind: wire.Object})
-	return err != nil || p
+	cur, err := s.reviewCurrent()
+	return err != nil || !cur
 }
 
 // Stream returns the stream identifier established by stream_opened.

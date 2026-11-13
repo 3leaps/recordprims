@@ -82,6 +82,10 @@ type InitOptions struct {
 	BodyRemovalStream string
 	// Clock stamps created_at; nil uses the system clock.
 	Clock Clock
+	// AllowOverlay admits overlay filesystems (CI containers).
+	AllowOverlay bool
+	// AllowTmpfs admits tmpfs filesystems (test harnesses).
+	AllowTmpfs bool
 
 	// fs carries filesystem verification overrides for tests.
 	fs fsroot.Options
@@ -99,6 +103,8 @@ type OpenOptions struct {
 	PendingBodyTTL time.Duration
 	// AllowOverlay admits overlay filesystems (CI containers).
 	AllowOverlay bool
+	// AllowTmpfs admits tmpfs filesystems (test harnesses).
+	AllowTmpfs bool
 
 	fs fsroot.Options
 }
@@ -261,7 +267,10 @@ func Init(dir string, opts InitOptions) error {
 	if clock == nil {
 		clock = systemClock{}
 	}
-	root, err := fsroot.Open(dir, opts.fs)
+	fso := opts.fs
+	fso.AllowOverlay = fso.AllowOverlay || opts.AllowOverlay
+	fso.AllowTmpfs = fso.AllowTmpfs || opts.AllowTmpfs
+	root, err := fsroot.Open(dir, fso)
 	if err != nil {
 		return mapOpenErr(err)
 	}
@@ -289,7 +298,7 @@ func Init(dir string, opts InitOptions) error {
 		}
 	}
 	for _, d := range []string{dirStreams, dirBodies} {
-		if err := root.Mkdir(d, opts.fs); err != nil {
+		if err := root.Mkdir(d, fso); err != nil {
 			return ioErr("mkdir", err, true)
 		}
 	}
@@ -309,8 +318,8 @@ func Init(dir string, opts InitOptions) error {
 
 	// G7: Init makes the designated body-removal stream and its stream_opened
 	// entry durable before STORE commits.
-	app := jfile.New(root, opts.fs)
-	if err := createStreamJournal(root, opts.fs, app, bodyStream, "single_revision", prof.Runtime.FailureModel, createdAt, nil, true); err != nil {
+	app := jfile.New(root, fso)
+	if err := createStreamJournal(root, fso, app, bodyStream, "single_revision", prof.Runtime.FailureModel, createdAt, nil, true); err != nil {
 		return err
 	}
 
@@ -398,6 +407,7 @@ func mapJFileErr(err error) error {
 func Open(dir string, opts OpenOptions) (*Store, error) {
 	fso := opts.fs
 	fso.AllowOverlay = fso.AllowOverlay || opts.AllowOverlay
+	fso.AllowTmpfs = fso.AllowTmpfs || opts.AllowTmpfs
 	root, err := fsroot.Open(dir, fso)
 	if err != nil {
 		return nil, mapOpenErr(err)
