@@ -1,7 +1,9 @@
 package bucketcas_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -1061,8 +1063,9 @@ func TestBucketCASMultiHopCompactionRetryAndRefusals(t *testing.T) {
 	}
 
 	// 12. Interrupted ReclaimSealedAncestor that wrote reclaimed.json for candidate successor A
-	// and failed before head.json CAS: subsequent ReclaimSealedAncestor for valid successor B
-	// reconciles reclaimed.json via PutIfMatch so head.ReclaimedDigest matches reclaimed.json.
+	// and failed before head.json CAS: a subsequent ReclaimSealedAncestor for valid successor B
+	// finds byte-identical reclaimed.json (successor-independent), wins the head CAS, and is
+	// recorded as ReclaimedBy; A is then refused.
 	if _, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
 		SourceStream:       "s-stale-seal-src",
 		DestinationStream:  "s-stale-seal-dst-2",
@@ -1099,7 +1102,7 @@ func TestBucketCASMultiHopCompactionRetryAndRefusals(t *testing.T) {
 	if _, _, err := bs.ReclaimSealedAncestor(ctx, "s-stale-seal-src", "s-stale-seal-dst"); err == nil {
 		t.Fatal("expected simulated crash on first ReclaimSealedAncestor")
 	}
-	// Now reclaim via s-stale-seal-dst-2: reclaimed.json must be reconciled via PutIfMatch!
+	// Now reclaim via s-stale-seal-dst-2: the existing reclaimed.json is reused as-is.
 	if _, _, err := bs.ReclaimSealedAncestor(ctx, "s-stale-seal-src", "s-stale-seal-dst-2"); err != nil {
 		t.Fatalf("ReclaimSealedAncestor via s-stale-seal-dst-2 after interrupted dst-1 reclaim: %v", err)
 	}
@@ -1115,55 +1118,175 @@ func TestBucketCASMultiHopCompactionRetryAndRefusals(t *testing.T) {
 		t.Fatalf("State(s-stale-seal-dst-2) after reconciled reclamation: %v", err)
 	}
 
-	// 13. Concurrent ReclaimSealedAncestor callers A and B naming different valid successors:
-	// because reclaimed.json is a deterministic function of the sealed predecessor and written
-	// strictly once via PutIfAbsent (with the winning successor recorded in head.json's ReclaimedBy),
-	// a losing concurrent reclaimer cannot overwrite reclaimed.json underneath a committed head.
-	if err := bs.OpenStream(ctx, "s-conc-recl-src", "single_revision"); err != nil {
-		t.Fatalf("OpenStream s-conc-recl-src: %v", err)
+	// 13. Concurrent ReclaimSealedAncestor callers A and B naming different valid successors.
+	// reclaimed.json is a deterministic function of the sealed predecessor, written strictly once
+	// via PutIfAbsent and never replaced; the winning successor is recorded in head.json's
+	// ReclaimedBy. Each case stalls B after it has loaded the unreclaimed head, runs A to
+	// completion inside that window, then releases B and asserts nothing A committed changed.
+	readConcHead := func(src string) ([]byte, bucketcas.HeadDoc) {
+		t.Helper()
+		raw, _, _, err := mem.GetCoherent(ctx, "multihop/streams/"+src+"/head.json")
+		if err != nil {
+			t.Fatalf("read head.json for %s: %v", src, err)
+		}
+		var hd bucketcas.HeadDoc
+		if err := json.Unmarshal(raw, &hd); err != nil {
+			t.Fatalf("decode head.json for %s: %v", src, err)
+		}
+		return raw, hd
 	}
-	for _, dst := range []string{"s-conc-recl-dst-a", "s-conc-recl-dst-b"} {
+	runStaleReclaimCase := func(name string, stallOnHeadCAS bool) {
+		t.Helper()
+		src, dstA, dstB := "s-conc-"+name+"-src", "s-conc-"+name+"-dst-a", "s-conc-"+name+"-dst-b"
+		headKey := "multihop/streams/" + src + "/head.json"
+		reclKey := "multihop/streams/" + src + "/reclaimed.json"
+		if err := bs.OpenStream(ctx, src, "single_revision"); err != nil {
+			t.Fatalf("OpenStream %s: %v", src, err)
+		}
+		for _, dst := range []string{dstA, dstB} {
+			if _, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+				SourceStream:      src,
+				DestinationStream: dst,
+				Mode:              "single_revision",
+				ActorKind:         "human",
+				Actor:             "alice@example.com",
+				AuthRef:           "auth:conc-recl",
+				AuthDigest:        "sha256:" + strings.Repeat("e", 64),
+			}); err != nil {
+				t.Fatalf("SealAndCompactStream %s: %v", dst, err)
+			}
+		}
+		var (
+			stalled       bool
+			headAfterA    []byte
+			reclAfterA    []byte
+			reclReplaceOK = true
+		)
+		runA := func() {
+			stalled = true
+			if _, _, err := bs.ReclaimSealedAncestor(ctx, src, dstA); err != nil {
+				t.Fatalf("%s: A reclaim inside B's stale window: %v", name, err)
+			}
+			headAfterA, _ = readConcHead(src)
+			var err error
+			if reclAfterA, _, _, err = mem.GetCoherent(ctx, reclKey); err != nil {
+				t.Fatalf("%s: read reclaimed.json after A: %v", name, err)
+			}
+		}
+		mem.SetPutIfMatchHook(func(key, _ string, _ []byte) (bool, bool, stratum.CommitKnowledge, error) {
+			if key == reclKey {
+				// reclaimed.json must never be replaced, by either caller.
+				reclReplaceOK = false
+			}
+			if stallOnHeadCAS && key == headKey && !stalled {
+				// B holds a stale head validator and has already published reclaimed.json.
+				runA()
+			}
+			return false, false, 0, nil
+		})
+		if !stallOnHeadCAS {
+			mem.SetPutIfAbsentHook(func(key string, _ []byte) (bool, bool, stratum.CommitKnowledge, error) {
+				if key == reclKey && !stalled {
+					// B has loaded the unreclaimed head and is about to publish reclaimed.json.
+					runA()
+				}
+				return false, false, 0, nil
+			})
+		}
+		_, _, errB := bs.ReclaimSealedAncestor(ctx, src, dstB)
+		mem.SetPutIfMatchHook(nil)
+		mem.SetPutIfAbsentHook(nil)
+		if !stalled {
+			t.Fatalf("%s: stale-window hook did not fire", name)
+		}
+		if !errors.Is(errB, bucketcas.ErrInvalidStore) {
+			t.Fatalf("%s: stale B: got %v, want ErrInvalidStore", name, errB)
+		}
+		if !reclReplaceOK {
+			t.Fatalf("%s: reclaimed.json was replaced via PutIfMatch", name)
+		}
+		headAfterB, hd := readConcHead(src)
+		reclAfterB, _, _, err := mem.GetCoherent(ctx, reclKey)
+		if err != nil {
+			t.Fatalf("%s: read reclaimed.json after B: %v", name, err)
+		}
+		if !bytes.Equal(headAfterA, headAfterB) || !bytes.Equal(reclAfterA, reclAfterB) {
+			t.Fatalf("%s: stale B mutated committed state\nhead %s\ndoc %s", name, headAfterB, reclAfterB)
+		}
+		if !hd.Reclaimed || hd.ReclaimedBy != dstA {
+			t.Fatalf("%s: head reclaimed=%v reclaimed_by=%q, want true/%q", name, hd.Reclaimed, hd.ReclaimedBy, dstA)
+		}
+		for _, s := range []string{src, dstA, dstB} {
+			if _, _, err := bs.State(ctx, s); err != nil {
+				t.Fatalf("%s: State(%s) after concurrent reclamation: %v", name, s, err)
+			}
+		}
+		if _, _, err := bs.ReclaimSealedAncestor(ctx, src, dstA); err != nil {
+			t.Fatalf("%s: idempotent retry of winner: %v", name, err)
+		}
+		if _, _, err := bs.ReclaimSealedAncestor(ctx, src, dstB); !errors.Is(err, bucketcas.ErrInvalidStore) {
+			t.Fatalf("%s: loser retry: got %v, want ErrInvalidStore", name, err)
+		}
+	}
+	runStaleReclaimCase("stale-doc", false)
+	runStaleReclaimCase("stale-head", true)
+
+	// 14. Head CAS reply lost after the write landed: ReclaimSealedAncestor must surface
+	// *stratum.IndeterminateError (not ErrInvalidStore) so IndeterminateError-retrying callers
+	// retry; the same successor's retry then completes predecessor segment deletion.
+	{
+		src, dst := "s-unk-recl-src", "s-unk-recl-dst"
+		if err := bs.OpenStream(ctx, src, "single_revision"); err != nil {
+			t.Fatalf("OpenStream %s: %v", src, err)
+		}
+		if _, err := bs.Append(ctx, bucketcas.AppendInput{
+			Stream:         src,
+			Record:         makeRecordJSON(src, "u-1", 1, `{"v":1}`),
+			IdempotencyKey: "k-unk-1",
+		}); err != nil {
+			t.Fatalf("Append %s: %v", src, err)
+		}
 		if _, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
-			SourceStream:      "s-conc-recl-src",
-			DestinationStream: dst,
-			Mode:              "single_revision",
-			ActorKind:         "human",
-			Actor:             "alice@example.com",
-			AuthRef:           "auth:conc-recl",
-			AuthDigest:        "sha256:" + strings.Repeat("e", 64),
+			SourceStream:       src,
+			DestinationStream:  dst,
+			Mode:               "single_revision",
+			AllowDropUnretired: true,
+			ActorKind:          "human",
+			Actor:              "alice@example.com",
+			AuthRef:            "auth:unk-recl",
+			AuthDigest:         "sha256:" + strings.Repeat("f", 64),
 		}); err != nil {
 			t.Fatalf("SealAndCompactStream %s: %v", dst, err)
 		}
-	}
-	concHeadKey := "multihop/streams/s-conc-recl-src/head.json"
-	concInjected := false
-	mem.SetPutIfMatchHook(func(key, expected string, body []byte) (bool, bool, stratum.CommitKnowledge, error) {
-		if key != concHeadKey || concInjected {
+		headKey := "multihop/streams/" + src + "/head.json"
+		mem.SetPutIfMatchHook(func(key, _ string, _ []byte) (bool, bool, stratum.CommitKnowledge, error) {
+			if key == headKey {
+				mem.SetPutIfMatchHook(nil)
+				return true, true, stratum.CommitUnknown, errors.New("simulated lost reply after head commit")
+			}
 			return false, false, 0, nil
-		}
-		concInjected = true
+		})
+		_, _, err := bs.ReclaimSealedAncestor(ctx, src, dst)
 		mem.SetPutIfMatchHook(nil)
-		// Commit A's head CAS first, then let B attempt ReclaimSealedAncestor concurrently.
-		if _, commit, _, err := mem.PutIfMatch(ctx, concHeadKey, expected, body); err != nil || commit != stratum.CommitCommitted {
-			t.Fatalf("commit A head: %v, %v", commit, err)
+		var indErr *stratum.IndeterminateError
+		if !errors.As(err, &indErr) || errors.Is(err, bucketcas.ErrInvalidStore) {
+			t.Fatalf("head CAS CommitUnknown: got %v, want *stratum.IndeterminateError", err)
 		}
-		if _, _, err := bs.ReclaimSealedAncestor(ctx, "s-conc-recl-src", "s-conc-recl-dst-b"); !errors.Is(err, bucketcas.ErrInvalidStore) {
-			t.Fatalf("expected B to be refused with ErrInvalidStore after A committed head, got %v", err)
+		if _, hd := readConcHead(src); !hd.Reclaimed || hd.ReclaimedBy != dst {
+			t.Fatalf("expected landed reclaimed head bound to %q, got reclaimed=%v by=%q", dst, hd.Reclaimed, hd.ReclaimedBy)
 		}
-		return true, false, stratum.CommitCommitted, nil
-	})
-	if _, _, err := bs.ReclaimSealedAncestor(ctx, "s-conc-recl-src", "s-conc-recl-dst-a"); err != nil {
-		t.Fatalf("ReclaimSealedAncestor dst-a: %v", err)
-	}
-	if !concInjected {
-		t.Fatal("expected concurrent reclamation hook to fire")
-	}
-	for _, dst := range []string{"s-conc-recl-dst-a", "s-conc-recl-dst-b"} {
+		if n, _, err := bs.ReclaimSealedAncestor(ctx, src, dst); err != nil || n == 0 {
+			t.Fatalf("same-successor retry after CommitUnknown: n=%d err=%v", n, err)
+		}
+		segs, err := mem.ListPrefix(ctx, "multihop/streams/"+src+"/segments/")
+		if err != nil {
+			t.Fatalf("ListPrefix segments: %v", err)
+		}
+		if len(segs) != 0 {
+			t.Fatalf("expected predecessor segments deleted after retry, got %v", segs)
+		}
 		if _, _, err := bs.State(ctx, dst); err != nil {
-			t.Fatalf("State(%s) after concurrent reclamation: %v", dst, err)
+			t.Fatalf("State(%s) after indeterminate reclamation retry: %v", dst, err)
 		}
-	}
-	if _, _, err := bs.ReclaimSealedAncestor(ctx, "s-conc-recl-src", "s-conc-recl-dst-a"); err != nil {
-		t.Fatalf("idempotent retry of winning ReclaimSealedAncestor dst-a: %v", err)
 	}
 }

@@ -1507,6 +1507,9 @@ func (s *BucketStore) ReclaimSealedAncestor(ctx context.Context, predecessorStre
 		return 0, 0, err
 	}
 	if _, commit, _, err := s.obj.PutIfMatch(ctx, s.headKey(predecessorStream), predVal, hb); err != nil || commit != stratum.CommitCommitted {
+		if commit == stratum.CommitUnknown {
+			return 0, 0, &stratum.IndeterminateError{Op: "put_reclaimed_head", Key: predecessorStream, Err: err}
+		}
 		return 0, 0, fmt.Errorf("%w: reclaim head CAS failed: %v", ErrInvalidStore, err)
 	}
 	for _, k := range keysToDelete {
