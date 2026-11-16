@@ -63,7 +63,10 @@ fn verify_stat(st: &Stat, want_dir: bool, _opts: Options) -> Result<u64, FsRootE
     if st.st_uid != geteuid().as_raw() {
         return Err(FsRootError::Owner);
     }
-    if (u32::from(st.st_mode) & 0o077) != 0 {
+    // `st_mode` is `u16` on macOS and `u32` on Linux.
+    #[allow(clippy::useless_conversion)]
+    let mode = u32::from(st.st_mode);
+    if (mode & 0o077) != 0 {
         return Err(FsRootError::Perm);
     }
     Ok(st.st_size as u64)

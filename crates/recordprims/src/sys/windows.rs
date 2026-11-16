@@ -516,6 +516,7 @@ pub(crate) fn create_exclusive(
     let (p, _held) = resolve_verified_path(root, parts, opts)?;
     let f = OpenOptions::new()
         .access_mode(GENERIC_READ | GENERIC_WRITE | WRITE_DAC | READ_CONTROL)
+        .write(true)
         .create_new(true)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(&p)
@@ -566,6 +567,7 @@ pub(crate) fn open_lock_file(
     let (p, _held) = resolve_verified_path(root, parts, opts)?;
     let f = OpenOptions::new()
         .access_mode(GENERIC_READ | GENERIC_WRITE | WRITE_DAC | READ_CONTROL)
+        .write(true)
         .create(true)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(&p)
