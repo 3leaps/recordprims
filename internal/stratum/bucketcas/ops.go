@@ -1480,7 +1480,16 @@ func (s *BucketStore) ReclaimSealedAncestor(ctx context.Context, predecessorStre
 	if err != nil {
 		return 0, 0, err
 	}
-	if _, commit, conflict, err := s.obj.PutIfAbsent(ctx, s.reclaimedKey(predecessorStream), rdocBytes); err != nil {
+	// reclaimed.json is the only durable summary of the predecessor once its
+	// segments are deleted: proceed only on a fresh CommitCommitted or on a
+	// determinate conflict whose existing bytes are identical.
+	if _, commit, conflict, err := s.obj.PutIfAbsent(ctx, s.reclaimedKey(predecessorStream), rdocBytes); err != nil || commit != stratum.CommitCommitted {
+		if commit == stratum.CommitUnknown {
+			return 0, 0, &stratum.IndeterminateError{Op: "put_reclaimed_doc", Key: predecessorStream, Err: err}
+		}
+		if err == nil {
+			return 0, 0, fmt.Errorf("%w: reclaimed.json publication returned %v without an error", ErrInvalidStore, commit)
+		}
 		if conflict == stratum.ConflictAlreadyExists {
 			existingRaw, _, _, gerr := s.obj.GetCoherent(ctx, s.reclaimedKey(predecessorStream))
 			if gerr != nil {
@@ -1489,8 +1498,6 @@ func (s *BucketStore) ReclaimSealedAncestor(ctx context.Context, predecessorStre
 			if !bytes.Equal(existingRaw, rdocBytes) {
 				return 0, 0, fmt.Errorf("%w: existing reclaimed.json mismatch for %q", ErrInvalidStore, predecessorStream)
 			}
-		} else if commit == stratum.CommitUnknown {
-			return 0, 0, &stratum.IndeterminateError{Op: "put_reclaimed_doc", Key: predecessorStream, Err: err}
 		} else {
 			return 0, 0, err
 		}

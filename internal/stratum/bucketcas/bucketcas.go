@@ -223,6 +223,7 @@ func jcsCanonicalBytes(v any) ([]byte, error) {
 // It refuses immediately if the backend lacks required conditional-PUT or
 // coherent-read capabilities.
 func Init(ctx context.Context, obj stratum.ConditionalObjectStore, opts Options) (*BucketStore, error) {
+	obj = enforceCommitContract(obj)
 	if err := checkCaps(obj); err != nil {
 		return nil, err
 	}
@@ -341,6 +342,7 @@ func Init(ctx context.Context, obj stratum.ConditionalObjectStore, opts Options)
 // It refuses immediately if the backend lacks required conditional-PUT or
 // coherent-read capabilities.
 func Open(ctx context.Context, obj stratum.ConditionalObjectStore, opts Options) (*BucketStore, error) {
+	obj = enforceCommitContract(obj)
 	if err := checkCaps(obj); err != nil {
 		return nil, err
 	}
