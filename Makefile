@@ -9,7 +9,7 @@ export PYTHON
 
 .DEFAULT_GOAL := help
 .PHONY: all help check check-platform precommit fmt fmt-check lint test test-go test-rust \
-        test-faultpoints faultpoint-exclusion contract-check contract-oracle conformance deps-check api-scan api-scan-test deny go-standalone surface-scan content-check \
+        test-faultpoints faultpoint-exclusion contract-check contract-oracle conformance crosscheck unsafe-check unsafe-check-test deps-check api-scan api-scan-test deny go-standalone surface-scan content-check \
         surface-tests prepush pr-final workflow-pin release-tooling-test checklist-targets doctor doctor-test \
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
         release-github-preflight release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
@@ -22,7 +22,7 @@ all: check
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*## "} /^[a-z][a-z0-9-]*:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-check-platform: fmt-check lint test test-faultpoints faultpoint-exclusion contract-check conformance deps-check api-scan api-scan-test content-check surface-tests checklist-targets version-check license-check license-check-test ## Platform-native subset of check (no goneat, cargo-deny, or PyYAML required)
+check-platform: fmt-check lint test test-faultpoints faultpoint-exclusion contract-check conformance crosscheck unsafe-check unsafe-check-test deps-check api-scan api-scan-test content-check surface-tests checklist-targets version-check license-check license-check-test ## Platform-native subset of check (no goneat, cargo-deny, or PyYAML required)
 
 check: check-platform contract-oracle workflow-pin release-tooling-test deny ## Everything CI runs on one host
 
@@ -201,6 +201,15 @@ faultpoint-exclusion: ## Release builds compile no failure-injection seam
 conformance: ## The v1 vectors through the implemented stages; the ledger matches the run
 	CGO_ENABLED=0 go vet -tags recordprims_conformance ./internal/conformance
 	CGO_ENABLED=0 go test -count=1 -tags recordprims_conformance ./internal/conformance
+
+crosscheck: ## Differential store/body check and cross-open between Go and Rust
+	@PYTHON=$(PYTHON) scripts/crosscheck.sh
+
+unsafe-check: ## Only crates/recordprims/src/sys/windows.rs may carry #[allow(unsafe_code)]
+	@scripts/unsafe-check.sh
+
+unsafe-check-test: ## Controls for unsafe-check
+	@scripts/unsafe-check.test.sh
 
 deps-check: ## Sibling-prim allow-list; cgo-free Go tree
 	PYTHON=$(PYTHON) scripts/deps-check.sh

@@ -12,5 +12,21 @@ homepage = "https://github.com/3leaps/recordprims"
 authors = ["3leaps Architecture Council"]
 publish = false
 
+[workspace.dependencies]
+canonprims-core = "=0.1.4"
+canonprims-json = "=0.1.4"
+getrandom = "0.3"
+rustix = { version = "1.0", default-features = false, features = ["std", "fs", "process"] }
+sha2 = "0.10"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+] }
+
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"

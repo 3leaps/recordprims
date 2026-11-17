@@ -1,0 +1,497 @@
+[
+  {
+    "id": "init-and-open-defaults",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z"},
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "init-custom-window-and-stream",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z", "window_ms": 60000, "body_removal_stream": "custom-bodies"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z"},
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "init-refuses-non-empty-dir",
+    "steps": [
+      {"op": "fs_write", "rel": "stray.txt", "data_utf8": "hello"},
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"}
+    ]
+  },
+  {
+    "id": "init-refuses-bad-window",
+    "steps": [
+      {"op": "init", "subdir": "neg", "window_ms": -1000},
+      {"op": "init", "subdir": "huge", "window_ms": 9007199254740992}
+    ]
+  },
+  {
+    "id": "init-refuses-bad-stream-name",
+    "steps": [
+      {"op": "init", "subdir": "s1", "body_removal_stream": "bad/name"}
+    ]
+  },
+  {
+    "id": "open-refuses-missing-store-file",
+    "steps": [
+      {"op": "init"},
+      {"op": "fs_remove", "rel": "STORE"},
+      {"op": "open"}
+    ]
+  },
+  {
+    "id": "open-refuses-v1-legacy-format",
+    "steps": [
+      {"op": "init"},
+      {"op": "fs_write", "rel": "STORE", "data_utf8": "{\"format\":\"recordprims-fs/v1\",\"store_id\":\"0123456789abcdef0123456789abcdef\",\"key_generation\":1,\"created_at\":\"2026-10-25T12:00:00.000000Z\",\"profile_digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"idempotency_window_ms\":604800000}\n"},
+      {"op": "open"}
+    ]
+  },
+  {
+    "id": "open-refuses-tampered-profile",
+    "steps": [
+      {"op": "init"},
+      {"op": "fs_write", "rel": "profile.json", "data_utf8": "{}\n"},
+      {"op": "open"}
+    ]
+  },
+  {
+    "id": "open-refuses-wrong-attempt-key-len",
+    "steps": [
+      {"op": "init"},
+      {"op": "fs_write", "rel": "attempt.key", "data_utf8": "short"},
+      {"op": "open"}
+    ]
+  },
+  {
+    "id": "corrupt-designated-journal-refused",
+    "steps": [
+      {"op": "init"},
+      {"op": "open"},
+      {"op": "put_body", "data_utf8": "payload", "media_type": "text/plain"},
+      {"op": "close"},
+      {"op": "fs_write", "rel": "streams/29a71163aa38dbf3c255c74ad090b456/journal.ndjson", "data_utf8": "not-json\n"},
+      {"op": "open"},
+      {"op": "put_body", "data_utf8": "payload2", "media_type": "text/plain"},
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "close-and-closed-handle-errors",
+    "steps": [
+      {"op": "init"},
+      {"op": "open"},
+      {"op": "close"},
+      {"op": "close"},
+      {"op": "put_body", "data_utf8": "after-close", "media_type": "text/plain"},
+      {
+        "op": "remove_body",
+        "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "length": 0,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      }
+    ]
+  },
+  {
+    "id": "put-body-and-idempotent-reput",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z"},
+      {"op": "put_body", "data_utf8": "", "media_type": "text/plain"},
+      {"op": "put_body", "data_utf8": "hello world\n", "media_type": "application/octet-stream"},
+      {"op": "set_clock", "at": "2026-10-25T12:00:02.000000Z"},
+      {"op": "put_body", "data_utf8": "hello world\n", "media_type": "application/octet-stream"},
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "put-body-refuses-bad-media-type",
+    "steps": [
+      {"op": "init"},
+      {"op": "open"},
+      {"op": "put_body", "data_utf8": "abc", "media_type": ""},
+      {"op": "put_body", "data_utf8": "abc", "media_type": "Text/Plain"},
+      {"op": "put_body", "data_utf8": "abc", "media_type": "text/plain; charset=utf-8"},
+      {"op": "put_body", "data_utf8": "abc", "media_type": "not-a-media-type"},
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "put-body-refuses-clock-regression",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:10.000000Z"},
+      {"op": "put_body", "data_utf8": "first", "media_type": "text/plain"},
+      {"op": "set_clock", "at": "2026-10-25T12:00:05.000000Z"},
+      {"op": "put_body", "data_utf8": "second", "media_type": "text/plain"},
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "put-body-refuses-when-locked",
+    "steps": [
+      {"op": "init"},
+      {"op": "open", "lock_timeout_ms": 0},
+      {"op": "hold_lock_and_put", "data_utf8": "contended", "media_type": "text/plain"},
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "remove-body-lifecycle-outcomes",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z", "pending_body_ttl_ms": 60000},
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {"op": "put_body", "data_utf8": "hello world\n", "media_type": "text/plain"},
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {"op": "set_clock", "at": "2026-10-25T12:02:00.000000Z"},
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "complete_incarnation": 99,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "complete_incarnation": 1,
+        "reason": "operator",
+        "provenance": {"actor_kind": "human", "actor": "ops"},
+        "authorization": {
+          "ref": "ticket-123",
+          "digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "remove-body-missing-and-corrupt",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z", "pending_body_ttl_ms": 1000},
+      {"op": "put_body", "data_utf8": "hello world\n", "media_type": "text/plain"},
+      {"op": "set_clock", "at": "2026-10-25T12:00:10.000000Z"},
+      {"op": "fs_write", "rel": "bodies/sha256/a9/a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447", "data_utf8": "tampered!"},
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {"op": "fs_remove", "rel": "bodies/sha256/a9/a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447"},
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "remove-body-protection-unknown-sealed-stream",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z", "pending_body_ttl_ms": 1000},
+      {"op": "put_body", "data_utf8": "hello world\n", "media_type": "text/plain"},
+      {"op": "set_clock", "at": "2026-10-25T12:00:10.000000Z"},
+      {"op": "fs_mkdir", "rel": "streams/00000000000000000000000000000001"},
+      {"op": "fs_write", "rel": "streams/00000000000000000000000000000001/SEALED", "data_utf8": "{}\n"},
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "remove-body-refuses-bad-request",
+    "steps": [
+      {"op": "init"},
+      {"op": "open"},
+      {
+        "op": "remove_body",
+        "digest": "not-a-digest",
+        "length": 0,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "length": 0,
+        "reason": "unknown_reason",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "length": 0,
+        "reason": "retention",
+        "provenance": {"actor_kind": "robot", "actor": "bot-with-bad-actor-kind"}
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "length": 0,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"},
+        "authorization": {"ref": "bad/ref", "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+      },
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "parse-instant-vectors",
+    "steps": [
+      {"op": "parse_instant", "input": "2026-10-25T12:34:56.789012Z"},
+      {"op": "parse_instant", "input": "2026-10-25T12:34:56Z"},
+      {"op": "parse_instant", "input": "2026-10-25T12:34:56.789012+00:00"},
+      {"op": "parse_instant", "input": "2026-10-25T12:34:60.000000Z"},
+      {"op": "parse_instant", "input": "0000-01-01T00:00:00.000000Z"}
+    ]
+  },
+  {
+    "id": "open-refuses-profile-uncompiled-stratum",
+    "steps": [
+      {"op": "init"},
+      {
+        "op": "fs_write",
+        "rel": "profile.json",
+        "data_utf8": "{\"capabilities\":[\"contract: durable-record/v1\"],\"origin\":\"declared\",\"conformance\":\"none\",\"build\":{\"name\":\"recordprims\",\"version\":\"0.0.1\",\"target\":\"arm64-darwin\",\"native_dependencies\":[],\"compiled_strata\":[\"journal-files\"],\"compiled_capabilities\":[\"revisioned\",\"body_ref\",\"tombstoning\"]},\"runtime\":{\"stratum\":\"ndjson-cas\",\"failure_model\":\"survives_process_loss\",\"commit_strategy\":\"fsync_file_and_dir\",\"commit_note\":\"fsync file and directory before receipt\",\"history_policy\":\"append_only\",\"enabled_capabilities\":[\"revisioned\",\"body_ref\",\"tombstoning\"],\"idempotency_window_ms\":604800000,\"clock_skew_bound_ms\":0,\"body_removal_stream\":\"bodies\",\"incarnation_allocation\":\"prewrite_durable_ledger\",\"deletion\":{\"live_head\":\"supported\",\"retained_history\":\"unsupported\",\"managed_replicas\":\"not_applicable\",\"external_bodies\":\"supported\",\"decryption\":\"not_applicable\",\"unmanaged_copies\":\"outside_claim\"}}}\n"
+      },
+      {
+        "op": "fs_write",
+        "rel": "STORE",
+        "data_utf8": "{\"format\":\"recordprims-fs/v2\",\"store_id\":\"0123456789abcdef0123456789abcdef\",\"key_generation\":1,\"created_at\":\"2026-10-25T12:00:00.000000Z\",\"profile_digest\":\"sha256:443e9f0b343f05bc0f34cb8199cfbcfdf8aab30a78d368fa64003c1a01f951b6\",\"idempotency_window_ms\":604800000}\n"
+      },
+      {"op": "open"}
+    ]
+  },
+  {
+    "id": "designated-journal-missing-provenance-refused",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z"},
+      {
+        "op": "fs_write",
+        "rel": "streams/29a71163aa38dbf3c255c74ad090b456/journal.ndjson",
+        "data_utf8": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"bodies\",\"type\":\"stream_opened\",\"at\":\"2026-10-25T12:00:00.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_process_loss\"}\n{\"v\":1,\"seq\":2,\"group\":2,\"group_size\":1,\"stream\":\"bodies\",\"type\":\"body_published\",\"at\":\"2026-10-25T12:00:01.000000Z\",\"body\":{\"digest\":\"sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447\",\"length\":12},\"incarnation\":1}\n{\"v\":1,\"seq\":3,\"group\":3,\"group_size\":1,\"stream\":\"bodies\",\"type\":\"body_removal_started\",\"at\":\"2026-10-25T12:00:02.000000Z\",\"body\":{\"digest\":\"sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447\",\"length\":12},\"incarnation\":1,\"reason\":\"retention\"}\n"
+      },
+      {"op": "put_body", "data_utf8": "hello world\n", "media_type": "text/plain"},
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "remove-body-protection-unknown-unclosed-group",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z", "pending_body_ttl_ms": 1000},
+      {"op": "put_body", "data_utf8": "hello world\n", "media_type": "text/plain"},
+      {"op": "set_clock", "at": "2026-10-25T12:00:10.000000Z"},
+      {"op": "fs_mkdir", "rel": "streams/ed7002b439e9ac845f22357d822bac14"},
+      {
+        "op": "fs_write",
+        "rel": "streams/ed7002b439e9ac845f22357d822bac14/journal.ndjson",
+        "data_utf8": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":2,\"stream\":\"content\",\"type\":\"stream_opened\",\"at\":\"2026-10-25T12:00:00.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_process_loss\"}\n"
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "remove-body-still-referenced-valid-untombstoned",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z", "pending_body_ttl_ms": 1000},
+      {"op": "put_body", "data_utf8": "hello world\n", "media_type": "text/plain"},
+      {"op": "set_clock", "at": "2026-10-25T12:00:10.000000Z"},
+      {"op": "fs_mkdir", "rel": "streams/ed7002b439e9ac845f22357d822bac14"},
+      {
+        "op": "fs_write",
+        "rel": "streams/ed7002b439e9ac845f22357d822bac14/journal.ndjson",
+        "data_utf8": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"content\",\"type\":\"stream_opened\",\"at\":\"2026-10-25T12:00:00.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_process_loss\"}\n{\"v\":1,\"seq\":2,\"group\":2,\"group_size\":1,\"stream\":\"content\",\"type\":\"appended\",\"at\":\"2026-10-25T12:00:01.000000Z\",\"idempotency_key\":\"k-1\",\"digest\":\"sha256:d368c8bbef0c601b7d65cedeed735a1a42ac804e9943dc30937b5bbc4b06b7ea\",\"body_status\":\"verified\",\"record\":{\"v\":1,\"stream\":\"content\",\"record_id\":\"rec-1\",\"revision\":1,\"payload_contract\":\"contract: test-payload/v1\",\"provenance\":{\"actor_kind\":\"human\",\"actor\":\"ops\"},\"classification\":{\"retention\":\"standard\",\"sensitivity\":\"0-public\"},\"produced_at\":{\"instant\":\"2026-10-25T12:00:01.000000Z\",\"source\":\"producer_clock\"},\"body\":{\"digest\":\"sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447\",\"length\":12,\"media_type\":\"text/plain\"}}}\n{\"v\":1,\"seq\":3,\"group\":3,\"group_size\":1,\"stream\":\"content\",\"type\":\"tombstoned\",\"at\":\"2026-10-25T12:00:02.000000Z\",\"request\":{\"v\":1,\"stream\":\"content\",\"idempotency_key\":\"hold-1\",\"action\":\"tombstone\",\"scope\":\"record\",\"target\":{\"stream\":\"content\",\"record_id\":\"rec-1\",\"revision\":1,\"digest\":\"sha256:d368c8bbef0c601b7d65cedeed735a1a42ac804e9943dc30937b5bbc4b06b7ea\"},\"reason\":\"rights_restricted\",\"evidence\":{\"ref\":\"ev-1\",\"digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\"},\"observed_at\":\"2026-10-25T12:00:02.000000Z\",\"provenance\":{\"actor_kind\":\"human\",\"actor\":\"ops\"}},\"request_digest\":\"sha256:655370e4b1eee5b87ddcedc7435e14eca8e81dd8a45c128d55fc6ba25b16f158\"}\n{\"v\":1,\"seq\":4,\"group\":4,\"group_size\":1,\"stream\":\"content\",\"type\":\"untombstoned\",\"at\":\"2026-10-25T12:00:03.000000Z\",\"request\":{\"v\":1,\"stream\":\"content\",\"idempotency_key\":\"restore-1\",\"action\":\"restore\",\"restores\":3,\"scope\":\"record\",\"target\":{\"stream\":\"content\",\"record_id\":\"rec-1\",\"revision\":1,\"digest\":\"sha256:d368c8bbef0c601b7d65cedeed735a1a42ac804e9943dc30937b5bbc4b06b7ea\"},\"reason\":\"hold_released\",\"evidence\":{\"ref\":\"ev-2\",\"digest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\"},\"observed_at\":\"2026-10-25T12:00:03.000000Z\",\"provenance\":{\"actor_kind\":\"human\",\"actor\":\"ops\"}},\"request_digest\":\"sha256:e6f9b9cad9ce7ff7043c4860e4aebbaef5a7a92c824d51afc45ff21f83585225\"}\n"
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "remove-body-protection-unknown-bad-untombstoned",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z", "pending_body_ttl_ms": 1000},
+      {"op": "put_body", "data_utf8": "hello world\n", "media_type": "text/plain"},
+      {"op": "set_clock", "at": "2026-10-25T12:00:10.000000Z"},
+      {"op": "fs_mkdir", "rel": "streams/ed7002b439e9ac845f22357d822bac14"},
+      {
+        "op": "fs_write",
+        "rel": "streams/ed7002b439e9ac845f22357d822bac14/journal.ndjson",
+        "data_utf8": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"content\",\"type\":\"stream_opened\",\"at\":\"2026-10-25T12:00:00.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_process_loss\"}\n{\"v\":1,\"seq\":2,\"group\":2,\"group_size\":1,\"stream\":\"content\",\"type\":\"appended\",\"at\":\"2026-10-25T12:00:01.000000Z\",\"idempotency_key\":\"k-1\",\"digest\":\"sha256:d368c8bbef0c601b7d65cedeed735a1a42ac804e9943dc30937b5bbc4b06b7ea\",\"body_status\":\"verified\",\"record\":{\"v\":1,\"stream\":\"content\",\"record_id\":\"rec-1\",\"revision\":1,\"payload_contract\":\"contract: test-payload/v1\",\"provenance\":{\"actor_kind\":\"human\",\"actor\":\"ops\"},\"classification\":{\"retention\":\"standard\",\"sensitivity\":\"0-public\"},\"produced_at\":{\"instant\":\"2026-10-25T12:00:01.000000Z\",\"source\":\"producer_clock\"},\"body\":{\"digest\":\"sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447\",\"length\":12,\"media_type\":\"text/plain\"}}}\n{\"v\":1,\"seq\":3,\"group\":3,\"group_size\":1,\"stream\":\"content\",\"type\":\"tombstoned\",\"at\":\"2026-10-25T12:00:02.000000Z\",\"request\":{\"v\":1,\"stream\":\"content\",\"idempotency_key\":\"hold-1\",\"action\":\"tombstone\",\"scope\":\"record\",\"target\":{\"stream\":\"content\",\"record_id\":\"rec-1\",\"revision\":1,\"digest\":\"sha256:d368c8bbef0c601b7d65cedeed735a1a42ac804e9943dc30937b5bbc4b06b7ea\"},\"reason\":\"rights_restricted\",\"evidence\":{\"ref\":\"ev-1\",\"digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\"},\"observed_at\":\"2026-10-25T12:00:02.000000Z\",\"provenance\":{\"actor_kind\":\"human\",\"actor\":\"ops\"}},\"request_digest\":\"sha256:655370e4b1eee5b87ddcedc7435e14eca8e81dd8a45c128d55fc6ba25b16f158\"}\n{\"v\":1,\"seq\":4,\"group\":4,\"group_size\":1,\"stream\":\"content\",\"type\":\"untombstoned\",\"at\":\"2026-10-25T12:00:03.000000Z\",\"request\":{\"v\":1,\"stream\":\"content\",\"idempotency_key\":\"restore-1\",\"action\":\"restore\",\"restores\":3,\"scope\":\"record\",\"target\":{\"stream\":\"content\",\"record_id\":\"rec-1\",\"revision\":1,\"digest\":\"sha256:d368c8bbef0c601b7d65cedeed735a1a42ac804e9943dc30937b5bbc4b06b7ea\"},\"reason\":\"hold_released\",\"evidence\":{\"ref\":\"ev-2\",\"digest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\"},\"observed_at\":\"2026-10-25T12:00:03.000000Z\",\"provenance\":{\"actor_kind\":\"human\",\"actor\":\"ops\"}},\"request_digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\"}\n"
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "remove-body-protection-unknown-bad-continuation-cut",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z", "pending_body_ttl_ms": 1000},
+      {"op": "put_body", "data_utf8": "hello world\n", "media_type": "text/plain"},
+      {"op": "set_clock", "at": "2026-10-25T12:00:10.000000Z"},
+      {"op": "fs_mkdir", "rel": "streams/25a6634263c1b1f6fc4697a04e2b9904"},
+      {
+        "op": "fs_write",
+        "rel": "streams/25a6634263c1b1f6fc4697a04e2b9904/journal.ndjson",
+        "data_utf8": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"src\",\"type\":\"stream_opened\",\"at\":\"2026-10-25T12:00:00.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_process_loss\"}\n"
+      },
+      {"op": "fs_mkdir", "rel": "streams/0618013fa64ac6807bdea212bbdd08ff"},
+      {
+        "op": "fs_write",
+        "rel": "streams/0618013fa64ac6807bdea212bbdd08ff/journal.ndjson",
+        "data_utf8": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"dst\",\"type\":\"stream_opened\",\"at\":\"2026-10-25T12:00:01.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_process_loss\",\"continues\":{\"capability\":\"contract: durable-record/v1\",\"stream\":\"src\",\"cut_seq\":1,\"cut_digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\"}}\n"
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "remove-body-removed-with-reviewed-continuation",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z", "pending_body_ttl_ms": 1000},
+      {"op": "put_body", "data_utf8": "hello world\n", "media_type": "text/plain"},
+      {"op": "set_clock", "at": "2026-10-25T12:00:10.000000Z"},
+      {"op": "fs_mkdir", "rel": "streams/25a6634263c1b1f6fc4697a04e2b9904"},
+      {
+        "op": "fs_write",
+        "rel": "streams/25a6634263c1b1f6fc4697a04e2b9904/journal.ndjson",
+        "data_utf8": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"src\",\"type\":\"stream_opened\",\"at\":\"2026-10-25T12:00:00.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_process_loss\"}\n"
+      },
+      {"op": "fs_mkdir", "rel": "streams/0618013fa64ac6807bdea212bbdd08ff"},
+      {
+        "op": "fs_write",
+        "rel": "streams/0618013fa64ac6807bdea212bbdd08ff/journal.ndjson",
+        "data_utf8": "{\"v\":1,\"seq\":1,\"group\":1,\"group_size\":1,\"stream\":\"dst\",\"type\":\"stream_opened\",\"at\":\"2026-10-25T12:00:01.000000Z\",\"mode\":\"single_revision\",\"failure_model\":\"survives_process_loss\",\"continues\":{\"capability\":\"contract: durable-record/v1\",\"stream\":\"src\",\"cut_seq\":1,\"cut_digest\":\"sha256:bedaa5088d7dfae1b11b97dc31c8005c486ab5be5fa8eafe85408919d6b1a45f\"}}\n{\"v\":1,\"seq\":2,\"group\":2,\"group_size\":1,\"stream\":\"dst\",\"type\":\"restrictions_reviewed\",\"at\":\"2026-10-25T12:00:02.000000Z\",\"source\":{\"capability\":\"contract: durable-record/v1\",\"stream\":\"src\",\"cut_seq\":1,\"cut_digest\":\"sha256:bedaa5088d7dfae1b11b97dc31c8005c486ab5be5fa8eafe85408919d6b1a45f\"},\"source_state_digest\":\"sha256:5cb72fd9337154074dc353b97f04c8dc84bba51bf1aa1f73db49a14dd890b93c\",\"destination_cut_seq\":1,\"destination_applied_state_digest\":\"sha256:0fcac3330b0dcc2f731b0f96c9498f66c305a5adbf63e268a19c81cffdaf280a\",\"authorization\":{\"ref\":\"auth-rev-1\",\"digest\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\"},\"provenance\":{\"actor_kind\":\"human\",\"actor\":\"ops\"}}\n"
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "remove-body-protection-unknown-malformed-lease-incarnation",
+    "steps": [
+      {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+      {"op": "open", "at": "2026-10-25T12:00:01.000000Z", "pending_body_ttl_ms": 1000},
+      {"op": "put_body", "data_utf8": "hello world\n", "media_type": "text/plain"},
+      {"op": "set_clock", "at": "2026-10-25T12:00:10.000000Z"},
+      {
+        "op": "fs_write",
+        "rel": "bodies/pending/a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447/0123456789abcdef0123456789abcdef",
+        "data_utf8": "{\"incarnation\":\"bad\",\"expires_at\":\"2026-10-25T12:00:02.000000Z\"}\n"
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {
+        "op": "fs_write",
+        "rel": "bodies/pending/a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447/0123456789abcdef0123456789abcdef",
+        "data_utf8": "{\"expires_at\":\"2026-10-25T12:00:02.000000Z\"}\n"
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {
+        "op": "fs_write",
+        "rel": "bodies/pending/a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447/0123456789abcdef0123456789abcdef",
+        "data_utf8": "{\"incarnation\":0,\"expires_at\":\"2026-10-25T12:00:02.000000Z\"}\n"
+      },
+      {
+        "op": "remove_body",
+        "digest": "sha256:a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+        "length": 12,
+        "reason": "retention",
+        "provenance": {"actor_kind": "process", "actor": "gc"}
+      },
+      {"op": "close"}
+    ]
+  },
+  {
+    "id": "driver-cleanup-io-detail",
+    "steps": [
+      {"op": "probe_cleanup_err"}
+    ]
+  }
+]
