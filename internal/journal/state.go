@@ -50,6 +50,7 @@ type State struct {
 	retired                 map[string]bool
 	restrictedAt            []int64
 	source                  []*wire.Node
+	sealedSource            *SealedSourceSummary
 	continues               *wire.Node
 	imports                 []importItem
 	review                  *wire.Node

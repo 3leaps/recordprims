@@ -940,6 +940,22 @@ func (s *Store) checkRemovalEligibility(h string, length int64) (RemoveBodyOutco
 		if sh == desigHash {
 			continue
 		}
+		sdir := dirStreams + "/" + sh
+		if reclaimed, rerr := s.exists(sdir + "/reclaimed.json"); rerr != nil {
+			return BodyProtectionUnknown, nil
+		} else if reclaimed {
+			held, refd, ok := s.checkReclaimedStreamDirForRemoval(sh, target)
+			if !ok {
+				return BodyProtectionUnknown, nil
+			}
+			if held {
+				anyHeld = true
+			}
+			if refd {
+				anyReferenced = true
+			}
+			continue
+		}
 		st, ok := s.replaySharingStreamDir(sh)
 		if !ok {
 			return BodyProtectionUnknown, nil
@@ -967,41 +983,72 @@ func (s *Store) checkRemovalEligibility(h string, length int64) (RemoveBodyOutco
 	return "", nil
 }
 
-func (s *Store) replaySharingStreamDir(sh string) (*journal.State, bool) {
+func copySeenMap(seen map[string]bool) map[string]bool {
+	cp := make(map[string]bool, len(seen)+1)
+	for k, v := range seen {
+		cp[k] = v
+	}
+	return cp
+}
+
+func (s *Store) replaySourceStreamDir(sh string, seen map[string]bool) (*journal.State, bool, bool) {
 	sdir := dirStreams + "/" + sh
 	if sealed, err := s.exists(sdir + "/SEALED"); err != nil || sealed {
-		return nil, false
+		return nil, false, false
 	}
 	raw, err := readFileVerified(s.root, sdir+"/journal.ndjson", s.fso, maxJournalBytes)
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	nodes, err := wire.IngestLines(raw, wire.KindJournalEntry)
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	st, err := journal.New(s.windowNode())
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	st.SetProfile(s.profileNode)
 	for i, node := range nodes {
 		if err := shape.Validate("v1/journal-entry.schema.json", node); err != nil {
-			return nil, false
+			return nil, false, false
 		}
 		if i == 0 && node.Get("continues") != nil {
-			if !s.attachContinuationChain(st, node.Get("continues"), map[string]bool{sh: true}) {
-				return nil, false
+			if !s.attachContinuationChain(st, node.Get("continues"), copySeenMap(seen)) {
+				return nil, false, false
 			}
 		}
 		if err := st.Ingest(node); err != nil {
-			return nil, false
+			return nil, false, false
 		}
 	}
 	if err := journal.CheckJournal(st.Journal()); err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	if streamHash(st.Stream()) != sh {
+		return nil, false, false
+	}
+	var sealedFinal bool
+	if hasSeal, err := s.exists(sdir + "/stream-seal.json"); err != nil {
+		return nil, false, false
+	} else if hasSeal {
+		rep := &replayedStream{
+			st:      st,
+			sdir:    sdir,
+			raw:     raw,
+			lastSeq: int64(st.Len()),
+		}
+		if !s.verifySealedStreamState(st.Stream(), rep) {
+			return nil, false, false
+		}
+		sealedFinal = true
+	}
+	return st, sealedFinal, true
+}
+
+func (s *Store) replaySharingStreamDir(sh string) (*journal.State, bool) {
+	st, _, ok := s.replaySourceStreamDir(sh, map[string]bool{sh: true})
+	if !ok {
 		return nil, false
 	}
 	if st.ReviewPending() {
@@ -1023,13 +1070,26 @@ func (s *Store) attachContinuationChain(dst *journal.State, cont *wire.Node, see
 	if seen[srcHash] || srcHash == streamHash(s.profile.Runtime.BodyRemovalStream) {
 		return false
 	}
-	seen[srcHash] = true
-	srcSt, ok := s.replaySharingStreamDir(srcHash)
+	nextSeen := copySeenMap(seen)
+	nextSeen[srcHash] = true
+	sdir := dirStreams + "/" + srcHash
+	if reclaimed, err := s.exists(sdir + "/reclaimed.json"); err != nil {
+		return false
+	} else if reclaimed {
+		summary, ok := s.verifyReclaimedPredecessorDir(streamNode.Str, nextSeen)
+		if !ok {
+			return false
+		}
+		if err := dst.SetSealedSource(summary); err != nil {
+			return false
+		}
+		return true
+	}
+	srcSt, sealedFinal, ok := s.replaySourceStreamDir(srcHash, nextSeen)
 	if !ok || srcSt.Stream() != streamNode.Str {
 		return false
 	}
-	srcArr := &wire.Node{Kind: wire.Array, Elems: srcSt.Journal()}
-	if err := dst.SetSourceChain(journal.SourceInput{SourceJournal: srcArr}); err != nil {
+	if err := dst.AttachVerifiedSourceState(srcSt, sealedFinal); err != nil {
 		return false
 	}
 	return true

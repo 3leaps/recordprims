@@ -22,6 +22,53 @@ type importItem struct {
 	pin Pin
 }
 
+// SealedCutInfo records the prefix digest and effective restriction manifest
+// digest of a complete cut on a sealed-and-reclaimed predecessor stream.
+type SealedCutInfo struct {
+	CutSeq         int64  `json:"cut_seq"`
+	CutDigest      string `json:"cut_digest"`
+	ManifestDigest string `json:"manifest_digest"`
+}
+
+// SealedSourceSummary describes a verified sealed predecessor stream whose raw
+// journal has been reclaimed after restriction review.
+type SealedSourceSummary struct {
+	Capability                         string
+	Stream                             string
+	CutSeq                             int64
+	CutDigest                          string
+	EffectiveRestrictionManifestDigest string
+	KnownPins                          map[Pin]bool
+	KnownPinSeq                        map[Pin]int64
+	HistoricalCuts                     []SealedCutInfo
+	HasAncestorHold                    bool
+}
+
+func (ss *SealedSourceSummary) cutAt(cutSeq int64) (SealedCutInfo, bool) {
+	if cutSeq == ss.CutSeq {
+		return SealedCutInfo{
+			CutSeq:         ss.CutSeq,
+			CutDigest:      ss.CutDigest,
+			ManifestDigest: ss.EffectiveRestrictionManifestDigest,
+		}, true
+	}
+	for _, ci := range ss.HistoricalCuts {
+		if ci.CutSeq == cutSeq {
+			return ci, true
+		}
+	}
+	return SealedCutInfo{}, false
+}
+
+// ImportedPinBinding pairs an imported source revision pin with the destination
+// revision pin that re-recorded it.
+type ImportedPinBinding struct {
+	SourceCapability string
+	SourcePin        Pin
+	DestinationPin   Pin
+	Seq              int64
+}
+
 type streamKey struct {
 	capability string
 	stream     string
@@ -145,43 +192,43 @@ func restrictionState(journal []*wire.Node) (holds map[int64]string, retired map
 	return holds, retired, review, nil
 }
 
-func sourceManifest(journal []*wire.Node) (string, error) {
+func sourceManifestDoc(journal []*wire.Node) (*wire.Node, string, error) {
 	if len(journal) == 0 {
-		return "", reject(ReasonContinuation, "empty source journal")
+		return nil, "", reject(ReasonContinuation, "empty source journal")
 	}
 	v, err := intOf(journal[0], "v")
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	capability, ok := capabilityByFamily[v]
 	if !ok {
-		return "", reject(ReasonContinuation, "unsupported capability family %d", v)
+		return nil, "", reject(ReasonContinuation, "unsupported capability family %d", v)
 	}
 	stream, err := strOf(journal[0], "stream")
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	holds, retired, review, err := restrictionState(journal)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	var inherited []*wire.Node
 	if review != nil {
 		src := review.Get("source")
 		if src == nil || src.Kind != wire.Object {
-			return "", reject(ReasonContinuation, "review.source is not an object")
+			return nil, "", reject(ReasonContinuation, "review.source is not an object")
 		}
 		sc, err := strOf(src, "capability")
 		if err != nil {
-			return "", err
+			return nil, "", err
 		}
 		ss, err := strOf(src, "stream")
 		if err != nil {
-			return "", err
+			return nil, "", err
 		}
 		ssd, err := strOf(review, "source_state_digest")
 		if err != nil {
-			return "", err
+			return nil, "", err
 		}
 		inherited = append(inherited, &wire.Node{
 			Kind: wire.Object,
@@ -215,7 +262,36 @@ func sourceManifest(journal []*wire.Node) (string, error) {
 			},
 		})
 	}
-	return manifestDigest(holdNodes, retNodes, inherited, true)
+	oh, err := sortByJCS(holdNodes)
+	if err != nil {
+		return nil, "", err
+	}
+	or, err := sortByJCS(retNodes)
+	if err != nil {
+		return nil, "", err
+	}
+	oi, err := sortByJCS(inherited)
+	if err != nil {
+		return nil, "", err
+	}
+	doc := &wire.Node{
+		Kind: wire.Object,
+		Fields: []wire.Member{
+			{Name: "holds", Value: &wire.Node{Kind: wire.Array, Elems: oh}},
+			{Name: "retired", Value: &wire.Node{Kind: wire.Array, Elems: or}},
+			{Name: "inherited", Value: &wire.Node{Kind: wire.Array, Elems: oi}},
+		},
+	}
+	dig, err := recordDigest(doc)
+	if err != nil {
+		return nil, "", err
+	}
+	return doc, dig, nil
+}
+
+func sourceManifest(journal []*wire.Node) (string, error) {
+	_, dig, err := sourceManifestDoc(journal)
+	return dig, err
 }
 
 func appliedManifest(journal []*wire.Node) (string, error) {
@@ -276,7 +352,33 @@ func sourcePins(journal []*wire.Node) (map[Pin]bool, error) {
 }
 
 func (s *State) sourceCut(cut *wire.Node) ([]*wire.Node, error) {
-	if len(s.source) == 0 || cut == nil || cut.Kind != wire.Object {
+	if cut == nil || cut.Kind != wire.Object {
+		return nil, reject(ReasonContinuation, "missing source journal or invalid cut")
+	}
+	if s.sealedSource != nil {
+		cutCap, err := strOf(cut, "capability")
+		if err != nil || cutCap != s.sealedSource.Capability {
+			return nil, reject(ReasonContinuation, "cut capability mismatch against sealed source")
+		}
+		cutStream, err := strOf(cut, "stream")
+		if err != nil || cutStream != s.sealedSource.Stream {
+			return nil, reject(ReasonContinuation, "cut stream mismatch against sealed source")
+		}
+		cutSeq, err := intOf(cut, "cut_seq")
+		if err != nil {
+			return nil, reject(ReasonContinuation, "cut_seq invalid against sealed source")
+		}
+		ci, ok := s.sealedSource.cutAt(cutSeq)
+		if !ok {
+			return nil, reject(ReasonContinuation, "cut_seq %d not found in sealed source (final cut_seq %d)", cutSeq, s.sealedSource.CutSeq)
+		}
+		wantDig, err := strOf(cut, "cut_digest")
+		if err != nil || wantDig != ci.CutDigest {
+			return nil, reject(ReasonContinuation, "cut_digest mismatch against sealed source")
+		}
+		return nil, nil
+	}
+	if len(s.source) == 0 {
 		return nil, reject(ReasonContinuation, "missing source journal or invalid cut")
 	}
 	v0, err := intOf(s.source[0], "v")
@@ -390,25 +492,50 @@ func (s *State) checkReview(e *wire.Node, seq int64) error {
 	if srcCutSeq < contCutSeq {
 		return reject(ReasonContinuation, "review cut_seq precedes opening cut")
 	}
-	openDig, err := sliceDigest(prefix[:contCutSeq])
-	if err != nil {
-		return reject(ReasonContinuation, "opening prefix digest failed")
-	}
-	contDig, _ := strOf(s.continues, "cut_digest")
-	if openDig != contDig {
-		return reject(ReasonContinuation, "opening prefix digest mismatch")
-	}
-	smDig, err := sourceManifest(prefix)
-	if err != nil {
-		return reject(ReasonContinuation, "source manifest calculation failed")
+	var smDig string
+	var known map[Pin]bool
+	if s.sealedSource != nil {
+		contDig, _ := strOf(s.continues, "cut_digest")
+		openCI, ok := s.sealedSource.cutAt(contCutSeq)
+		if !ok || contDig != openCI.CutDigest {
+			return reject(ReasonContinuation, "opening prefix digest mismatch against sealed source")
+		}
+		revCI, rok := s.sealedSource.cutAt(srcCutSeq)
+		if !rok {
+			return reject(ReasonContinuation, "review cut_seq not found in sealed source")
+		}
+		smDig = revCI.ManifestDigest
+		if len(s.sealedSource.KnownPinSeq) > 0 {
+			known = make(map[Pin]bool, len(s.sealedSource.KnownPins))
+			for p, pseq := range s.sealedSource.KnownPinSeq {
+				if s.sealedSource.KnownPins[p] && pseq <= srcCutSeq {
+					known[p] = true
+				}
+			}
+		} else {
+			known = s.sealedSource.KnownPins
+		}
+	} else {
+		openDig, err := sliceDigest(prefix[:contCutSeq])
+		if err != nil {
+			return reject(ReasonContinuation, "opening prefix digest failed")
+		}
+		contDig, _ := strOf(s.continues, "cut_digest")
+		if openDig != contDig {
+			return reject(ReasonContinuation, "opening prefix digest mismatch")
+		}
+		smDig, err = sourceManifest(prefix)
+		if err != nil {
+			return reject(ReasonContinuation, "source manifest calculation failed")
+		}
+		known, err = sourcePins(prefix)
+		if err != nil {
+			return reject(ReasonContinuation, "source pins failed")
+		}
 	}
 	wantSrcDig, err := strOf(e, "source_state_digest")
 	if err != nil || smDig != wantSrcDig {
 		return reject(ReasonContinuation, "source_state_digest mismatch")
-	}
-	known, err := sourcePins(prefix)
-	if err != nil {
-		return reject(ReasonContinuation, "source pins failed")
 	}
 	for _, imp := range s.imports {
 		if !known[imp.pin] {
@@ -434,9 +561,15 @@ func (s *State) reviewPending(r *wire.Node) (bool, error) {
 	if s.upstreamUnobserved {
 		return true, nil
 	}
-	smDig, err := sourceManifest(s.source)
-	if err != nil {
-		return true, err
+	var smDig string
+	if s.sealedSource != nil {
+		smDig = s.sealedSource.EffectiveRestrictionManifestDigest
+	} else {
+		var err error
+		smDig, err = sourceManifest(s.source)
+		if err != nil {
+			return true, err
+		}
 	}
 	if !present(r, "source_state_digest") {
 		return true, nil
@@ -469,6 +602,13 @@ func (s *State) reviewCurrent() (bool, error) {
 			return false, nil
 		}
 	}
+	if s.sealedSource != nil {
+		revSrcDig, err := strOf(s.review, "source_state_digest")
+		if err != nil || revSrcDig != s.sealedSource.EffectiveRestrictionManifestDigest {
+			return false, nil
+		}
+		return s.sourceSealFinal && !s.upstreamUnobserved && !s.upstreamUncurrentSealed, nil
+	}
 	if s.sourceSealFinal {
 		return true, nil
 	}
@@ -487,6 +627,233 @@ func (s *State) reviewCurrent() (bool, error) {
 		return true, nil
 	}
 	return s.upstream.reviewCurrent()
+}
+
+// SetSealedSource attaches a verified sealed-and-reclaimed predecessor summary
+// to s, establishing source finality at the sealed cut without requiring the
+// predecessor's raw journal lines.
+func (s *State) SetSealedSource(ss *SealedSourceSummary) error {
+	if ss == nil || ss.Capability != capabilityByFamily[1] || ss.Stream == "" || ss.CutSeq < 1 || ss.CutDigest == "" || ss.EffectiveRestrictionManifestDigest == "" {
+		return reject(ReasonContinuation, "invalid sealed source summary")
+	}
+	cp := *ss
+	cp.KnownPins = make(map[Pin]bool, len(ss.KnownPins))
+	for k, v := range ss.KnownPins {
+		if v {
+			cp.KnownPins[k] = true
+		}
+	}
+	if len(ss.KnownPinSeq) > 0 {
+		cp.KnownPinSeq = make(map[Pin]int64, len(ss.KnownPinSeq))
+		for k, v := range ss.KnownPinSeq {
+			cp.KnownPinSeq[k] = v
+		}
+	}
+	if len(ss.HistoricalCuts) > 0 {
+		cp.HistoricalCuts = slices.Clone(ss.HistoricalCuts)
+	}
+	s.sealedSource = &cp
+	s.source = nil
+	s.upstream = nil
+	s.upstreamUnobserved = false
+	s.upstreamUncurrentSealed = false
+	s.sourceSealFinal = true
+	s.sealedAncestorHold = ss.HasAncestorHold
+	return nil
+}
+
+// AttachVerifiedSourceState attaches an already-replayed and verified source
+// stream state to s.
+func (s *State) AttachVerifiedSourceState(srcSt *State, sealedFinal bool) error {
+	if srcSt == nil || len(srcSt.journal) == 0 {
+		return reject(ReasonContinuation, "empty verified source state")
+	}
+	s.source = cloneJournal(srcSt.journal)
+	if srcSt.continues != nil {
+		s.upstream = srcSt
+	} else {
+		s.upstream = nil
+	}
+	s.upstreamUnobserved = false
+	s.upstreamUncurrentSealed = sealedFinal && srcSt.ReviewPending()
+	s.sourceSealFinal = sealedFinal
+	s.sealedSource = nil
+	s.sealedAncestorHold = srcSt.HasAncestorHold()
+	return nil
+}
+
+// VerifyManifestPreimage checks that mDoc is a valid {holds, retired, inherited}
+// manifest object whose RFC 8785 JCS SHA-256 digest equals expectedDigest, and
+// reports whether its holds array is non-empty.
+func VerifyManifestPreimage(mDoc *wire.Node, expectedDigest string) (hasHolds bool, err error) {
+	if err := verifyManifestPreimage(mDoc, expectedDigest); err != nil {
+		return false, err
+	}
+	if h := mDoc.Get("holds"); h != nil && len(h.Elems) > 0 {
+		hasHolds = true
+	}
+	return hasHolds, nil
+}
+
+// EffectiveRestrictionManifest returns the stream's {holds, retired, inherited}
+// manifest object and its RFC 8785 JCS SHA-256 digest at the current journal tail.
+func (s *State) EffectiveRestrictionManifest() (*wire.Node, string, error) {
+	return sourceManifestDoc(s.journal)
+}
+
+// EffectiveRestrictionManifestDigest returns the stream's effective restriction
+// manifest digest at the current journal tail.
+func (s *State) EffectiveRestrictionManifestDigest() (string, error) {
+	return sourceManifest(s.journal)
+}
+
+// AppliedRestrictionManifestDigest returns the destination applied restriction
+// manifest digest ({holds, retired}) at the current journal tail.
+func (s *State) AppliedRestrictionManifestDigest() (string, error) {
+	return appliedManifest(s.journal)
+}
+
+// SourceManifestDigest returns the attached source stream's current effective
+// restriction manifest digest (from either the observed source journal or a
+// verified sealed-and-reclaimed source summary).
+func (s *State) SourceManifestDigest() (string, error) {
+	if s.sealedSource != nil {
+		return s.sealedSource.EffectiveRestrictionManifestDigest, nil
+	}
+	if len(s.source) == 0 {
+		return "", reject(ReasonContinuation, "no source attached")
+	}
+	return sourceManifest(s.source)
+}
+
+// SourceManifestDigestAt returns the attached source stream's effective
+// restriction manifest digest at 1..cutSeq.
+func (s *State) SourceManifestDigestAt(cutSeq int64) (string, error) {
+	if s.sealedSource != nil {
+		ci, ok := s.sealedSource.cutAt(cutSeq)
+		if !ok {
+			return "", reject(ReasonContinuation, "cut_seq %d != sealed source cut_seq %d", cutSeq, s.sealedSource.CutSeq)
+		}
+		return ci.ManifestDigest, nil
+	}
+	if !completeCut(s.source, cutSeq) {
+		return "", reject(ReasonContinuation, "cut_seq %d is not a complete cut", cutSeq)
+	}
+	return sourceManifest(s.source[:cutSeq])
+}
+
+// SourceCutDigestAt returns the attached source stream's prefix digest at 1..cutSeq.
+func (s *State) SourceCutDigestAt(cutSeq int64) (string, error) {
+	if s.sealedSource != nil {
+		ci, ok := s.sealedSource.cutAt(cutSeq)
+		if !ok {
+			return "", reject(ReasonContinuation, "cut_seq %d != sealed source cut_seq %d", cutSeq, s.sealedSource.CutSeq)
+		}
+		return ci.CutDigest, nil
+	}
+	if !completeCut(s.source, cutSeq) {
+		return "", reject(ReasonContinuation, "cut_seq %d is not a complete cut", cutSeq)
+	}
+	return sliceDigest(s.source[:cutSeq])
+}
+
+// ManifestDigestAt returns the stream's own effective restriction manifest
+// digest at 1..cutSeq if cutSeq is a complete cut.
+func (s *State) ManifestDigestAt(cutSeq int64) (string, error) {
+	if !completeCut(s.journal, cutSeq) {
+		return "", reject(ReasonContinuation, "cut_seq %d is not a complete cut", cutSeq)
+	}
+	return sourceManifest(s.journal[:cutSeq])
+}
+
+// PinSeqs returns the journal sequence number at which each accepted revision
+// pin on s was recorded.
+func (s *State) PinSeqs() map[Pin]int64 {
+	out := make(map[Pin]int64, len(s.records))
+	for _, e := range s.journal {
+		typ, _ := strOf(e, "type")
+		if typ == "appended" || typ == "revised" {
+			if p, err := pinOf(e, "source"); err == nil {
+				if seq, serr := intOf(e, "seq"); serr == nil {
+					out[p] = seq
+				}
+			}
+		}
+	}
+	return out
+}
+
+// HasAncestorHold reports whether the attached source or any upstream ancestor
+// has an active hold.
+func (s *State) HasAncestorHold() bool {
+	if s.sealedAncestorHold {
+		return true
+	}
+	if len(s.source) > 0 {
+		if holds, _, _, err := restrictionState(s.source); err == nil && len(holds) > 0 {
+			return true
+		}
+	}
+	if s.upstream != nil {
+		if len(s.upstream.ActiveHolds()) > 0 || s.upstream.HasAncestorHold() {
+			return true
+		}
+	}
+	return false
+}
+
+// ReviewNode returns a clone of the stream's latest restrictions_reviewed entry,
+// or nil if none has been ingested.
+func (s *State) ReviewNode() *wire.Node {
+	if s.review == nil {
+		return nil
+	}
+	return cloneNode(s.review)
+}
+
+// ContinuesNode returns a clone of the stream's opening continues object, or
+// nil if the stream is not a continuation.
+func (s *State) ContinuesNode() *wire.Node {
+	if s.continues == nil {
+		return nil
+	}
+	return cloneNode(s.continues)
+}
+
+// ImportedPinBindings returns all imported_from bindings on the stream in
+// ascending journal sequence order.
+func (s *State) ImportedPinBindings() []ImportedPinBinding {
+	var out []ImportedPinBinding
+	for _, e := range s.journal {
+		typ, _ := strOf(e, "type")
+		if (typ == "appended" || typ == "revised") && present(e, "imported_from") {
+			imp := e.Get("imported_from")
+			capStr, _ := strOf(imp, "capability")
+			srcPin, err1 := pinFromNode(imp.Get("pin"), "imported_from.pin")
+			dstPin, err2 := pinOf(e, "entry")
+			seq, _ := intOf(e, "seq")
+			if err1 == nil && err2 == nil {
+				out = append(out, ImportedPinBinding{
+					SourceCapability: capStr,
+					SourcePin:        srcPin,
+					DestinationPin:   dstPin,
+					Seq:              seq,
+				})
+			}
+		}
+	}
+	return out
+}
+
+// ImportedFromForPin returns the imported_from binding for dstPin if dstPin was
+// accepted with an imported_from clause on this stream.
+func (s *State) ImportedFromForPin(dstPin Pin) (ImportedPinBinding, bool) {
+	for _, b := range s.ImportedPinBindings() {
+		if b.DestinationPin == dstPin {
+			return b, true
+		}
+	}
+	return ImportedPinBinding{}, false
 }
 
 func checkJournalSource(journal []*wire.Node) error {

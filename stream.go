@@ -183,18 +183,20 @@ type Reconciliation struct {
 
 // HeadInfo summarizes the latest revision of a record on a Stream.
 type HeadInfo struct {
-	Pin     Pin  `json:"pin"`
-	Retired bool `json:"retired"`
+	Pin          Pin        `json:"pin"`
+	Retired      bool       `json:"retired"`
+	ImportedFrom *SourcePin `json:"imported_from,omitempty"`
 }
 
 // RevisionView is the redacted metadata summary of one record revision.
 type RevisionView struct {
-	Pin             Pin    `json:"pin"`
-	Supersedes      *Pin   `json:"supersedes,omitempty"`
-	PayloadContract string `json:"payload_contract"`
-	HasBody         bool   `json:"has_body"`
-	Retired         bool   `json:"retired"`
-	At              string `json:"at"`
+	Pin             Pin        `json:"pin"`
+	Supersedes      *Pin       `json:"supersedes,omitempty"`
+	ImportedFrom    *SourcePin `json:"imported_from,omitempty"`
+	PayloadContract string     `json:"payload_contract"`
+	HasBody         bool       `json:"has_body"`
+	Retired         bool       `json:"retired"`
+	At              string     `json:"at"`
 }
 
 // UsePurpose is the purpose of a Stream.Release call.
@@ -281,9 +283,10 @@ type replayedStream struct {
 	lastAt    time.Time
 	mode      Mode
 	continues *Continues
+	sealed    bool
 }
 
-func (rep *replayedStream) appendLine(s *Store, line []byte) error {
+func (rep *replayedStream) appendLineNoIndexSync(s *Store, line []byte) error {
 	rawEntry := bytes.TrimSuffix(line, []byte{'\n'})
 	ingested, err := wire.Ingest(rawEntry, wire.KindJournalEntry)
 	if err != nil {
@@ -298,6 +301,13 @@ func (rep *replayedStream) appendLine(s *Store, line []byte) error {
 	rep.raw = append(rep.raw, line...)
 	rep.cutOffset = int64(len(rep.raw))
 	rep.lastSeq = int64(rep.st.Len())
+	return nil
+}
+
+func (rep *replayedStream) appendLine(s *Store, line []byte) error {
+	if err := rep.appendLineNoIndexSync(s, line); err != nil {
+		return err
+	}
 	if err := s.syncStreamIndexes(rep, rep.raw); err != nil {
 		var ioe *IOError
 		if errors.As(err, &ioe) {
@@ -387,7 +397,6 @@ func (s *Store) OpenStream(id string, mode Mode, opts ...StreamOption) (*Stream,
 }
 
 func (s *Store) verifyContinuationSource(dstID string, c *Continues) error {
-	seen := map[string]bool{streamHash(dstID): true}
 	srcExists, err := s.exists(streamDir(c.Stream))
 	if err != nil {
 		return err
@@ -395,32 +404,27 @@ func (s *Store) verifyContinuationSource(dstID string, c *Continues) error {
 	if !srcExists {
 		return ErrContinuationUnsupported
 	}
-	srcRep, err := s.replayStream(c.Stream)
+	st, err := journal.New(s.windowNode())
 	if err != nil {
 		return &ErrJournalInvalid{Reason: journal.ReasonContinuation}
 	}
-	if int64(c.CutSeq) > srcRep.lastSeq {
+	st.SetProfile(s.profileNode)
+	seqTok := strconv.FormatUint(c.CutSeq, 10)
+	contNode := &wire.Node{
+		Kind: wire.Object,
+		Fields: []wire.Member{
+			{Name: "capability", Value: &wire.Node{Kind: wire.String, Str: c.Capability}},
+			{Name: "stream", Value: &wire.Node{Kind: wire.String, Str: c.Stream}},
+			{Name: "cut_seq", Value: &wire.Node{Kind: wire.Number, Token: seqTok, IsInt: true, Int: int64(c.CutSeq)}},
+			{Name: "cut_digest", Value: &wire.Node{Kind: wire.String, Str: c.CutDigest}},
+		},
+	}
+	if !s.attachContinuationChain(st, contNode, map[string]bool{streamHash(dstID): true}) {
 		return &ErrJournalInvalid{Reason: journal.ReasonContinuation}
 	}
-	if err := journal.CheckJournal(srcRep.st.Journal()[:c.CutSeq]); err != nil {
-		return &ErrJournalInvalid{Reason: journal.ReasonContinuation}
-	}
-	gotDig, err := srcRep.st.CutDigest(int64(c.CutSeq))
+	gotDig, err := st.SourceCutDigestAt(int64(c.CutSeq))
 	if err != nil || gotDig != c.CutDigest {
 		return &ErrJournalInvalid{Reason: journal.ReasonContinuation}
-	}
-	cur := srcRep.continues
-	for cur != nil {
-		sh := streamHash(cur.Stream)
-		if seen[sh] || len(seen) > 16 {
-			return &ErrJournalInvalid{Reason: journal.ReasonContinuation}
-		}
-		seen[sh] = true
-		ancRep, err := s.replayStream(cur.Stream)
-		if err != nil {
-			return &ErrJournalInvalid{Reason: journal.ReasonContinuation}
-		}
-		cur = ancRep.continues
 	}
 	return nil
 }
@@ -432,6 +436,14 @@ func (s *Store) replayStream(id string) (*replayedStream, error) {
 	if sealed, err := s.exists(sdir + "/SEALED"); err != nil {
 		return nil, err
 	} else if sealed {
+		return nil, ErrStreamSealed
+	}
+	if reclaimed, err := s.exists(sdir + "/reclaimed.json"); err != nil {
+		return nil, err
+	} else if reclaimed {
+		if _, ok := s.verifyReclaimedPredecessorDir(id, map[string]bool{}); !ok {
+			return nil, &ErrJournalInvalid{Reason: journal.ReasonContinuation}
+		}
 		return nil, ErrStreamSealed
 	}
 	jpath := streamJournalFile(id)
@@ -507,6 +519,14 @@ func (s *Store) replayStream(id string) (*replayedStream, error) {
 		lastAt:    lastAt,
 		mode:      mode,
 		continues: cont,
+	}
+	if hasSeal, err := s.exists(sdir + "/stream-seal.json"); err != nil {
+		return nil, err
+	} else if hasSeal {
+		if !s.verifySealedStreamState(id, rep) {
+			return nil, &ErrJournalInvalid{Reason: journal.ReasonContinuation}
+		}
+		rep.sealed = true
 	}
 	if err := s.syncStreamIndexes(rep, raw); err != nil {
 		return nil, err
@@ -600,6 +620,9 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 		if err != nil {
 			return err
 		}
+		if rep.sealed {
+			return ErrStreamSealed
+		}
 		if rep.lastSeq >= maxSafeInteger {
 			return fmt.Errorf("%w: stream seq exhausted", ErrSchema)
 		}
@@ -680,7 +703,7 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 			}
 		}
 
-		// Check retirement: a retired record refuses new revisions.
+		// Check retirement: a retired record (locally or in any continuation ancestor) refuses new revisions.
 		if rep.st.IsRetired(rid) {
 			out = Receipt{
 				V:              1,
@@ -690,6 +713,22 @@ func (st *Stream) Append(ctx context.Context, w Write) (Receipt, error) {
 				Outcome:        OutcomeRetiredRecord,
 			}
 			return nil
+		}
+		if rep.continues != nil {
+			srcRetired, rok := st.store.sourceRetiredRecordIDs(rep.continues.Stream, map[string]bool{streamHash(st.id): true})
+			if !rok {
+				return &ErrJournalInvalid{Reason: journal.ReasonContinuation}
+			}
+			if srcRetired[rid] {
+				out = Receipt{
+					V:              1,
+					Kind:           "receipt",
+					Stream:         st.id,
+					IdempotencyKey: w.IdempotencyKey,
+					Outcome:        OutcomeRetiredRecord,
+				}
+				return nil
+			}
 		}
 
 		// Check revision chain against current head.
@@ -890,6 +929,9 @@ func (st *Stream) Retire(ctx context.Context, recordID string, reason RetireReas
 		if err != nil {
 			return err
 		}
+		if rep.sealed {
+			return ErrStreamSealed
+		}
 		if rep.lastSeq >= maxSafeInteger {
 			return fmt.Errorf("%w: stream seq exhausted", ErrSchema)
 		}
@@ -1014,6 +1056,9 @@ func (st *Stream) Protect(ctx context.Context, req ProtectionRequest) (Protectio
 		if err != nil {
 			return err
 		}
+		if rep.sealed {
+			return ErrStreamSealed
+		}
 		if rep.lastSeq >= maxSafeInteger {
 			return fmt.Errorf("%w: stream seq exhausted", ErrSchema)
 		}
@@ -1115,10 +1160,33 @@ func (st *Stream) Head(recordID string) (HeadInfo, bool, error) {
 		if !ok {
 			return nil
 		}
+		var imp *SourcePin
+		for _, b := range rep.st.ImportedPinBindings() {
+			if b.DestinationPin == hp {
+				imp = &SourcePin{
+					Capability: b.SourceCapability,
+					Pin: Pin{
+						Stream:   b.SourcePin.Stream,
+						RecordID: b.SourcePin.RecordID,
+						Revision: uint64(b.SourcePin.Revision),
+						Digest:   b.SourcePin.Digest,
+					},
+				}
+			}
+		}
+		var srcRetired map[string]bool
+		if rep.continues != nil {
+			var rok bool
+			srcRetired, rok = st.store.sourceRetiredRecordIDs(rep.continues.Stream, map[string]bool{streamHash(st.id): true})
+			if !rok {
+				return &ErrJournalInvalid{Reason: journal.ReasonContinuation}
+			}
+		}
 		found = true
 		info = HeadInfo{
-			Pin:     Pin{Stream: hp.Stream, RecordID: hp.RecordID, Revision: uint64(hp.Revision), Digest: hp.Digest},
-			Retired: rep.st.IsRetired(recordID),
+			Pin:          Pin{Stream: hp.Stream, RecordID: hp.RecordID, Revision: uint64(hp.Revision), Digest: hp.Digest},
+			Retired:      rep.st.IsRetired(recordID) || srcRetired[recordID],
+			ImportedFrom: imp,
 		}
 		return nil
 	})
@@ -1137,7 +1205,15 @@ func (st *Stream) Revisions(recordID string) ([]RevisionView, error) {
 		if err != nil {
 			return err
 		}
-		retired := rep.st.IsRetired(recordID)
+		var srcRetired map[string]bool
+		if rep.continues != nil {
+			var rok bool
+			srcRetired, rok = st.store.sourceRetiredRecordIDs(rep.continues.Stream, map[string]bool{streamHash(st.id): true})
+			if !rok {
+				return &ErrJournalInvalid{Reason: journal.ReasonContinuation}
+			}
+		}
+		retired := rep.st.IsRetired(recordID) || srcRetired[recordID]
 		for _, e := range rep.st.Journal() {
 			typ := e.Get("type").Str
 			if typ != "appended" && typ != "revised" {
@@ -1162,6 +1238,18 @@ func (st *Stream) Revisions(recordID string) ([]RevisionView, error) {
 					RecordID: recordID,
 					Revision: uint64(sup.Get("revision").Int),
 					Digest:   sup.Get("digest").Str,
+				}
+			}
+			if impNode := e.Get("imported_from"); impNode != nil && impNode.Get("pin") != nil {
+				pNode := impNode.Get("pin")
+				rv.ImportedFrom = &SourcePin{
+					Capability: impNode.Get("capability").Str,
+					Pin: Pin{
+						Stream:   pNode.Get("stream").Str,
+						RecordID: pNode.Get("record_id").Str,
+						Revision: uint64(pNode.Get("revision").Int),
+						Digest:   pNode.Get("digest").Str,
+					},
 				}
 			}
 			out = append(out, rv)
@@ -1259,6 +1347,27 @@ func (st *Stream) Release(ctx context.Context, req UseRequest, sink ReleaseSink)
 		}
 
 		records := rep.st.Records()
+		if rep.continues != nil {
+			srcRetired, rok := st.store.sourceRetiredRecordIDs(rep.continues.Stream, map[string]bool{streamHash(st.id): true})
+			if !rok {
+				res = ReleaseResult{
+					Outcome:       ReleaseRefused,
+					RefusalReason: journal.ReasonProtectionUnavailable,
+					Cut:           uint64(rep.lastSeq),
+				}
+				return nil
+			}
+			for pk := range records {
+				if srcRetired[pk.RecordID] && !rep.st.IsRetired(pk.RecordID) {
+					res = ReleaseResult{
+						Outcome:       ReleaseRefused,
+						RefusalReason: journal.ReasonRestrictionsPending,
+						Cut:           uint64(rep.lastSeq),
+					}
+					return nil
+				}
+			}
+		}
 		allPins := make([]journal.Pin, 0, len(records))
 		for pk := range records {
 			allPins = append(allPins, pk)
@@ -1369,20 +1478,29 @@ func (st *Stream) Release(ctx context.Context, req UseRequest, sink ReleaseSink)
 
 		cutTok := strconv.FormatInt(rep.lastSeq, 10)
 		cutNode := &wire.Node{Kind: wire.Number, Token: cutTok, IsInt: true, Int: rep.lastSeq}
+		useFields := []wire.Member{
+			{Name: "stream", Value: &wire.Node{Kind: wire.String, Str: st.id}},
+			{Name: "purpose", Value: &wire.Node{Kind: wire.String, Str: string(req.Purpose)}},
+			{Name: "protection_state", Value: &wire.Node{Kind: wire.String, Str: "verified"}},
+			{Name: "protection_cut", Value: cutNode},
+			{Name: "current_cut", Value: cutNode},
+			{Name: "inherited_block", Value: &wire.Node{Kind: wire.Bool, Bool: rep.st.HasAncestorHold()}},
+			{Name: "selection", Value: &wire.Node{Kind: wire.Array, Elems: selNodes}},
+			{Name: "omitted", Value: &wire.Node{Kind: wire.Array, Elems: omittedNodes}},
+			{Name: "closure", Value: &wire.Node{Kind: wire.String, Str: string(closure)}},
+			{Name: "bodies", Value: &wire.Node{Kind: wire.Array, Elems: bodyNodes}},
+		}
+		if rep.continues != nil {
+			if srcDig, serr := rep.st.SourceManifestDigest(); serr == nil && srcDig != "" {
+				useFields = append(useFields, wire.Member{
+					Name:  "source_state_digest",
+					Value: &wire.Node{Kind: wire.String, Str: srcDig},
+				})
+			}
+		}
 		useStep := &wire.Node{
-			Kind: wire.Object,
-			Fields: []wire.Member{
-				{Name: "stream", Value: &wire.Node{Kind: wire.String, Str: st.id}},
-				{Name: "purpose", Value: &wire.Node{Kind: wire.String, Str: string(req.Purpose)}},
-				{Name: "protection_state", Value: &wire.Node{Kind: wire.String, Str: "verified"}},
-				{Name: "protection_cut", Value: cutNode},
-				{Name: "current_cut", Value: cutNode},
-				{Name: "inherited_block", Value: &wire.Node{Kind: wire.Bool, Bool: false}},
-				{Name: "selection", Value: &wire.Node{Kind: wire.Array, Elems: selNodes}},
-				{Name: "omitted", Value: &wire.Node{Kind: wire.Array, Elems: omittedNodes}},
-				{Name: "closure", Value: &wire.Node{Kind: wire.String, Str: string(closure)}},
-				{Name: "bodies", Value: &wire.Node{Kind: wire.Array, Elems: bodyNodes}},
-			},
+			Kind:   wire.Object,
+			Fields: useFields,
 		}
 
 		useOut, uerr := rep.st.Use(useStep)

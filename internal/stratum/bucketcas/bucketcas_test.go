@@ -1,13 +1,16 @@
 package bucketcas_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/3leaps/recordprims/internal/journal"
 	"github.com/3leaps/recordprims/internal/stratum"
 	"github.com/3leaps/recordprims/internal/stratum/bucketcas"
 )
@@ -420,5 +423,870 @@ func TestUnknownInitIsIndeterminate(t *testing.T) {
 				t.Fatalf("CommitUnknown on %s returned %T (%v), want *stratum.IndeterminateError", target, err, err)
 			}
 		})
+	}
+}
+
+func TestBucketCASSealAndCompactAndReclaim(t *testing.T) {
+	ctx := context.Background()
+	mem := bucketcas.NewMemStore()
+	nowFn := fixedClock(time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC))
+
+	bs, err := bucketcas.Init(ctx, mem, bucketcas.Options{
+		Prefix: "compact",
+		Now:    nowFn,
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := bs.OpenStream(ctx, "events-v1", "single_revision"); err != nil {
+		t.Fatalf("OpenStream events-v1: %v", err)
+	}
+
+	r1, err := bs.Append(ctx, bucketcas.AppendInput{
+		Stream:         "events-v1",
+		Record:         makeRecordJSON("events-v1", "ev-1", 1, `{"step":1}`),
+		IdempotencyKey: "k-ev-1",
+	})
+	if err != nil || r1.Outcome != "appended" || r1.Digest == "" {
+		t.Fatalf("Append ev-1: %+v, err=%v", r1, err)
+	}
+
+	out, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+		SourceStream:      "events-v1",
+		DestinationStream: "events-v2",
+		Mode:              "single_revision",
+		Records: []bucketcas.CompactRecordInput{
+			{
+				Record: makeRecordJSON("events-v2", "ev-1", 1, `{"step":1}`),
+				SourcePin: journal.Pin{
+					Stream:   "events-v1",
+					RecordID: "ev-1",
+					Revision: 1,
+					Digest:   r1.Digest,
+				},
+				IdempotencyKey: "k-imp-ev-1",
+			},
+		},
+		ActorKind:          "human",
+		Actor:              "alice@example.com",
+		AuthRef:            "auth:cas-compact-1",
+		AuthDigest:         "sha256:" + strings.Repeat("3", 64),
+		ReclaimPredecessor: true,
+	})
+	if err != nil {
+		t.Fatalf("SealAndCompactStream: %v", err)
+	}
+	if out.ReclaimedSegmentCount == 0 || out.ReclaimedSegmentBytes <= 0 {
+		t.Fatalf("expected predecessor segments to be reclaimed, got %+v", out)
+	}
+
+	// Verify sealed source stream refuses writes with ErrStreamSealed.
+	if _, err := bs.Append(ctx, bucketcas.AppendInput{
+		Stream:         "events-v1",
+		Record:         makeRecordJSON("events-v1", "ev-2", 1, `{"step":2}`),
+		IdempotencyKey: "k-ev-2",
+	}); !errors.Is(err, bucketcas.ErrStreamSealed) {
+		t.Fatalf("expected ErrStreamSealed on sealed events-v1, got %v", err)
+	}
+
+	// Verify destination stream loads cleanly even after events-v1's segments were deleted!
+	dstSt, dstHead, err := bs.State(ctx, "events-v2")
+	if err != nil {
+		t.Fatalf("State(events-v2) after predecessor reclamation: %v", err)
+	}
+	if dstHead.CutSeq != 3 || dstSt.ReviewPending() {
+		t.Fatalf("unexpected events-v2 state: head=%+v, reviewPending=%v", dstHead, dstSt.ReviewPending())
+	}
+}
+
+func TestBucketCASMultiHopCompactionRetryAndRefusals(t *testing.T) {
+	ctx := context.Background()
+	mem := bucketcas.NewMemStore()
+	nowFn := fixedClock(time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC))
+
+	bs, err := bucketcas.Init(ctx, mem, bucketcas.Options{
+		Prefix: "multihop",
+		Now:    nowFn,
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := bs.OpenStream(ctx, "s-a", "single_revision"); err != nil {
+		t.Fatalf("OpenStream s-a: %v", err)
+	}
+	rA, err := bs.Append(ctx, bucketcas.AppendInput{
+		Stream:         "s-a",
+		Record:         makeRecordJSON("s-a", "rec-1", 1, `{"hop":1}`),
+		IdempotencyKey: "k-a-1",
+	})
+	if err != nil {
+		t.Fatalf("Append s-a: %v", err)
+	}
+
+	// 1. Simulate crash after stream-seal.json is written on s-a, before s-a head.json is updated.
+	// Next retry (with advanced clock) must reuse the persisted stream-seal.json and its digest.
+	failFirstHeadCAS := true
+	mem.SetPutIfMatchHook(func(key, expectedValidator string, body []byte) (bool, bool, stratum.CommitKnowledge, error) {
+		if failFirstHeadCAS && strings.HasSuffix(key, "streams/s-a/head.json") {
+			failFirstHeadCAS = false
+			mem.SetPutIfMatchHook(nil)
+			return true, false, stratum.CommitNotCommitted, errors.New("injected head CAS failure after stream-seal.json")
+		}
+		return false, false, 0, nil
+	})
+
+	compactAB := bucketcas.CompactionInput{
+		SourceStream:      "s-a",
+		DestinationStream: "s-b",
+		Mode:              "single_revision",
+		Records: []bucketcas.CompactRecordInput{
+			{
+				Record: makeRecordJSON("s-b", "rec-1", 1, `{"hop":1}`),
+				SourcePin: journal.Pin{
+					Stream:   "s-a",
+					RecordID: "rec-1",
+					Revision: 1,
+					Digest:   rA.Digest,
+				},
+				IdempotencyKey: "k-ab-1",
+			},
+		},
+		ActorKind:          "human",
+		Actor:              "alice@example.com",
+		AuthRef:            "auth:ab",
+		AuthDigest:         "sha256:" + strings.Repeat("4", 64),
+		ReclaimPredecessor: true,
+	}
+	if _, err := bs.SealAndCompactStream(ctx, compactAB); err == nil {
+		t.Fatal("expected injected head CAS failure on first SealAndCompactStream(s-a -> s-b)")
+	}
+
+	// Retry s-a -> s-b; must succeed and reuse existing stream-seal.json.
+	outAB, err := bs.SealAndCompactStream(ctx, compactAB)
+	if err != nil {
+		t.Fatalf("retry SealAndCompactStream(s-a -> s-b): %v", err)
+	}
+	if outAB.SealDigest == "" {
+		t.Fatalf("expected non-empty SealDigest on s-a -> s-b")
+	}
+
+	// Retry s-a -> s-b AFTER s-a has been reclaimed; must succeed idempotently!
+	outABRetry, err := bs.SealAndCompactStream(ctx, compactAB)
+	if err != nil {
+		t.Fatalf("idempotent retry after reclamation (s-a -> s-b): %v", err)
+	}
+	if outABRetry.SealDigest != outAB.SealDigest || outABRetry.DestinationCutSeq != outAB.DestinationCutSeq {
+		t.Fatalf("idempotent retry mismatch: got %+v, want %+v", outABRetry, outAB)
+	}
+
+	// 2. Multi-hop compaction s-b -> s-c (where s-a is already reclaimed).
+	// Determine imported record digest on s-b via State(s-b).
+	stB, _, err := bs.State(ctx, "s-b")
+	if err != nil {
+		t.Fatalf("State(s-b): %v", err)
+	}
+	var recBDigest string
+	for pin := range stB.Records() {
+		if pin.RecordID == "rec-1" {
+			recBDigest = pin.Digest
+		}
+	}
+	if recBDigest == "" {
+		t.Fatal("rec-1 not found in s-b")
+	}
+
+	outBC, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+		SourceStream:      "s-b",
+		DestinationStream: "s-c",
+		Mode:              "single_revision",
+		Records: []bucketcas.CompactRecordInput{
+			{
+				Record: makeRecordJSON("s-c", "rec-1", 1, `{"hop":1}`),
+				SourcePin: journal.Pin{
+					Stream:   "s-b",
+					RecordID: "rec-1",
+					Revision: 1,
+					Digest:   recBDigest,
+				},
+				IdempotencyKey: "k-bc-1",
+			},
+		},
+		ActorKind:          "human",
+		Actor:              "alice@example.com",
+		AuthRef:            "auth:bc",
+		AuthDigest:         "sha256:" + strings.Repeat("5", 64),
+		ReclaimPredecessor: true,
+	})
+	if err != nil {
+		t.Fatalf("SealAndCompactStream(s-b -> s-c): %v", err)
+	}
+	if outBC.SealDigest == "" {
+		t.Fatal("expected non-empty SealDigest on s-b -> s-c")
+	}
+
+	// Verify s-c loads cleanly when both s-a and s-b have been reclaimed.
+	if _, _, err := bs.State(ctx, "s-c"); err != nil {
+		t.Fatalf("State(s-c) after multi-hop reclamation: %v", err)
+	}
+
+	// Tamper with s-a's stream-seal.json in object storage and verify State(s-c) fails closed!
+	sealKeyA := "multihop/streams/s-a/stream-seal.json"
+	origSealA, _, _, err := mem.GetCoherent(ctx, sealKeyA)
+	if err != nil {
+		t.Fatalf("GetCoherent(%s): %v", sealKeyA, err)
+	}
+	if _, err := mem.Delete(ctx, sealKeyA); err != nil {
+		t.Fatalf("Delete(%s): %v", sealKeyA, err)
+	}
+	if _, _, _, err := mem.PutIfAbsent(ctx, sealKeyA, []byte(strings.Replace(string(origSealA), `"cut_seq":2`, `"cut_seq":99`, 1))); err != nil {
+		t.Fatalf("PutIfAbsent tampered sealKeyA: %v", err)
+	}
+	if _, _, err := bs.State(ctx, "s-c"); !errors.Is(err, bucketcas.ErrInvalidStore) {
+		t.Fatalf("expected ErrInvalidStore on State(s-c) when transitive ancestor s-a seal is tampered, got %v", err)
+	}
+	// Restore s-a's stream-seal.json.
+	_, _ = mem.Delete(ctx, sealKeyA)
+	_, _, _, _ = mem.PutIfAbsent(ctx, sealKeyA, origSealA)
+
+	// 3. Unrelated existing destination stream must be refused.
+	if err := bs.OpenStream(ctx, "unrelated-dst", "single_revision"); err != nil {
+		t.Fatalf("OpenStream unrelated-dst: %v", err)
+	}
+	if _, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+		SourceStream:      "s-c",
+		DestinationStream: "unrelated-dst",
+		Mode:              "single_revision",
+		ActorKind:         "human",
+		Actor:             "alice@example.com",
+		AuthRef:           "auth:bad-dst",
+		AuthDigest:        "sha256:" + strings.Repeat("6", 64),
+	}); !errors.Is(err, bucketcas.ErrInvalidStore) {
+		t.Fatalf("expected ErrInvalidStore when compacting into unrelated existing destination stream, got %v", err)
+	}
+
+	// 4. Compacting a record with an unpublished external body must be refused.
+	if err := bs.OpenStream(ctx, "s-body-src", "single_revision"); err != nil {
+		t.Fatalf("OpenStream s-body-src: %v", err)
+	}
+	rBodySrc, err := bs.Append(ctx, bucketcas.AppendInput{
+		Stream:         "s-body-src",
+		Record:         makeRecordJSON("s-body-src", "b-1", 1, `{"inline":true}`),
+		IdempotencyKey: "k-b-1",
+	})
+	if err != nil {
+		t.Fatalf("Append s-body-src: %v", err)
+	}
+	missingBodyDig := "sha256:" + strings.Repeat("e", 64)
+	recWithMissingBody := []byte(fmt.Sprintf(
+		`{"v":1,"stream":"s-body-dst","record_id":"b-1","revision":1,"payload_contract":"contract: notes/v1","body":{"digest":%q,"length":10,"media_type":"text/plain"},"provenance":{"actor_kind":"process","actor":"test"},"classification":{"retention":"standard","sensitivity":"1-confidential"}}`,
+		missingBodyDig,
+	))
+	if _, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+		SourceStream:      "s-body-src",
+		DestinationStream: "s-body-dst",
+		Mode:              "single_revision",
+		Records: []bucketcas.CompactRecordInput{
+			{
+				Record: recWithMissingBody,
+				SourcePin: journal.Pin{
+					Stream:   "s-body-src",
+					RecordID: "b-1",
+					Revision: 1,
+					Digest:   rBodySrc.Digest,
+				},
+				IdempotencyKey: "k-imp-b-1",
+			},
+		},
+		ActorKind:  "human",
+		Actor:      "alice@example.com",
+		AuthRef:    "auth:body",
+		AuthDigest: "sha256:" + strings.Repeat("7", 64),
+	}); !errors.Is(err, bucketcas.ErrInvalidStore) {
+		t.Fatalf("expected ErrInvalidStore when compacting record with unpublished external body, got %v", err)
+	}
+
+	// 5. Dropping an external body reference of an unretired source record must be refused.
+	bodyBytes := []byte("bucket-external-body-must-be-preserved")
+	bDig, bLen, _, err := bs.PutBody(ctx, bodyBytes)
+	if err != nil {
+		t.Fatalf("PutBody: %v", err)
+	}
+	if err := bs.OpenStream(ctx, "s-unpres-src", "single_revision"); err != nil {
+		t.Fatalf("OpenStream s-unpres-src: %v", err)
+	}
+	recWithBodySrc := []byte(fmt.Sprintf(
+		`{"v":1,"stream":"s-unpres-src","record_id":"ub-1","revision":1,"payload_contract":"contract: notes/v1","body":{"digest":%q,"length":%d,"media_type":"text/plain"},"provenance":{"actor_kind":"process","actor":"test"},"classification":{"retention":"standard","sensitivity":"1-confidential"}}`,
+		bDig, bLen,
+	))
+	rUnpres, err := bs.Append(ctx, bucketcas.AppendInput{
+		Stream:         "s-unpres-src",
+		Record:         recWithBodySrc,
+		IdempotencyKey: "k-ub-1",
+	})
+	if err != nil {
+		t.Fatalf("Append s-unpres-src: %v", err)
+	}
+	if _, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+		SourceStream:      "s-unpres-src",
+		DestinationStream: "s-unpres-dst",
+		Mode:              "single_revision",
+		Records: []bucketcas.CompactRecordInput{
+			{
+				Record: makeRecordJSON("s-unpres-dst", "ub-1", 1, `{"dropped_body":true}`),
+				SourcePin: journal.Pin{
+					Stream:   "s-unpres-src",
+					RecordID: "ub-1",
+					Revision: 1,
+					Digest:   rUnpres.Digest,
+				},
+				IdempotencyKey: "k-imp-ub-1",
+			},
+		},
+		ActorKind:  "human",
+		Actor:      "alice@example.com",
+		AuthRef:    "auth:unpres",
+		AuthDigest: "sha256:" + strings.Repeat("8", 64),
+	}); !errors.Is(err, bucketcas.ErrInvalidStore) {
+		t.Fatalf("expected ErrInvalidStore (body_unpreserved) when unretired source body is omitted in compacted record, got %v", err)
+	}
+
+	// 6. Malformed record retry against already-reclaimed s-a must return ErrInvalidStore cleanly (never panic).
+	if _, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+		SourceStream:      "s-a",
+		DestinationStream: "s-b",
+		Mode:              "single_revision",
+		Records: []bucketcas.CompactRecordInput{
+			{
+				Record: []byte(`{}`),
+				SourcePin: journal.Pin{
+					Stream:   "s-a",
+					RecordID: "rec-1",
+					Revision: 1,
+					Digest:   rA.Digest,
+				},
+				IdempotencyKey: "k-malformed",
+			},
+		},
+		ActorKind:  "human",
+		Actor:      "alice@example.com",
+		AuthRef:    "auth:mal",
+		AuthDigest: "sha256:" + strings.Repeat("9", 64),
+	}); !errors.Is(err, bucketcas.ErrInvalidStore) {
+		t.Fatalf("expected ErrInvalidStore on malformed record retry against reclaimed source, got %v", err)
+	}
+
+	// 7. Concurrent Append during SealAndCompactStream source-head CAS must recover cleanly by
+	// cleaning up the uncommitted stream-seal.json and retrying (or failing with unretired record dropped).
+	if err := bs.OpenStream(ctx, "s-race-src", "single_revision"); err != nil {
+		t.Fatalf("OpenStream s-race-src: %v", err)
+	}
+	rRace1, err := bs.Append(ctx, bucketcas.AppendInput{
+		Stream:         "s-race-src",
+		Record:         makeRecordJSON("s-race-src", "race-1", 1, `{"v":1}`),
+		IdempotencyKey: "k-race-1",
+	})
+	if err != nil {
+		t.Fatalf("Append race-1: %v", err)
+	}
+	injectedRace := false
+	mem.SetPutIfMatchHook(func(key, _ string, _ []byte) (bool, bool, stratum.CommitKnowledge, error) {
+		if key == "multihop/streams/s-race-src/head.json" && !injectedRace {
+			injectedRace = true
+			mem.SetPutIfMatchHook(nil)
+			_, aerr := bs.Append(ctx, bucketcas.AppendInput{
+				Stream:         "s-race-src",
+				Record:         makeRecordJSON("s-race-src", "race-2", 1, `{"v":2}`),
+				IdempotencyKey: "k-race-2",
+			})
+			if aerr != nil {
+				t.Errorf("concurrent Append race-2 failed: %v", aerr)
+			}
+		}
+		return false, false, 0, nil
+	})
+	defer mem.SetPutIfMatchHook(nil)
+
+	outRace, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+		SourceStream:       "s-race-src",
+		DestinationStream:  "s-race-dst",
+		Mode:               "single_revision",
+		AllowDropUnretired: true,
+		Records: []bucketcas.CompactRecordInput{
+			{
+				Record: makeRecordJSON("s-race-dst", "race-1", 1, `{"v":1}`),
+				SourcePin: journal.Pin{
+					Stream:   "s-race-src",
+					RecordID: "race-1",
+					Revision: 1,
+					Digest:   rRace1.Digest,
+				},
+				IdempotencyKey: "k-imp-race-1",
+			},
+		},
+		ActorKind:          "human",
+		Actor:              "alice@example.com",
+		AuthRef:            "auth:race",
+		AuthDigest:         "sha256:" + strings.Repeat("a", 64),
+		ReclaimPredecessor: true,
+	})
+	if err != nil {
+		t.Fatalf("SealAndCompactStream after concurrent Append race: %v", err)
+	}
+	if outRace.SealedCutSeq != 3 {
+		t.Fatalf("expected SealedCutSeq=3 (including concurrent Append), got %d", outRace.SealedCutSeq)
+	}
+
+	// 8. Competing compactors A and B racing on source head.json CAS: loser A must NOT delete
+	// winner B's committed stream-seal.json, and both must converge cleanly!
+	if err := bs.OpenStream(ctx, "s-comp-src", "single_revision"); err != nil {
+		t.Fatalf("OpenStream s-comp-src: %v", err)
+	}
+	rComp, err := bs.Append(ctx, bucketcas.AppendInput{
+		Stream:         "s-comp-src",
+		Record:         makeRecordJSON("s-comp-src", "c-1", 1, `{"v":1}`),
+		IdempotencyKey: "k-comp-1",
+	})
+	if err != nil {
+		t.Fatalf("Append c-1: %v", err)
+	}
+	compReq := bucketcas.CompactionInput{
+		SourceStream:      "s-comp-src",
+		DestinationStream: "s-comp-dst",
+		Mode:              "single_revision",
+		Records: []bucketcas.CompactRecordInput{
+			{
+				Record: makeRecordJSON("s-comp-dst", "c-1", 1, `{"v":1}`),
+				SourcePin: journal.Pin{
+					Stream:   "s-comp-src",
+					RecordID: "c-1",
+					Revision: 1,
+					Digest:   rComp.Digest,
+				},
+				IdempotencyKey: "k-imp-comp-1",
+			},
+		},
+		ActorKind:          "human",
+		Actor:              "alice@example.com",
+		AuthRef:            "auth:comp",
+		AuthDigest:         "sha256:" + strings.Repeat("b", 64),
+		ReclaimPredecessor: true,
+	}
+	competingInjected := false
+	mem.SetPutIfMatchHook(func(key, _ string, _ []byte) (bool, bool, stratum.CommitKnowledge, error) {
+		if key == "multihop/streams/s-comp-src/head.json" && !competingInjected {
+			competingInjected = true
+			mem.SetPutIfMatchHook(nil)
+			// Compactor B runs to completion while Compactor A is paused right before source head CAS!
+			if _, berr := bs.SealAndCompactStream(ctx, compReq); berr != nil {
+				t.Errorf("competing compactor B failed: %v", berr)
+			}
+		}
+		return false, false, 0, nil
+	})
+	outCompA, err := bs.SealAndCompactStream(ctx, compReq)
+	if err != nil {
+		t.Fatalf("competing compactor A failed after B won: %v", err)
+	}
+	if outCompA.SealDigest == "" {
+		t.Fatal("expected non-empty SealDigest from compactor A")
+	}
+	if _, _, err := bs.State(ctx, "s-comp-dst"); err != nil {
+		t.Fatalf("State(s-comp-dst) after competing compactors A & B: %v", err)
+	}
+
+	// 9. With MaxCASRetries=1, a concurrent Append during source head CAS must return ErrCASExhausted
+	// and leave the source stream unsealed without creating the destination stream.
+	bs1, err := bucketcas.Open(ctx, mem, bucketcas.Options{
+		Prefix:        "multihop",
+		Now:           nowFn,
+		MaxCASRetries: 1,
+	})
+	if err != nil {
+		t.Fatalf("Open bs1: %v", err)
+	}
+	if err := bs1.OpenStream(ctx, "s-exh-src", "single_revision"); err != nil {
+		t.Fatalf("OpenStream s-exh-src: %v", err)
+	}
+	rExh, err := bs1.Append(ctx, bucketcas.AppendInput{
+		Stream:         "s-exh-src",
+		Record:         makeRecordJSON("s-exh-src", "e-1", 1, `{"v":1}`),
+		IdempotencyKey: "k-exh-1",
+	})
+	if err != nil {
+		t.Fatalf("Append e-1: %v", err)
+	}
+	exhInjected := false
+	mem.SetPutIfMatchHook(func(key, _ string, _ []byte) (bool, bool, stratum.CommitKnowledge, error) {
+		if key == "multihop/streams/s-exh-src/head.json" && !exhInjected {
+			exhInjected = true
+			mem.SetPutIfMatchHook(nil)
+			if _, aerr := bs1.Append(ctx, bucketcas.AppendInput{
+				Stream:         "s-exh-src",
+				Record:         makeRecordJSON("s-exh-src", "e-2", 1, `{"v":2}`),
+				IdempotencyKey: "k-exh-2",
+			}); aerr != nil {
+				t.Errorf("concurrent Append e-2 failed: %v", aerr)
+			}
+		}
+		return false, false, 0, nil
+	})
+	if _, err := bs1.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+		SourceStream:      "s-exh-src",
+		DestinationStream: "s-exh-dst",
+		Mode:              "single_revision",
+		Records: []bucketcas.CompactRecordInput{
+			{
+				Record: makeRecordJSON("s-exh-dst", "e-1", 1, `{"v":1}`),
+				SourcePin: journal.Pin{
+					Stream:   "s-exh-src",
+					RecordID: "e-1",
+					Revision: 1,
+					Digest:   rExh.Digest,
+				},
+				IdempotencyKey: "k-imp-exh-1",
+			},
+		},
+		ActorKind:  "human",
+		Actor:      "alice@example.com",
+		AuthRef:    "auth:exh",
+		AuthDigest: "sha256:" + strings.Repeat("c", 64),
+	}); !errors.Is(err, bucketcas.ErrCASExhausted) {
+		t.Fatalf("expected ErrCASExhausted when MaxCASRetries=1 is beaten by concurrent Append, got %v", err)
+	}
+	_, exhHead, err := bs1.State(ctx, "s-exh-src")
+	if err != nil || exhHead.Sealed {
+		t.Fatalf("expected s-exh-src to remain unsealed after CAS exhaustion, head=%+v, err=%v", exhHead, err)
+	}
+
+	// 10. Tampering with reclaimed.json to inject an out-of-prefix ReclaimedKeys entry must fail closed
+	// on ReclaimSealedAncestor retry and never delete the out-of-prefix object.
+	sentinelKey := "other-store/STORE.json"
+	if _, _, _, err := mem.PutIfAbsent(ctx, sentinelKey, []byte(`{"sentinel":true}`)); err != nil {
+		t.Fatalf("PutIfAbsent sentinelKey: %v", err)
+	}
+	reclKeyA := "multihop/streams/s-a/reclaimed.json"
+	origReclA, _, _, err := mem.GetCoherent(ctx, reclKeyA)
+	if err != nil {
+		t.Fatalf("GetCoherent(%s): %v", reclKeyA, err)
+	}
+	_, _ = mem.Delete(ctx, reclKeyA)
+	tamperedReclA := strings.Replace(string(origReclA), `"reclaimed_keys":[`, fmt.Sprintf(`"reclaimed_keys":[%q,`, sentinelKey), 1)
+	if _, _, _, err := mem.PutIfAbsent(ctx, reclKeyA, []byte(tamperedReclA)); err != nil {
+		t.Fatalf("PutIfAbsent tamperedReclA: %v", err)
+	}
+	if _, _, err := bs.ReclaimSealedAncestor(ctx, "s-a", "s-b"); !errors.Is(err, bucketcas.ErrInvalidStore) {
+		t.Fatalf("expected ErrInvalidStore on tampered reclaimed.json during ReclaimSealedAncestor retry, got %v", err)
+	}
+	if _, _, _, err := mem.GetCoherent(ctx, sentinelKey); err != nil {
+		t.Fatalf("sentinel object %q was deleted or unreadable: %v", sentinelKey, err)
+	}
+	_, _ = mem.Delete(ctx, reclKeyA)
+	_, _, _, _ = mem.PutIfAbsent(ctx, reclKeyA, origReclA)
+
+	// 11. Interrupted seal from cut 2 left in place when Append advances head.json to cut 3:
+	// validator-fenced PutIfMatch on stream-seal.json replaces the obsolete cut-2 seal without
+	// using unconditional Delete.
+	if err := bs.OpenStream(ctx, "s-stale-seal-src", "single_revision"); err != nil {
+		t.Fatalf("OpenStream s-stale-seal-src: %v", err)
+	}
+	rStale1, err := bs.Append(ctx, bucketcas.AppendInput{
+		Stream:         "s-stale-seal-src",
+		Record:         makeRecordJSON("s-stale-seal-src", "st-1", 1, `{"v":1}`),
+		IdempotencyKey: "k-stale-1",
+	})
+	if err != nil {
+		t.Fatalf("Append st-1: %v", err)
+	}
+	// Simulate an interrupted compaction at cut 2 that wrote stream-seal.json and failed on head.json CAS,
+	// followed by an Append advancing s-stale-seal-src to cut 3.
+	abortCut2 := false
+	mem.SetPutIfMatchHook(func(key, _ string, _ []byte) (bool, bool, stratum.CommitKnowledge, error) {
+		if key == "multihop/streams/s-stale-seal-src/head.json" && !abortCut2 {
+			abortCut2 = true
+			mem.SetPutIfMatchHook(nil)
+			return true, false, stratum.CommitNotCommitted, errors.New("simulated crash before head CAS at cut 2")
+		}
+		return false, false, 0, nil
+	})
+	_, _ = bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+		SourceStream:      "s-stale-seal-src",
+		DestinationStream: "s-stale-seal-dst",
+		Mode:              "single_revision",
+		Records: []bucketcas.CompactRecordInput{
+			{
+				Record: makeRecordJSON("s-stale-seal-dst", "st-1", 1, `{"v":1}`),
+				SourcePin: journal.Pin{
+					Stream:   "s-stale-seal-src",
+					RecordID: "st-1",
+					Revision: 1,
+					Digest:   rStale1.Digest,
+				},
+				IdempotencyKey: "k-stale-imp-1",
+			},
+		},
+		ActorKind:  "human",
+		Actor:      "alice@example.com",
+		AuthRef:    "auth:stale",
+		AuthDigest: "sha256:" + strings.Repeat("d", 64),
+	})
+	if _, err := bs.Append(ctx, bucketcas.AppendInput{
+		Stream:         "s-stale-seal-src",
+		Record:         makeRecordJSON("s-stale-seal-src", "st-2", 1, `{"v":2}`),
+		IdempotencyKey: "k-stale-2",
+	}); err != nil {
+		t.Fatalf("Append st-2 after aborted cut-2 seal: %v", err)
+	}
+	outStale, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+		SourceStream:       "s-stale-seal-src",
+		DestinationStream:  "s-stale-seal-dst",
+		Mode:               "single_revision",
+		AllowDropUnretired: true,
+		Records: []bucketcas.CompactRecordInput{
+			{
+				Record: makeRecordJSON("s-stale-seal-dst", "st-1", 1, `{"v":1}`),
+				SourcePin: journal.Pin{
+					Stream:   "s-stale-seal-src",
+					RecordID: "st-1",
+					Revision: 1,
+					Digest:   rStale1.Digest,
+				},
+				IdempotencyKey: "k-stale-imp-1",
+			},
+		},
+		ActorKind:  "human",
+		Actor:      "alice@example.com",
+		AuthRef:    "auth:stale",
+		AuthDigest: "sha256:" + strings.Repeat("d", 64),
+	})
+	if err != nil || outStale.SealedCutSeq != 3 {
+		t.Fatalf("expected SealAndCompactStream to replace stale cut-2 seal via PutIfMatch at cut 3, got %+v, err=%v", outStale, err)
+	}
+
+	// 12. Interrupted ReclaimSealedAncestor that wrote reclaimed.json for candidate successor A
+	// and failed before head.json CAS: a subsequent ReclaimSealedAncestor for valid successor B
+	// finds byte-identical reclaimed.json (successor-independent), wins the head CAS, and is
+	// recorded as ReclaimedBy; A is then refused.
+	if _, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+		SourceStream:       "s-stale-seal-src",
+		DestinationStream:  "s-stale-seal-dst-2",
+		Mode:               "single_revision",
+		AllowDropUnretired: true,
+		Records: []bucketcas.CompactRecordInput{
+			{
+				Record: makeRecordJSON("s-stale-seal-dst-2", "st-1", 1, `{"v":1}`),
+				SourcePin: journal.Pin{
+					Stream:   "s-stale-seal-src",
+					RecordID: "st-1",
+					Revision: 1,
+					Digest:   rStale1.Digest,
+				},
+				IdempotencyKey: "k-stale-imp-2",
+			},
+		},
+		ActorKind:  "human",
+		Actor:      "alice@example.com",
+		AuthRef:    "auth:stale",
+		AuthDigest: "sha256:" + strings.Repeat("d", 64),
+	}); err != nil {
+		t.Fatalf("SealAndCompactStream s-stale-seal-dst-2: %v", err)
+	}
+	abortReclaimA := false
+	mem.SetPutIfMatchHook(func(key, _ string, _ []byte) (bool, bool, stratum.CommitKnowledge, error) {
+		if key == "multihop/streams/s-stale-seal-src/head.json" && !abortReclaimA {
+			abortReclaimA = true
+			mem.SetPutIfMatchHook(nil)
+			return true, false, stratum.CommitNotCommitted, errors.New("simulated crash after writing reclaimed.json for dst-1")
+		}
+		return false, false, 0, nil
+	})
+	if _, _, err := bs.ReclaimSealedAncestor(ctx, "s-stale-seal-src", "s-stale-seal-dst"); err == nil {
+		t.Fatal("expected simulated crash on first ReclaimSealedAncestor")
+	}
+	// Now reclaim via s-stale-seal-dst-2: the existing reclaimed.json is reused as-is.
+	if _, _, err := bs.ReclaimSealedAncestor(ctx, "s-stale-seal-src", "s-stale-seal-dst-2"); err != nil {
+		t.Fatalf("ReclaimSealedAncestor via s-stale-seal-dst-2 after interrupted dst-1 reclaim: %v", err)
+	}
+	// Subsequent ReclaimSealedAncestor naming dst-1 must fail closed with ErrInvalidStore!
+	if _, _, err := bs.ReclaimSealedAncestor(ctx, "s-stale-seal-src", "s-stale-seal-dst"); !errors.Is(err, bucketcas.ErrInvalidStore) {
+		t.Fatalf("expected ErrInvalidStore when reclaiming already-reclaimed predecessor into different successor, got %v", err)
+	}
+	// Verify both continuation streams load cleanly from the reclaimed predecessor!
+	if _, _, err := bs.State(ctx, "s-stale-seal-dst"); err != nil {
+		t.Fatalf("State(s-stale-seal-dst) after reconciled reclamation: %v", err)
+	}
+	if _, _, err := bs.State(ctx, "s-stale-seal-dst-2"); err != nil {
+		t.Fatalf("State(s-stale-seal-dst-2) after reconciled reclamation: %v", err)
+	}
+
+	// 13. Concurrent ReclaimSealedAncestor callers A and B naming different valid successors.
+	// reclaimed.json is a deterministic function of the sealed predecessor, written strictly once
+	// via PutIfAbsent and never replaced; the winning successor is recorded in head.json's
+	// ReclaimedBy. Each case stalls B after it has loaded the unreclaimed head, runs A to
+	// completion inside that window, then releases B and asserts nothing A committed changed.
+	readConcHead := func(src string) ([]byte, bucketcas.HeadDoc) {
+		t.Helper()
+		raw, _, _, err := mem.GetCoherent(ctx, "multihop/streams/"+src+"/head.json")
+		if err != nil {
+			t.Fatalf("read head.json for %s: %v", src, err)
+		}
+		var hd bucketcas.HeadDoc
+		if err := json.Unmarshal(raw, &hd); err != nil {
+			t.Fatalf("decode head.json for %s: %v", src, err)
+		}
+		return raw, hd
+	}
+	runStaleReclaimCase := func(name string, stallOnHeadCAS bool) {
+		t.Helper()
+		src, dstA, dstB := "s-conc-"+name+"-src", "s-conc-"+name+"-dst-a", "s-conc-"+name+"-dst-b"
+		headKey := "multihop/streams/" + src + "/head.json"
+		reclKey := "multihop/streams/" + src + "/reclaimed.json"
+		if err := bs.OpenStream(ctx, src, "single_revision"); err != nil {
+			t.Fatalf("OpenStream %s: %v", src, err)
+		}
+		for _, dst := range []string{dstA, dstB} {
+			if _, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+				SourceStream:      src,
+				DestinationStream: dst,
+				Mode:              "single_revision",
+				ActorKind:         "human",
+				Actor:             "alice@example.com",
+				AuthRef:           "auth:conc-recl",
+				AuthDigest:        "sha256:" + strings.Repeat("e", 64),
+			}); err != nil {
+				t.Fatalf("SealAndCompactStream %s: %v", dst, err)
+			}
+		}
+		var (
+			stalled       bool
+			headAfterA    []byte
+			reclAfterA    []byte
+			reclReplaceOK = true
+		)
+		runA := func() {
+			stalled = true
+			if _, _, err := bs.ReclaimSealedAncestor(ctx, src, dstA); err != nil {
+				t.Fatalf("%s: A reclaim inside B's stale window: %v", name, err)
+			}
+			headAfterA, _ = readConcHead(src)
+			var err error
+			if reclAfterA, _, _, err = mem.GetCoherent(ctx, reclKey); err != nil {
+				t.Fatalf("%s: read reclaimed.json after A: %v", name, err)
+			}
+		}
+		mem.SetPutIfMatchHook(func(key, _ string, _ []byte) (bool, bool, stratum.CommitKnowledge, error) {
+			if key == reclKey {
+				// reclaimed.json must never be replaced, by either caller.
+				reclReplaceOK = false
+			}
+			if stallOnHeadCAS && key == headKey && !stalled {
+				// B holds a stale head validator and has already published reclaimed.json.
+				runA()
+			}
+			return false, false, 0, nil
+		})
+		if !stallOnHeadCAS {
+			mem.SetPutIfAbsentHook(func(key string, _ []byte) (bool, bool, stratum.CommitKnowledge, error) {
+				if key == reclKey && !stalled {
+					// B has loaded the unreclaimed head and is about to publish reclaimed.json.
+					runA()
+				}
+				return false, false, 0, nil
+			})
+		}
+		_, _, errB := bs.ReclaimSealedAncestor(ctx, src, dstB)
+		mem.SetPutIfMatchHook(nil)
+		mem.SetPutIfAbsentHook(nil)
+		if !stalled {
+			t.Fatalf("%s: stale-window hook did not fire", name)
+		}
+		if !errors.Is(errB, bucketcas.ErrInvalidStore) {
+			t.Fatalf("%s: stale B: got %v, want ErrInvalidStore", name, errB)
+		}
+		if !reclReplaceOK {
+			t.Fatalf("%s: reclaimed.json was replaced via PutIfMatch", name)
+		}
+		headAfterB, hd := readConcHead(src)
+		reclAfterB, _, _, err := mem.GetCoherent(ctx, reclKey)
+		if err != nil {
+			t.Fatalf("%s: read reclaimed.json after B: %v", name, err)
+		}
+		if !bytes.Equal(headAfterA, headAfterB) || !bytes.Equal(reclAfterA, reclAfterB) {
+			t.Fatalf("%s: stale B mutated committed state\nhead %s\ndoc %s", name, headAfterB, reclAfterB)
+		}
+		if !hd.Reclaimed || hd.ReclaimedBy != dstA {
+			t.Fatalf("%s: head reclaimed=%v reclaimed_by=%q, want true/%q", name, hd.Reclaimed, hd.ReclaimedBy, dstA)
+		}
+		for _, s := range []string{src, dstA, dstB} {
+			if _, _, err := bs.State(ctx, s); err != nil {
+				t.Fatalf("%s: State(%s) after concurrent reclamation: %v", name, s, err)
+			}
+		}
+		if _, _, err := bs.ReclaimSealedAncestor(ctx, src, dstA); err != nil {
+			t.Fatalf("%s: idempotent retry of winner: %v", name, err)
+		}
+		if _, _, err := bs.ReclaimSealedAncestor(ctx, src, dstB); !errors.Is(err, bucketcas.ErrInvalidStore) {
+			t.Fatalf("%s: loser retry: got %v, want ErrInvalidStore", name, err)
+		}
+	}
+	runStaleReclaimCase("stale-doc", false)
+	runStaleReclaimCase("stale-head", true)
+
+	// 14. Head CAS reply lost after the write landed: ReclaimSealedAncestor must surface
+	// *stratum.IndeterminateError (not ErrInvalidStore) so IndeterminateError-retrying callers
+	// retry; the same successor's retry then completes predecessor segment deletion.
+	{
+		src, dst := "s-unk-recl-src", "s-unk-recl-dst"
+		if err := bs.OpenStream(ctx, src, "single_revision"); err != nil {
+			t.Fatalf("OpenStream %s: %v", src, err)
+		}
+		if _, err := bs.Append(ctx, bucketcas.AppendInput{
+			Stream:         src,
+			Record:         makeRecordJSON(src, "u-1", 1, `{"v":1}`),
+			IdempotencyKey: "k-unk-1",
+		}); err != nil {
+			t.Fatalf("Append %s: %v", src, err)
+		}
+		if _, err := bs.SealAndCompactStream(ctx, bucketcas.CompactionInput{
+			SourceStream:       src,
+			DestinationStream:  dst,
+			Mode:               "single_revision",
+			AllowDropUnretired: true,
+			ActorKind:          "human",
+			Actor:              "alice@example.com",
+			AuthRef:            "auth:unk-recl",
+			AuthDigest:         "sha256:" + strings.Repeat("f", 64),
+		}); err != nil {
+			t.Fatalf("SealAndCompactStream %s: %v", dst, err)
+		}
+		headKey := "multihop/streams/" + src + "/head.json"
+		mem.SetPutIfMatchHook(func(key, _ string, _ []byte) (bool, bool, stratum.CommitKnowledge, error) {
+			if key == headKey {
+				mem.SetPutIfMatchHook(nil)
+				return true, true, stratum.CommitUnknown, errors.New("simulated lost reply after head commit")
+			}
+			return false, false, 0, nil
+		})
+		_, _, err := bs.ReclaimSealedAncestor(ctx, src, dst)
+		mem.SetPutIfMatchHook(nil)
+		var indErr *stratum.IndeterminateError
+		if !errors.As(err, &indErr) || errors.Is(err, bucketcas.ErrInvalidStore) {
+			t.Fatalf("head CAS CommitUnknown: got %v, want *stratum.IndeterminateError", err)
+		}
+		if _, hd := readConcHead(src); !hd.Reclaimed || hd.ReclaimedBy != dst {
+			t.Fatalf("expected landed reclaimed head bound to %q, got reclaimed=%v by=%q", dst, hd.Reclaimed, hd.ReclaimedBy)
+		}
+		if n, _, err := bs.ReclaimSealedAncestor(ctx, src, dst); err != nil || n == 0 {
+			t.Fatalf("same-successor retry after CommitUnknown: n=%d err=%v", n, err)
+		}
+		segs, err := mem.ListPrefix(ctx, "multihop/streams/"+src+"/segments/")
+		if err != nil {
+			t.Fatalf("ListPrefix segments: %v", err)
+		}
+		if len(segs) != 0 {
+			t.Fatalf("expected predecessor segments deleted after retry, got %v", segs)
+		}
+		if _, _, err := bs.State(ctx, dst); err != nil {
+			t.Fatalf("State(%s) after indeterminate reclamation retry: %v", dst, err)
+		}
 	}
 }

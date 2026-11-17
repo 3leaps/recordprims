@@ -15,13 +15,27 @@ import (
 	"github.com/3leaps/recordprims/internal/canon"
 )
 
+func (s *Store) cleanStaleIndexTemps(sdir string) {
+	names, err := s.root.ReadDirNames(sdir, s.fso)
+	if err != nil {
+		return
+	}
+	for _, n := range names {
+		if strings.HasPrefix(n, ".tmp-") {
+			_ = s.root.Remove(sdir + "/" + n)
+		}
+	}
+}
+
 func (s *Store) writeIndexFileAtomic(sdir, filename string, data []byte) error {
+	s.cleanStaleIndexTemps(sdir)
 	var id [12]byte
 	if _, err := io.ReadFull(rand.Reader, id[:]); err != nil {
 		return err
 	}
 	tmp := sdir + "/.tmp-" + filename + "-" + hex.EncodeToString(id[:])
 	if err := writeFileDurable(s.root, tmp, data); err != nil {
+		_ = s.root.Remove(tmp)
 		return err
 	}
 	dst := sdir + "/" + filename
@@ -60,12 +74,13 @@ type indexWatermark struct {
 }
 
 type headIndexEntry struct {
-	RecordID string `json:"record_id"`
-	Revision uint64 `json:"revision"`
-	Digest   string `json:"digest"`
-	Retired  bool   `json:"retired"`
-	Seq      uint64 `json:"seq"`
-	Offset   int64  `json:"offset"`
+	RecordID     string     `json:"record_id"`
+	Revision     uint64     `json:"revision"`
+	Digest       string     `json:"digest"`
+	Retired      bool       `json:"retired"`
+	Seq          uint64     `json:"seq"`
+	Offset       int64      `json:"offset"`
+	ImportedFrom *SourcePin `json:"imported_from,omitempty"`
 }
 
 type keyIndexEntry struct {
@@ -77,11 +92,12 @@ type keyIndexEntry struct {
 }
 
 type recordIndexEntry struct {
-	RecordID string `json:"record_id"`
-	Revision uint64 `json:"revision"`
-	Digest   string `json:"digest"`
-	Seq      uint64 `json:"seq"`
-	Offset   int64  `json:"offset"`
+	RecordID     string     `json:"record_id"`
+	Revision     uint64     `json:"revision"`
+	Digest       string     `json:"digest"`
+	Seq          uint64     `json:"seq"`
+	Offset       int64      `json:"offset"`
+	ImportedFrom *SourcePin `json:"imported_from,omitempty"`
 }
 
 type indexDoc[T any] struct {
@@ -138,10 +154,11 @@ func computeExpectedIndexes(diagKey []byte, rep *replayedStream, raw []byte) (
 	offsets := lineOffsetsOf(raw)
 
 	type headState struct {
-		rev    uint64
-		digest string
-		seq    uint64
-		offset int64
+		rev          uint64
+		digest       string
+		seq          uint64
+		offset       int64
+		importedFrom *SourcePin
 	}
 	latestByRecord := make(map[string]headState)
 	var recEntries []recordIndexEntry
@@ -159,19 +176,34 @@ func computeExpectedIndexes(diagKey []byte, rep *replayedStream, raw []byte) (
 			rid := r.Get("record_id").Str
 			rev := uint64(r.Get("revision").Int)
 			dig := e.Get("digest").Str
+			var imp *SourcePin
+			if impNode := e.Get("imported_from"); impNode != nil && impNode.Get("pin") != nil {
+				pNode := impNode.Get("pin")
+				imp = &SourcePin{
+					Capability: impNode.Get("capability").Str,
+					Pin: Pin{
+						Stream:   pNode.Get("stream").Str,
+						RecordID: pNode.Get("record_id").Str,
+						Revision: uint64(pNode.Get("revision").Int),
+						Digest:   pNode.Get("digest").Str,
+					},
+				}
+			}
 			recEntries = append(recEntries, recordIndexEntry{
-				RecordID: rid,
-				Revision: rev,
-				Digest:   dig,
-				Seq:      sq,
-				Offset:   off,
+				RecordID:     rid,
+				Revision:     rev,
+				Digest:       dig,
+				Seq:          sq,
+				Offset:       off,
+				ImportedFrom: imp,
 			})
 			if cur, ok := latestByRecord[rid]; !ok || rev >= cur.rev {
 				latestByRecord[rid] = headState{
-					rev:    rev,
-					digest: dig,
-					seq:    sq,
-					offset: off,
+					rev:          rev,
+					digest:       dig,
+					seq:          sq,
+					offset:       off,
+					importedFrom: imp,
 				}
 			}
 			rawKey := e.Get("idempotency_key").Str
@@ -208,12 +240,13 @@ func computeExpectedIndexes(diagKey []byte, rep *replayedStream, raw []byte) (
 	headEntries := make([]headIndexEntry, 0, len(latestByRecord))
 	for rid, hs := range latestByRecord {
 		headEntries = append(headEntries, headIndexEntry{
-			RecordID: rid,
-			Revision: hs.rev,
-			Digest:   hs.digest,
-			Retired:  rep.st.IsRetired(rid),
-			Seq:      hs.seq,
-			Offset:   hs.offset,
+			RecordID:     rid,
+			Revision:     hs.rev,
+			Digest:       hs.digest,
+			Retired:      rep.st.IsRetired(rid),
+			Seq:          hs.seq,
+			Offset:       hs.offset,
+			ImportedFrom: hs.importedFrom,
 		})
 	}
 	slices.SortFunc(headEntries, func(a, b headIndexEntry) int {
