@@ -25,7 +25,7 @@ running user with no group or other access. On Windows the ACL may grant only
 the owner, SYSTEM, the Administrators group, CREATOR OWNER and OWNER RIGHTS. A
 cross-process advisory lock admits one writer per store. Journal appends are
 written and synced before a receipt is returned; bodies are staged in a
-temporary file, synced and then linked into place before any record refers to
+temporary file, synced and then renamed into place before any record refers to
 them.
 
 The declared failure model is `survives_process_loss`: an accepted write with a
@@ -89,13 +89,14 @@ Other writes are handled by kind:
   before any comparison. A determinate `already_exists` is accepted only when
   the stored bytes are identical.
 - **Head writes** that report `unknown` during an append are followed by a
-  read of the head. If the record is found committed, the original receipt is
-  returned; otherwise the caller receives an indeterminate error.
+  read of the head. If the head holds a live entry for the same idempotency
+  key with the same record digest, that receipt is returned; otherwise the
+  caller receives an indeterminate error.
 - **Reclamation** returns an indeterminate error on an `unknown` write of the
-  head, as for the summary, before any segment is deleted.
-
-Retrying an operation after an indeterminate error converges: it either finds
-the earlier write in place and continues, or performs it.
+  head, as for the summary, before any segment is deleted. Once the head write
+  has committed, segment deletes run in turn; if one fails or its outcome is
+  unknown, earlier segments may already be gone and that delete may itself have
+  landed. Retrying with the same successor re-issues the remaining deletes.
 
 ### Compaction and reclamation
 
@@ -113,7 +114,7 @@ naming a different successor is refused.
 
 The bucket stratum is tested against an in-memory backend that can inject each
 outcome on any key, including `unknown` with and without the write having
-landed. The append, compaction and reclamation paths have tests showing that an
-unknown or contract-violating outcome causes no destructive progress and that a
-retry converges. Tests against live S3-compatible services are not yet part of
+landed. Tests show that an unknown or contract-violating write of the
+reclamation summary or head deletes no segments, and that the tested retry
+paths for append, compaction and reclamation converge. Tests against live S3-compatible services are not yet part of
 the suite.

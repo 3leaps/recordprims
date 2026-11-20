@@ -17,8 +17,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `Store.SealAndCompactStream`, `Store.ReclaimSealedAncestor`,
   `Store.StorageUsage`, `Stream.EstablishRestrictions`,
   `Stream.ContinuationState`, `Stream.ResolveSourcePin` and
-  `Stream.StorageUsage`; the bucket stratum gains the same operations with
-  detached seal and write-once reclamation summaries
+  `Stream.StorageUsage`; the bucket stratum gains `SealAndCompactStream` and
+  `ReclaimSealedAncestor`, with a detached seal and a write-once reclamation
+  summary
 - Bucket stratum reclamation returns an indeterminate error on an unknown
   write of its summary or the head, before any segment is deleted
 - [docs/storage-strata.md](docs/storage-strata.md): the guarantees a storage
