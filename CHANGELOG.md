@@ -19,10 +19,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `Stream.ContinuationState`, `Stream.ResolveSourcePin` and
   `Stream.StorageUsage`; the bucket stratum gains the same operations with
   detached seal and write-once reclamation summaries
-- The bucket stratum treats a backend write that reports anything other than
-  committed without an error as a failure; reclamation returns an
-  indeterminate error on an unknown write of its summary or the head, before
-  any segment is deleted
+- Bucket stratum reclamation returns an indeterminate error on an unknown
+  write of its summary or the head, before any segment is deleted
 - [docs/storage-strata.md](docs/storage-strata.md): the guarantees a storage
   backend must provide
 - Release ceremony and preflight hardening: `make release-github-preflight`

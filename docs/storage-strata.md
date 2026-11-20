@@ -78,16 +78,21 @@ Other writes are handled by kind:
 
 - **Segments and checkpoints** are content-addressed: the key embeds the
   SHA-256 of the bytes. A create-only write that reports `already_exists` is
-  accepted as the same content without reading it back. Any other failure,
-  including `unknown`, stops the operation before the head is written.
-- **Bodies and the reclamation summary** are compared byte for byte. A
-  create-only write that reports `already_exists` is accepted only when the
-  existing bytes are identical; otherwise the operation is refused.
+  accepted as the same content without reading it back, whatever commit
+  outcome accompanies it, and the operation continues to the head write. Any
+  other failure, including `unknown` without `already_exists`, stops the
+  operation before the head is written.
+- **Bodies** are compared byte for byte. A create-only write that reports
+  `already_exists` is accepted only when the stored bytes are identical;
+  otherwise the operation is refused.
+- **The reclamation summary** returns an indeterminate error on `unknown`
+  before any comparison. A determinate `already_exists` is accepted only when
+  the stored bytes are identical.
 - **Head writes** that report `unknown` during an append are followed by a
   read of the head. If the record is found committed, the original receipt is
   returned; otherwise the caller receives an indeterminate error.
 - **Reclamation** returns an indeterminate error on an `unknown` write of the
-  summary or the head, before any segment is deleted.
+  head, as for the summary, before any segment is deleted.
 
 Retrying an operation after an indeterminate error converges: it either finds
 the earlier write in place and continues, or performs it.
