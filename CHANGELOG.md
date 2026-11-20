@@ -7,6 +7,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Rust crate: verified store root with symlink, owner and permission checks
+  (Unix and Windows), the cross-process store lock, content-addressed bodies
+  (`put_body`, `remove_body`) and the `durable-record/v1` journal reader
+- Go/Rust differential check (`make crosscheck`): the same store and body
+  operations through both implementations must produce identical bytes, and
+  each implementation opens stores written by the other
+- Sealed-continuation compaction: `Store.SealStream`, `Store.VerifyStreamSeal`,
+  `Store.SealAndCompactStream`, `Store.ReclaimSealedAncestor`,
+  `Store.StorageUsage`, `Stream.EstablishRestrictions`,
+  `Stream.ContinuationState`, `Stream.ResolveSourcePin` and
+  `Stream.StorageUsage`; the bucket stratum gains the same operations with
+  detached seal and write-once reclamation summaries
+- The bucket stratum treats a backend write that reports anything other than
+  committed without an error as a failure, and a write whose outcome is
+  unknown as indeterminate, before any destructive step
+- [docs/storage-strata.md](docs/storage-strata.md): the guarantees a storage
+  backend must provide
 - Release ceremony and preflight hardening: `make release-github-preflight`
   (and `make release-preflight`) verifies GitHub-hosted workflow token
   permissions, the active `Tag Publish Protection` ruleset on `refs/tags/v*`,
