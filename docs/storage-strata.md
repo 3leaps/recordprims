@@ -21,7 +21,8 @@ test harnesses can be built against them.
 
 The filesystem stratum runs inside a verified store root: paths are confined to
 the root, symlinks are refused, and files and directories must be owned by the
-running user with no group or other access (an owner-only ACL on Windows). A
+running user with no group or other access. On Windows the ACL may grant only
+the owner, SYSTEM, the Administrators group, CREATOR OWNER and OWNER RIGHTS. A
 cross-process advisory lock admits one writer per store. Journal appends are
 written and synced before a receipt is returned; bodies are staged in a
 temporary file, synced and then linked into place before any record refers to
@@ -71,15 +72,25 @@ reports `committed` with no error.**
 
 ### How the store uses outcomes
 
-- **Committed** writes advance state.
-- **Not committed** writes are determinate. A failed create-only write of
-  content-addressed data counts as success only when the existing bytes are
-  identical to the bytes being written.
-- **Unknown** writes surface to the caller as an indeterminate error, and no
-  destructive step runs after one. For example, predecessor segments are never
-  deleted after an unknown write of the reclamation summary or of the head.
-  Retrying the same operation converges: it either finds the earlier write in
-  place and continues, or performs it.
+State advances only through a `committed` write of a stream's `head.json`.
+
+Other writes are handled by kind:
+
+- **Segments and checkpoints** are content-addressed: the key embeds the
+  SHA-256 of the bytes. A create-only write that reports `already_exists` is
+  accepted as the same content without reading it back. Any other failure,
+  including `unknown`, stops the operation before the head is written.
+- **Bodies and the reclamation summary** are compared byte for byte. A
+  create-only write that reports `already_exists` is accepted only when the
+  existing bytes are identical; otherwise the operation is refused.
+- **Head writes** that report `unknown` during an append are followed by a
+  read of the head. If the record is found committed, the original receipt is
+  returned; otherwise the caller receives an indeterminate error.
+- **Reclamation** returns an indeterminate error on an `unknown` write of the
+  summary or the head, before any segment is deleted.
+
+Retrying an operation after an indeterminate error converges: it either finds
+the earlier write in place and continues, or performs it.
 
 ### Compaction and reclamation
 
@@ -89,8 +100,9 @@ reclaimed. Reclamation first publishes a write-once summary of the predecessor
 (its historical cuts and pin sequences, so continuations opened at earlier cuts
 remain verifiable), then records the reclaiming successor in the predecessor's
 head through a compare-and-swap, and only then deletes segments. A second
-reclaimer racing the first observes the committed head and does not repeat or
-undo the work.
+reclaimer that finds the head already reclaimed by the same successor re-issues
+the segment deletes; it never rewrites the summary or the head. A reclaimer
+naming a different successor is refused.
 
 ## Testing a backend
 
