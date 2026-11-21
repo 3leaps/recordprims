@@ -46,6 +46,10 @@ pub(crate) const REASON_HOLD_MISMATCH: &str = "hold_mismatch";
 pub(crate) const REASON_OBSERVATION_ORDER: &str = "observation_order";
 pub(crate) const REASON_BODY_LIFECYCLE: &str = "body_lifecycle";
 pub(crate) const REASON_CONTINUATION: &str = "continuation";
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const REASON_RECEIPT_MISMATCH: &str = "receipt_mismatch";
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const REASON_IDEMPOTENCY_CONFLICT: &str = "idempotency_conflict";
 
 /// Identifies a content-addressed body by its digest and byte length.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -563,6 +567,7 @@ struct LiveEntry {
     id: KeyIdentity,
     at: Instant,
     record_id: String,
+    receipt: Node,
 }
 
 #[derive(Debug, Clone)]
@@ -749,12 +754,317 @@ impl State {
         &self.stream
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn last_at(&self) -> Instant {
+        self.journal
+            .last()
+            .and_then(|e| e.get("at"))
+            .and_then(|a| parse_instant(&a.str_val).ok())
+            .unwrap_or_else(|| Instant::from_unix_micros(i64::MIN / 2).expect("floor instant"))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn next_seq(&self, op: &str) -> Result<i64, Reject> {
+        let seq = i64::try_from(self.journal.len())
+            .unwrap_or(i64::MAX)
+            .saturating_add(1);
+        if seq > wire::MAX_SAFE_INTEGER {
+            return Err(reject(
+                wire::REASON_NUMERIC_DOMAIN,
+                format!("{op}: seq exceeds {}", wire::MAX_SAFE_INTEGER),
+            ));
+        }
+        Ok(seq)
+    }
+
+    fn protection_receipt(&self, r: &Node, seq: i64) -> Result<Node, Reject> {
+        if r.kind != Kind::Object {
+            return Err(reject(REASON_SHAPE, "protection request is not an object"));
+        }
+        let stream = str_of(r, "stream")?;
+        let key = str_of(r, "idempotency_key")?;
+        let action = str_of(r, "action")?;
+        let outcome = if action == "tombstone" {
+            "tombstoned"
+        } else {
+            "untombstoned"
+        };
+        let rdig = record_digest(r)?;
+        Ok(Node::object(vec![
+            member("v", Node::int(1)),
+            member("stream", str_node(stream)),
+            member("idempotency_key", str_node(key)),
+            member("outcome", str_node(outcome)),
+            member("seq", Node::int(seq)),
+            member("request_digest", str_node(&rdig)),
+            member("failure_model", str_node(&self.failure_model)),
+        ]))
+    }
+
+    fn retirement_receipt(&self, r: &Node, seq: i64) -> Result<Node, Reject> {
+        if r.kind != Kind::Object {
+            return Err(reject(REASON_SHAPE, "retirement request is not an object"));
+        }
+        let stream = str_of(r, "stream")?;
+        let key = str_of(r, "idempotency_key")?;
+        let rid = str_of(r, "record_id")?;
+        let rdig = record_digest(r)?;
+        Ok(Node::object(vec![
+            member("v", Node::int(1)),
+            member("kind", str_node("receipt")),
+            member("stream", str_node(stream)),
+            member("idempotency_key", str_node(key)),
+            member("outcome", str_node("retired")),
+            member("seq", Node::int(seq)),
+            member("record_id", str_node(rid)),
+            member("request_digest", str_node(&rdig)),
+            member("failure_model", str_node(&self.failure_model)),
+        ]))
+    }
+
+    /// Evaluates protection request `r` at decision time `at_str`, appending
+    /// a tombstoned or untombstoned entry when accepted and returning the
+    /// protection receipt. Live-key replay precedes target and state checks.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn request(&mut self, r: &Node, at_str: &str) -> Result<Node, Reject> {
+        if r.kind != Kind::Object {
+            return Err(reject(REASON_SHAPE, "request: not an object"));
+        }
+        check_journal(&self.journal)?;
+        let at = instant_of(at_str, "request at")?;
+        if at < self.last_at() {
+            return Err(reject(
+                REASON_JOURNAL_TIME,
+                "request: at precedes the journal",
+            ));
+        }
+        let obs = str_of(r, "observed_at")?;
+        instant_of(obs, "request.observed_at")?;
+        let r_stream = str_of(r, "stream")?.to_owned();
+        let key = str_of(r, "idempotency_key")?.to_owned();
+        let rdig = record_digest(r)?;
+        let mut reason = "";
+        if r_stream == self.stream {
+            if let Some(prior) = self.live(&key, at) {
+                if prior.id.kind == "protection" && prior.id.value == rdig {
+                    return Ok(prior.receipt.clone());
+                }
+                reason = REASON_IDEMPOTENCY_CONFLICT;
+            }
+        }
+        if reason.is_empty() {
+            reason = self.refusal(r, at)?;
+        }
+        if !reason.is_empty() {
+            return Ok(Node::object(vec![
+                member("v", Node::int(1)),
+                member("stream", str_node(&r_stream)),
+                member("idempotency_key", str_node(&key)),
+                member("outcome", str_node(reason)),
+            ]));
+        }
+        let seq = self.next_seq("request")?;
+        let rcpt = self.protection_receipt(r, seq)?;
+        let outcome = str_of(&rcpt, "outcome")?.to_owned();
+        let entry = Node::object(vec![
+            member("v", Node::int(1)),
+            member("seq", Node::int(seq)),
+            member("group", Node::int(seq)),
+            member("group_size", Node::int(1)),
+            member("stream", str_node(&self.stream.clone())),
+            member("type", str_node(&outcome)),
+            member("at", str_node(at_str)),
+            member("request", r.clone()),
+            member("request_digest", str_node(&rdig)),
+        ]);
+        self.ingest(entry)?;
+        Ok(rcpt)
+    }
+
+    /// Evaluates keyed retirement request `r` at decision time `at_str`,
+    /// appending a retired entry when accepted and returning the receipt.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn retire(&mut self, r: &Node, at_str: &str) -> Result<Node, Reject> {
+        if r.kind != Kind::Object {
+            return Err(reject(REASON_SHAPE, "retire: not an object"));
+        }
+        check_journal(&self.journal)?;
+        let at = instant_of(at_str, "retire at")?;
+        if at < self.last_at() {
+            return Err(reject(
+                REASON_JOURNAL_TIME,
+                "retire: at precedes the journal",
+            ));
+        }
+        let r_stream = str_of(r, "stream")?.to_owned();
+        let key = str_of(r, "idempotency_key")?.to_owned();
+        let rid = str_of(r, "record_id")?.to_owned();
+        let retire_reason = str_of(r, "reason")?.to_owned();
+        let rdig = record_digest(r)?;
+        let mut reason = "";
+        if r_stream == self.stream {
+            if let Some(prior) = self.live(&key, at) {
+                if prior.id.kind == "retirement" && prior.id.value == rdig {
+                    return Ok(prior.receipt.clone());
+                }
+                reason = REASON_IDEMPOTENCY_CONFLICT;
+            }
+        }
+        if reason.is_empty() && (r_stream != self.stream || !self.has_record_id(&rid)) {
+            reason = REASON_TARGET_NOT_FOUND;
+        }
+        if !reason.is_empty() {
+            return Ok(Node::object(vec![
+                member("v", Node::int(1)),
+                member("kind", str_node("receipt")),
+                member("stream", str_node(&r_stream)),
+                member("idempotency_key", str_node(&key)),
+                member("outcome", str_node(reason)),
+            ]));
+        }
+        let seq = self.next_seq("retire")?;
+        let entry = Node::object(vec![
+            member("v", Node::int(1)),
+            member("seq", Node::int(seq)),
+            member("group", Node::int(seq)),
+            member("group_size", Node::int(1)),
+            member("stream", str_node(&self.stream.clone())),
+            member("type", str_node("retired")),
+            member("at", str_node(at_str)),
+            member("record_id", str_node(&rid)),
+            member("reason", str_node(&retire_reason)),
+            member("idempotency_key", str_node(&key)),
+            member("request_digest", str_node(&rdig)),
+        ]);
+        self.ingest(entry)?;
+        self.retirement_receipt(r, seq)
+    }
+
+    /// Looks up `key` at decision time `at_str` for an attempt at
+    /// `attempted_at_str`, returning the reconciliation document.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn reconcile(
+        &self,
+        key: &str,
+        at_str: &str,
+        attempted_at_str: &str,
+    ) -> Result<Node, Reject> {
+        check_journal(&self.journal)?;
+        instant_of(attempted_at_str, "reconcile attempted_at")?;
+        let at = instant_of(at_str, "reconcile at")?;
+        if at < self.last_at() {
+            return Err(reject(
+                REASON_JOURNAL_TIME,
+                "reconcile: at precedes the journal",
+            ));
+        }
+        let mut fields = vec![
+            member("v", Node::int(1)),
+            member("kind", str_node("reconciliation")),
+            member("stream", str_node(&self.stream)),
+            member("idempotency_key", str_node(key)),
+            member("attempted_at", str_node(attempted_at_str)),
+        ];
+        if let Some(prior) = self.live(key, at) {
+            fields.push(member("result", str_node("found")));
+            fields.push(member("receipt", prior.receipt.clone()));
+        } else {
+            fields.push(member("result", str_node("unknown")));
+            fields.push(member("reason", str_node("coverage_unprovable")));
+        }
+        Ok(Node::object(fields))
+    }
+
+    /// Checks a received receipt or reconciliation against the journal.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn verify_receipt(&self, received: &Node) -> Result<Node, Reject> {
+        if received.kind != Kind::Object {
+            return Err(reject(REASON_SHAPE, "receipt: not an object"));
+        }
+        if received
+            .get("kind")
+            .is_some_and(|k| k.kind == Kind::String && k.str_val == "reconciliation")
+        {
+            let att = str_of(received, "attempted_at")?;
+            instant_of(att, "reconciliation attempted_at")?;
+            for f in ["window_covers_from", "window_covers_until"] {
+                if present(received, f) {
+                    let v = str_of(received, f)?;
+                    instant_of(v, &format!("reconciliation {f}"))?;
+                }
+            }
+            return Ok(verified_outcome());
+        }
+        let outcome = str_of(received, "outcome")?;
+        if !matches!(outcome, "tombstoned" | "untombstoned" | "retired") {
+            return Err(reject(
+                REASON_RECEIPT_MISMATCH,
+                format!("receipt: outcome {outcome:?} is not an accepted protection or retirement receipt"),
+            ));
+        }
+        if int_of(received, "v").ok() != Some(1) {
+            return Err(reject(REASON_RECEIPT_MISMATCH, "receipt: v is not 1"));
+        }
+        let seq = int_of(received, "seq")?;
+        let n = i64::try_from(self.journal.len()).unwrap_or(i64::MAX);
+        if seq < 1 || seq > n {
+            return Err(reject(
+                REASON_RECEIPT_MISMATCH,
+                format!("receipt: seq {seq} is out of range"),
+            ));
+        }
+        let entry = &self.journal[(seq - 1) as usize];
+        let etyp = str_of(entry, "type")?;
+        let expected = if outcome == "retired" {
+            if etyp != "retired" || !present(entry, "idempotency_key") {
+                return Err(reject(
+                    REASON_RECEIPT_MISMATCH,
+                    format!("receipt: seq {seq} is not a keyed retirement"),
+                ));
+            }
+            self.retirement_receipt(&retirement_request(entry), seq)?
+        } else {
+            if etyp != "tombstoned" && etyp != "untombstoned" {
+                return Err(reject(
+                    REASON_RECEIPT_MISMATCH,
+                    format!("receipt: seq {seq} is not a protection entry"),
+                ));
+            }
+            let Some(req) = entry.get("request") else {
+                return Err(reject(REASON_SHAPE, "protection request is not an object"));
+            };
+            self.protection_receipt(req, seq)?
+        };
+        if !equal_nodes(Some(received), Some(&expected)) {
+            return Err(reject(
+                REASON_RECEIPT_MISMATCH,
+                format!("receipt: does not match journal entry {seq}"),
+            ));
+        }
+        Ok(verified_outcome())
+    }
+
     fn has_record_id(&self, record_id: &str) -> bool {
         self.records.keys().any(|p| p.record_id == record_id)
     }
 
-    fn remember(&mut self, key: String, id: KeyIdentity, at: Instant, record_id: String) {
-        self.keys.insert(key, LiveEntry { id, at, record_id });
+    fn remember(
+        &mut self,
+        key: String,
+        id: KeyIdentity,
+        at: Instant,
+        record_id: String,
+        receipt: Node,
+    ) {
+        self.keys.insert(
+            key,
+            LiveEntry {
+                id,
+                at,
+                record_id,
+                receipt,
+            },
+        );
     }
 
     fn live(&self, key: &str, at: Instant) -> Option<&LiveEntry> {
@@ -973,12 +1283,23 @@ impl State {
                             format!("{where_ctx}: idempotency key {key:?} is still live"),
                         ));
                     }
-                    if present(&e, "body_status") {
-                        let _ = str_of(&e, "body_status")?;
-                    }
+                    let body_status = if present(&e, "body_status") {
+                        str_of(&e, "body_status")?.to_owned()
+                    } else {
+                        String::new()
+                    };
                     if let Some(rec) = e.get("record") {
                         self.records.insert(p.clone(), rec.clone());
                     }
+                    let rcpt = content_receipt(
+                        &self.stream,
+                        &key,
+                        &typ,
+                        &p,
+                        seq,
+                        &self.failure_model,
+                        &body_status,
+                    );
                     self.remember(
                         key,
                         KeyIdentity {
@@ -987,6 +1308,7 @@ impl State {
                         },
                         at,
                         p.record_id,
+                        rcpt,
                     );
                 }
                 "deduplicated" => {
@@ -1058,6 +1380,7 @@ impl State {
                             format!("{where_ctx}: protection journal operation refused"),
                         ));
                     }
+                    let rcpt = self.protection_receipt(req, seq)?;
                     self.apply(req, seq)?;
                     self.remember(
                         key,
@@ -1067,6 +1390,7 @@ impl State {
                         },
                         at,
                         String::new(),
+                        rcpt,
                     );
                     self.restricted_at.push(seq);
                 }
@@ -1095,6 +1419,7 @@ impl State {
                                 format!("{where_ctx}: idempotency key {key:?} is still live"),
                             ));
                         }
+                        let rcpt = self.retirement_receipt(&r, seq)?;
                         self.remember(
                             key,
                             KeyIdentity {
@@ -1103,6 +1428,7 @@ impl State {
                             },
                             at,
                             rid.clone(),
+                            rcpt,
                         );
                     }
                     self.retired.insert(rid);
@@ -1929,6 +2255,56 @@ fn pin_of(e: &Node, where_ctx: &str) -> Result<Pin, Reject> {
         revision: int_of(rec, "revision")?,
         digest: str_of(e, "digest")?.to_owned(),
     })
+}
+
+fn str_node(s: &str) -> Node {
+    Node::string(s)
+}
+
+fn member(name: &str, value: Node) -> Member {
+    Member {
+        name: name.to_owned(),
+        value,
+    }
+}
+
+pub(crate) fn pin_node(p: &Pin) -> Node {
+    Node::object(vec![
+        member("stream", str_node(&p.stream)),
+        member("record_id", str_node(&p.record_id)),
+        member("revision", Node::int(p.revision)),
+        member("digest", str_node(&p.digest)),
+    ])
+}
+
+fn content_receipt(
+    stream: &str,
+    key: &str,
+    outcome: &str,
+    p: &Pin,
+    seq: i64,
+    failure_model: &str,
+    body_status: &str,
+) -> Node {
+    let mut fields = vec![
+        member("v", Node::int(1)),
+        member("kind", str_node("receipt")),
+        member("stream", str_node(stream)),
+        member("idempotency_key", str_node(key)),
+        member("outcome", str_node(outcome)),
+        member("pin", pin_node(p)),
+        member("seq", Node::int(seq)),
+        member("failure_model", str_node(failure_model)),
+    ];
+    if !body_status.is_empty() {
+        fields.push(member("body_status", str_node(body_status)));
+    }
+    Node::object(fields)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn verified_outcome() -> Node {
+    Node::object(vec![member("outcome", str_node("receipt_verified"))])
 }
 
 fn retirement_request(e: &Node) -> Node {

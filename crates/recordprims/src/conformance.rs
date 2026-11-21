@@ -291,9 +291,46 @@ fn semantic_result(v: &Node) -> Semantic {
                     return Semantic::refused(r.reason, complete(&st));
                 }
                 results.push(journaled());
+            } else if s.get("raw_request").is_some() || s.get("request").is_some() {
+                let req = match s.get("raw_request") {
+                    Some(raw) => wire::ingest(raw.str_val.as_bytes(), "protection_request"),
+                    None => typed(
+                        s.get("request").expect("request step"),
+                        "protection_request",
+                    ),
+                };
+                let at = s.get("at").map(|a| a.str_val.clone()).unwrap_or_default();
+                match req.and_then(|r| st.request(&r, &at)) {
+                    Ok(res) => results.push(res),
+                    Err(r) => return Semantic::refused(r.reason, complete(&st)),
+                }
+            } else if let Some(r) = s.get("retire") {
+                let at = s.get("at").map(|a| a.str_val.clone()).unwrap_or_default();
+                match st.retire(r, &at) {
+                    Ok(res) => results.push(res),
+                    Err(r) => return Semantic::refused(r.reason, complete(&st)),
+                }
+            } else if s.get("raw_receipt").is_some() || s.get("receipt").is_some() {
+                let rcpt = match s.get("raw_receipt") {
+                    Some(raw) => wire::ingest_receipt(raw.str_val.as_bytes()),
+                    None => {
+                        let r = s.get("receipt").expect("receipt step");
+                        typed(r, wire::receipt_kind(r))
+                    }
+                };
+                match rcpt.and_then(|r| st.verify_receipt(&r)) {
+                    Ok(res) => results.push(res),
+                    Err(r) => return Semantic::refused(r.reason, complete(&st)),
+                }
+            } else if let Some(rec) = s.get("reconcile") {
+                let f = |k: &str| rec.get(k).map(|x| x.str_val.clone()).unwrap_or_default();
+                match st.reconcile(&f("key"), &f("at"), &f("attempted_at")) {
+                    Ok(res) => results.push(res),
+                    Err(r) => return Semantic::refused(r.reason, complete(&st)),
+                }
             } else {
-                // request, retire, receipt, reconcile, body_state,
-                // removal_eligibility, verify_seal and use are not ported.
+                // body_state, removal_eligibility, verify_seal and use are
+                // not ported.
                 return Semantic::incomplete();
             }
         }
