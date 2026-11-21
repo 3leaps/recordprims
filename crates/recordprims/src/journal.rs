@@ -576,6 +576,15 @@ struct LiveEntry {
     receipt: Node,
 }
 
+/// A live idempotency key: its operation kind, identity value and stored
+/// receipt.
+#[derive(Debug, Clone)]
+pub(crate) struct LiveKey {
+    pub kind: &'static str,
+    pub value: String,
+    pub receipt: Node,
+}
+
 #[derive(Debug, Clone)]
 struct ImportItem {
     seq: i64,
@@ -754,6 +763,35 @@ impl State {
 
     pub(crate) fn journal(&self) -> &[Node] {
         &self.journal
+    }
+
+    /// The live key's operation kind, identity value, record id and stored
+    /// receipt, when `key` is live in the idempotency window at `at`.
+    pub(crate) fn live_key(&self, key: &str, at: Instant) -> Option<LiveKey> {
+        self.live(key, at).map(|p| LiveKey {
+            kind: p.id.kind,
+            value: p.id.value.clone(),
+            receipt: p.receipt.clone(),
+        })
+    }
+
+    /// The highest accepted revision of `record_id` on the stream.
+    pub(crate) fn head_pin(&self, record_id: &str) -> Option<Pin> {
+        self.records
+            .keys()
+            .filter(|p| p.record_id == record_id)
+            .max_by_key(|p| p.revision)
+            .cloned()
+    }
+
+    /// Accepted record revisions, keyed by pin.
+    pub(crate) fn records(&self) -> &HashMap<Pin, Node> {
+        &self.records
+    }
+
+    /// Whether `record_id` has been retired on this stream.
+    pub(crate) fn is_retired(&self, record_id: &str) -> bool {
+        self.retired.contains(record_id)
     }
 
     pub(crate) fn stream(&self) -> &str {

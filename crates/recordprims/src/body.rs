@@ -670,6 +670,34 @@ impl Store {
             .map_err(|e| e.into_store_error("fsync_dir", true))
     }
 
+    /// Consumes a publication lease once its referencing record is
+    /// appended.
+    pub(crate) fn consume_lease(&self, h: &str, lease: &PublicationLease) -> Result<(), Error> {
+        if lease.id.is_empty() || lease.digest != format!("sha256:{h}") {
+            return Err(Error::schema("invalid publication lease"));
+        }
+        let dir = format!("{DIR_BODY_PENDING}/{h}");
+        let name = format!("{dir}/{}", lease.id);
+        let raw = read_file_verified(&self.root, &name, self.fso, 1 << 12)
+            .map_err(|_| Error::schema("publication lease not found"))?;
+        let lf = wire::parse_json(&raw)
+            .map_err(|_| Error::store_invalid("publication lease invalid"))?;
+        let exp = lf
+            .get("expires_at")
+            .and_then(|e| crate::instant::parse_instant(&e.str_val).ok());
+        if exp.is_none_or(|e| self.clock.now() >= e) {
+            return Err(Error::schema("publication lease expired"));
+        }
+        match self.root.remove(&name, self.fso) {
+            Ok(()) => {}
+            Err(e) if e.is_not_found() => {}
+            Err(e) => return Err(e.into_store_error("unlink", true)),
+        }
+        self.root
+            .sync_dir(&dir, self.fso)
+            .map_err(|e| e.into_store_error("fsync_dir", false))
+    }
+
     fn write_lease(&self, h: &str, n: u64) -> Result<PublicationLease, Error> {
         let mut raw = [0u8; 16];
         fill_random(&mut raw)?;

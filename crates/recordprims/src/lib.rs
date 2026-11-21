@@ -11,12 +11,14 @@ mod body;
 mod canon;
 mod error;
 pub mod fsroot;
+mod index;
 mod instant;
 mod jfile;
 mod journal;
 mod lock;
 mod shape;
 mod store;
+mod stream;
 mod sys;
 #[doc(hidden)]
 pub mod wire;
@@ -37,4 +39,9 @@ pub use lock::FileLock;
 pub use store::{
     init, open, BodyRef, InitOptions, OpenOptions, Pin, Profile, ProfileBuild, ProfileDeletion,
     ProfileRuntime, Store, DEFAULT_BODY_REMOVAL_STREAM, DEFAULT_IDEMPOTENCY_WINDOW,
+};
+pub use stream::{
+    Continues, FrameHeader, FrameKind, FrameReader, HeadInfo, Mode, Receipt, Reconciliation,
+    ReleaseOutcome, ReleaseResult, ReleaseSink, RevisionView, SourcePin, Stream, UseClosure,
+    UsePurpose, UseRequest, Write, WriteOutcome,
 };

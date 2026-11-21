@@ -208,6 +208,8 @@ pub struct Store {
     pub(crate) mu: Mutex<()>,
     pub(crate) closed: AtomicBool,
     pub(crate) body_dirs_ready: AtomicBool,
+    /// Thread currently inside a release sink callback, if any.
+    pub(crate) release_thread: Mutex<Option<std::thread::ThreadId>>,
     #[cfg(test)]
     pub(crate) hook: Option<FaultHook>,
 }
@@ -258,6 +260,14 @@ impl Store {
     where
         F: FnOnce() -> Result<T, Error>,
     {
+        if *self
+            .release_thread
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            == Some(std::thread::current().id())
+        {
+            return Err(Error::SinkReentered);
+        }
         let _guard = self.mu.lock().unwrap_or_else(|e| e.into_inner());
         if self.closed.load(Ordering::SeqCst) {
             return Err(Error::Closed);
@@ -415,6 +425,7 @@ pub fn open(dir: impl AsRef<Path>, opts: OpenOptions) -> Result<Store, Error> {
         mu: Mutex::new(()),
         closed: AtomicBool::new(false),
         body_dirs_ready: AtomicBool::new(false),
+        release_thread: Mutex::new(None),
         #[cfg(test)]
         hook: None,
     })

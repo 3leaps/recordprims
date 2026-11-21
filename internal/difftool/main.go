@@ -12,12 +12,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/3leaps/recordprims"
+	"github.com/3leaps/recordprims/internal/canon"
 	"github.com/3leaps/recordprims/internal/lock"
 )
 
@@ -30,8 +32,9 @@ func (c *stepClock) Now() time.Time {
 }
 
 type handleEntry struct {
-	store *recordprims.Store
-	clock *stepClock
+	store   *recordprims.Store
+	clock   *stepClock
+	streams map[string]*recordprims.Stream
 }
 
 type scenarioInput struct {
@@ -54,50 +57,59 @@ type authInput struct {
 }
 
 type stepInput struct {
-	Op                  string     `json:"op"`
-	Handle              string     `json:"handle,omitempty"`
-	Subdir              string     `json:"subdir,omitempty"`
-	At                  string     `json:"at,omitempty"`
-	WindowMS            *int64     `json:"window_ms,omitempty"`
-	BodyRemovalStream   string     `json:"body_removal_stream,omitempty"`
-	PendingBodyTTLMS    *int64     `json:"pending_body_ttl_ms,omitempty"`
-	LockTimeoutMS       *int64     `json:"lock_timeout_ms,omitempty"`
-	DataUTF8            string     `json:"data_utf8,omitempty"`
-	DataHex             string     `json:"data_hex,omitempty"`
-	MediaType           string     `json:"media_type,omitempty"`
-	Digest              string     `json:"digest,omitempty"`
-	Length              int64      `json:"length,omitempty"`
-	CompleteIncarnation *uint64    `json:"complete_incarnation,omitempty"`
-	Reason              string     `json:"reason,omitempty"`
-	Provenance          *provInput `json:"provenance,omitempty"`
-	Authorization       *authInput `json:"authorization,omitempty"`
-	Input               string     `json:"input,omitempty"`
-	Rel                 string     `json:"rel,omitempty"`
-	Mode                *uint32    `json:"mode,omitempty"`
+	Op                  string          `json:"op"`
+	Handle              string          `json:"handle,omitempty"`
+	Subdir              string          `json:"subdir,omitempty"`
+	At                  string          `json:"at,omitempty"`
+	WindowMS            *int64          `json:"window_ms,omitempty"`
+	BodyRemovalStream   string          `json:"body_removal_stream,omitempty"`
+	PendingBodyTTLMS    *int64          `json:"pending_body_ttl_ms,omitempty"`
+	LockTimeoutMS       *int64          `json:"lock_timeout_ms,omitempty"`
+	DataUTF8            string          `json:"data_utf8,omitempty"`
+	DataHex             string          `json:"data_hex,omitempty"`
+	MediaType           string          `json:"media_type,omitempty"`
+	Digest              string          `json:"digest,omitempty"`
+	Length              int64           `json:"length,omitempty"`
+	CompleteIncarnation *uint64         `json:"complete_incarnation,omitempty"`
+	Reason              string          `json:"reason,omitempty"`
+	Provenance          *provInput      `json:"provenance,omitempty"`
+	Authorization       *authInput      `json:"authorization,omitempty"`
+	Input               string          `json:"input,omitempty"`
+	Rel                 string          `json:"rel,omitempty"`
+	Mode                *uint32         `json:"mode,omitempty"`
+	Stream              string          `json:"stream,omitempty"`
+	StreamMode          string          `json:"stream_mode,omitempty"`
+	Record              json.RawMessage `json:"record,omitempty"`
+	Key                 string          `json:"key,omitempty"`
+	RecordID            string          `json:"record_id,omitempty"`
+	AttemptedAt         string          `json:"attempted_at,omitempty"`
+	Purpose             string          `json:"purpose,omitempty"`
+	Closure             string          `json:"closure,omitempty"`
 }
 
 type stepOutput struct {
-	Op                string `json:"op"`
-	OK                bool   `json:"ok"`
-	ErrorCode         string `json:"error_code,omitempty"`
-	Reason            string `json:"reason,omitempty"`
-	State             string `json:"state,omitempty"`
-	Detail            string `json:"detail,omitempty"`
-	Indeterminate     *bool  `json:"indeterminate,omitempty"`
-	StoreIDLen        int    `json:"store_id_len,omitempty"`
-	WindowMS          int64  `json:"window_ms,omitempty"`
-	Stratum           string `json:"stratum,omitempty"`
-	FailureModel      string `json:"failure_model,omitempty"`
-	CommitStrategy    string `json:"commit_strategy,omitempty"`
-	BodyRemovalStream string `json:"body_removal_stream,omitempty"`
-	Digest            string `json:"digest,omitempty"`
-	Length            *int64 `json:"length,omitempty"`
-	MediaType         string `json:"media_type,omitempty"`
-	LeaseIDLen        int    `json:"lease_id_len,omitempty"`
-	LeaseDigest       string `json:"lease_digest,omitempty"`
-	LeaseExpiresAt    string `json:"lease_expires_at,omitempty"`
-	Outcome           string `json:"outcome,omitempty"`
-	Formatted         string `json:"formatted,omitempty"`
+	Op                string          `json:"op"`
+	OK                bool            `json:"ok"`
+	ErrorCode         string          `json:"error_code,omitempty"`
+	Reason            string          `json:"reason,omitempty"`
+	State             string          `json:"state,omitempty"`
+	Detail            string          `json:"detail,omitempty"`
+	Indeterminate     *bool           `json:"indeterminate,omitempty"`
+	StoreIDLen        int             `json:"store_id_len,omitempty"`
+	WindowMS          int64           `json:"window_ms,omitempty"`
+	Stratum           string          `json:"stratum,omitempty"`
+	FailureModel      string          `json:"failure_model,omitempty"`
+	CommitStrategy    string          `json:"commit_strategy,omitempty"`
+	BodyRemovalStream string          `json:"body_removal_stream,omitempty"`
+	Digest            string          `json:"digest,omitempty"`
+	Length            *int64          `json:"length,omitempty"`
+	MediaType         string          `json:"media_type,omitempty"`
+	LeaseIDLen        int             `json:"lease_id_len,omitempty"`
+	LeaseDigest       string          `json:"lease_digest,omitempty"`
+	LeaseExpiresAt    string          `json:"lease_expires_at,omitempty"`
+	Outcome           string          `json:"outcome,omitempty"`
+	Formatted         string          `json:"formatted,omitempty"`
+	Data              json.RawMessage `json:"data,omitempty"`
 }
 
 type scenarioOutput struct {
@@ -269,7 +281,7 @@ func runScenario(sc scenarioInput) (scenarioOutput, error) {
 			if old, ok := handles[hname]; ok {
 				_ = old.store.Close()
 			}
-			handles[hname] = &handleEntry{store: s, clock: clk}
+			handles[hname] = &handleEntry{store: s, clock: clk, streams: map[string]*recordprims.Stream{}}
 			prof := s.Profile()
 			results = append(results, stepOutput{
 				Op:                st.Op,
@@ -456,6 +468,22 @@ func runScenario(sc scenarioInput) (scenarioOutput, error) {
 			cleanErr := fmt.Errorf("recordprims: discarding staged body after %w: %w", recordprims.ErrSchema, &recordprims.IOError{Op: "unlink", Class: "permission"})
 			results = append(results, classifyErr(st.Op, cleanErr))
 
+		case "open_stream", "append", "head", "revisions", "reconcile", "release":
+			he, ok := handles[hname]
+			if !ok {
+				return scenarioOutput{}, fmt.Errorf("unknown handle %q", hname)
+			}
+			data, err := runStreamOp(ctx, he, st)
+			if err != nil {
+				results = append(results, classifyErr(st.Op, err))
+				continue
+			}
+			raw, err := canonData(data)
+			if err != nil {
+				return scenarioOutput{}, err
+			}
+			results = append(results, stepOutput{Op: st.Op, OK: true, Data: raw})
+
 		default:
 			return scenarioOutput{}, fmt.Errorf("unsupported op %q", st.Op)
 		}
@@ -493,4 +521,121 @@ func main() {
 		fmt.Fprintf(os.Stderr, "difftool: read stdin: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// canonData renders a step's data as RFC 8785 JCS, so both drivers emit the
+// same bytes for the same values.
+func canonData(v any) (json.RawMessage, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return canon.Canonicalize(bytes.TrimSpace(buf.Bytes()))
+}
+
+func pinData(p recordprims.Pin) map[string]any {
+	return map[string]any{"stream": p.Stream, "record_id": p.RecordID, "revision": p.Revision, "digest": p.Digest}
+}
+
+type collectSink struct {
+	frames []map[string]any
+}
+
+func (c *collectSink) Frame(_ context.Context, h recordprims.FrameHeader, r io.Reader) error {
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	c.frames = append(c.frames, map[string]any{
+		"index": h.Index, "kind": string(h.Kind), "length": h.Length, "digest": h.Digest,
+		"pin": pinData(h.Pin), "bytes_hex": hex.EncodeToString(b),
+	})
+	return nil
+}
+
+func runStreamOp(ctx context.Context, he *handleEntry, st stepInput) (any, error) {
+	if st.Op == "open_stream" {
+		s, err := he.store.OpenStream(st.Stream, recordprims.Mode(st.StreamMode))
+		if err != nil {
+			return nil, err
+		}
+		he.streams[st.Stream] = s
+		return map[string]any{"id": s.ID(), "mode": string(s.Mode())}, nil
+	}
+	s, ok := he.streams[st.Stream]
+	if !ok {
+		return nil, fmt.Errorf("%w: stream %q not opened in this scenario", recordprims.ErrSchema, st.Stream)
+	}
+	switch st.Op {
+	case "append":
+		r, err := s.Append(ctx, recordprims.Write{Record: st.Record, IdempotencyKey: st.Key})
+		if err != nil {
+			return nil, err
+		}
+		return r, nil
+	case "head":
+		info, found, err := s.Head(st.RecordID)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return map[string]any{"found": false}, nil
+		}
+		return map[string]any{"found": true, "pin": pinData(info.Pin), "retired": info.Retired}, nil
+	case "revisions":
+		revs, err := s.Revisions(st.RecordID)
+		if err != nil {
+			return nil, err
+		}
+		out := []map[string]any{}
+		for _, rv := range revs {
+			m := map[string]any{
+				"pin": pinData(rv.Pin), "payload_contract": rv.PayloadContract,
+				"has_body": rv.HasBody, "retired": rv.Retired, "at": rv.At,
+			}
+			if rv.Supersedes != nil {
+				m["supersedes"] = pinData(*rv.Supersedes)
+			}
+			out = append(out, m)
+		}
+		return map[string]any{"revisions": out}, nil
+	case "reconcile":
+		att, err := recordprims.ParseInstant(st.AttemptedAt)
+		if err != nil {
+			return nil, err
+		}
+		return s.Reconcile(st.Key, att)
+	case "release":
+		var sel []recordprims.Pin
+		sink := &collectSink{}
+		res, err := s.Release(ctx, recordprims.UseRequest{
+			Purpose: recordprims.UsePurpose(st.Purpose), Selection: sel, Closure: recordprims.UseClosure(st.Closure),
+		}, sink)
+		if err != nil {
+			return nil, err
+		}
+		selOut := []map[string]any{}
+		for _, p := range res.Selection {
+			selOut = append(selOut, pinData(p))
+		}
+		omOut := []map[string]any{}
+		for _, p := range res.Omitted {
+			omOut = append(omOut, pinData(p))
+		}
+		frames := sink.frames
+		if frames == nil {
+			frames = []map[string]any{}
+		}
+		out := map[string]any{
+			"outcome": string(res.Outcome), "cut": res.Cut, "selection": selOut, "omitted": omOut,
+			"frames_completed": res.FramesCompleted, "frames": frames,
+		}
+		if res.RefusalReason != "" {
+			out["refusal_reason"] = res.RefusalReason
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("unsupported stream op %q", st.Op)
 }

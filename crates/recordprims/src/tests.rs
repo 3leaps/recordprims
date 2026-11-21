@@ -849,3 +849,189 @@ fn test_unix_fifo_refused_without_blocking() {
         Err(FsRootError::NotRegular)
     ));
 }
+
+// ---- Streams (stream.go parity for plain streams) ----
+
+mod streams {
+    use super::*;
+    use crate::store::stream_dir;
+    use crate::stream::{
+        Continues, FrameHeader, FrameReader, Mode, ReleaseOutcome, ReleaseSink, UseClosure,
+        UsePurpose, UseRequest, Write, WriteOutcome,
+    };
+
+    fn record(stream: &str, rid: &str, rev: u64) -> Vec<u8> {
+        format!(
+            r#"{{"v":1,"stream":"{stream}","record_id":"{rid}","revision":{rev},"payload_contract":"contract: example/v0","payload":{{"n":{rev}}},"provenance":{{"actor_kind":"process","actor":"test"}},"classification":{{"retention":"standard","sensitivity":"0-public"}}}}"#
+        )
+        .into_bytes()
+    }
+
+    fn write(stream: &str, rid: &str, key: &str) -> Write {
+        Write {
+            record: record(stream, rid, 1),
+            idempotency_key: key.to_owned(),
+            ..Write::default()
+        }
+    }
+
+    fn serve() -> UseRequest {
+        UseRequest {
+            purpose: UsePurpose::Serve,
+            selection: Vec::new(),
+            closure: UseClosure::MetadataOnly,
+        }
+    }
+
+    fn store_with_record() -> (Store, TempStoreDir, Arc<StepClock>) {
+        let (s, td, clk) = open_body_store();
+        let st = s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
+        clk.advance(Duration::from_secs(1));
+        let r = st.append(&write("obs.t", "a", "k1")).unwrap();
+        assert_eq!(r.outcome, WriteOutcome::Appended);
+        (s, td, clk)
+    }
+
+    struct Reenter<'a> {
+        store: &'a Store,
+        inner: Option<Error>,
+    }
+
+    impl ReleaseSink for Reenter<'_> {
+        fn frame(&mut self, _: &FrameHeader, r: &mut FrameReader<'_>) -> Result<(), Error> {
+            let mut b = Vec::new();
+            r.read_to_end(&mut b).unwrap();
+            self.inner = self
+                .store
+                .open_stream("obs.t", Mode::Revisioned, None)
+                .err();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn release_sink_reentry_is_refused() {
+        let (s, _td, _clk) = store_with_record();
+        let st = s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
+        let mut sink = Reenter {
+            store: &s,
+            inner: None,
+        };
+        let res = st.release(&serve(), Some(&mut sink)).unwrap();
+        assert_eq!(sink.inner, Some(Error::SinkReentered));
+        assert_eq!(res.outcome, ReleaseOutcome::Released);
+        // The guard is cleared after release: the store is usable again.
+        s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
+    }
+
+    struct Failing;
+    impl ReleaseSink for Failing {
+        fn frame(&mut self, _: &FrameHeader, _: &mut FrameReader<'_>) -> Result<(), Error> {
+            Err(Error::Schema("caller detail".into()))
+        }
+    }
+
+    struct Skipping;
+    impl ReleaseSink for Skipping {
+        fn frame(&mut self, _: &FrameHeader, _: &mut FrameReader<'_>) -> Result<(), Error> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn release_sink_error_and_short_read() {
+        let (s, _td, _clk) = store_with_record();
+        let st = s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
+        assert_eq!(
+            st.release(&serve(), Some(&mut Failing)),
+            Err(Error::SinkError)
+        );
+        let res = st.release(&serve(), Some(&mut Skipping)).unwrap();
+        assert_eq!(res.outcome, ReleaseOutcome::Uncertain);
+        assert_eq!(res.frame_in_flight, Some(0));
+        assert_eq!(res.frames_completed, 0);
+    }
+
+    #[test]
+    fn torn_tail_is_reported_not_repaired() {
+        let (s, td, _clk) = store_with_record();
+        let jpath = td.path().join(stream_dir("obs.t")).join("journal.ndjson");
+        let mut raw = fs::read(&jpath).unwrap();
+        let good = raw.len();
+        raw.extend_from_slice(b"{\"v\":1,\"seq\":3");
+        fs::write(&jpath, &raw).unwrap();
+        let st = s.open_stream("obs.t", Mode::Revisioned, None);
+        match st {
+            Err(Error::DamagedTail {
+                last_cut_seq,
+                last_cut_offset,
+                damaged_bytes_count,
+                ..
+            }) => {
+                assert_eq!(last_cut_seq, 2);
+                assert_eq!(last_cut_offset, good as i64);
+                assert_eq!(damaged_bytes_count, (raw.len() - good) as i64);
+            }
+            other => panic!("want damaged tail, got {other:?}"),
+        }
+        assert_eq!(fs::read(&jpath).unwrap(), raw, "replay must not repair");
+    }
+
+    #[test]
+    fn sealed_and_continuation_streams_are_refused() {
+        let (s, td, _clk) = store_with_record();
+        assert_eq!(
+            s.open_stream(
+                "obs.next",
+                Mode::Revisioned,
+                Some(Continues {
+                    capability: "contract: durable-record/v1".into(),
+                    stream: "obs.t".into(),
+                    cut_seq: 2,
+                    cut_digest: format!("sha256:{}", "0".repeat(64)),
+                }),
+            )
+            .unwrap_err(),
+            Error::ContinuationUnsupported
+        );
+        let st = s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
+        for marker in ["SEALED", "stream-seal.json", "reclaimed.json"] {
+            let p = td.path().join(stream_dir("obs.t")).join(marker);
+            fs::write(&p, b"{}").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&p, fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            assert_eq!(st.head("a").unwrap_err(), Error::StreamSealed, "{marker}");
+            let res = st.release(&serve(), None).unwrap();
+            assert_eq!(res.outcome, ReleaseOutcome::Refused, "{marker}");
+            fs::remove_file(&p).unwrap();
+        }
+        assert!(st.head("a").unwrap().is_some());
+    }
+
+    #[test]
+    fn tampered_index_is_rebuilt_from_the_journal() {
+        let (s, td, _clk) = store_with_record();
+        let idx = td.path().join(stream_dir("obs.t")).join("heads.idx");
+        let want = fs::read(&idx).unwrap();
+        fs::write(&idx, b"{\"entries\":[]}\n").unwrap();
+        let st = s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
+        assert!(st.head("a").unwrap().is_some());
+        assert_eq!(fs::read(&idx).unwrap(), want);
+    }
+
+    #[test]
+    fn designated_stream_and_mode_mismatch_are_refused() {
+        let (s, _td, _clk) = store_with_record();
+        assert!(matches!(
+            s.open_stream(DEFAULT_BODY_REMOVAL_STREAM, Mode::Revisioned, None),
+            Err(Error::Schema(_))
+        ));
+        assert!(matches!(
+            s.open_stream("obs.t", Mode::SingleRevision, None),
+            Err(Error::Schema(_))
+        ));
+    }
+}

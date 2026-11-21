@@ -15,8 +15,9 @@ use recordprims::fsroot;
 use recordprims::wire::{self, Kind, Member, Node};
 use recordprims::{
     format_instant, init, is_indeterminate, open, parse_instant, Authorization, Clock, Error,
-    FileLock, InitOptions, Instant, OpenOptions, Provenance, RemoveBodyReason, RemoveBodyRequest,
-    Store,
+    FileLock, FrameHeader, FrameKind, FrameReader, InitOptions, Instant, Mode, OpenOptions, Pin,
+    Provenance, Receipt, ReleaseOutcome, ReleaseSink, RemoveBodyReason, RemoveBodyRequest, Store,
+    UseClosure, UsePurpose, UseRequest, Write as RecordWrite,
 };
 
 struct StepClock {
@@ -44,6 +45,7 @@ impl Clock for StepClock {
 struct HandleEntry {
     store: Store,
     clock: Arc<StepClock>,
+    streams: HashMap<String, Mode>,
 }
 
 fn opt_str(node: &Node, key: &str) -> Option<String> {
@@ -386,6 +388,7 @@ fn run_scenario(sc: &Node) -> Result<Node, String> {
                                 HandleEntry {
                                     store: s,
                                     clock: clk,
+                                    streams: HashMap::new(),
                                 },
                             );
                             results.push(out);
@@ -589,6 +592,22 @@ fn run_scenario(sc: &Node) -> Result<Node, String> {
                     results.push(classify_err(&op, &err));
                 }
 
+                "open_stream" | "append" | "head" | "revisions" | "reconcile" | "release" => {
+                    let he = handles
+                        .get_mut(&hname)
+                        .ok_or_else(|| format!("unknown handle {hname:?}"))?;
+                    match run_stream_op(he, &op, st) {
+                        Ok(data) => results.push(ok_node(
+                            &op,
+                            vec![Member {
+                                name: "data".to_owned(),
+                                value: data,
+                            }],
+                        )),
+                        Err(e) => results.push(classify_err(&op, &e)),
+                    }
+                }
+
                 other => return Err(format!("unsupported op {other:?}")),
             }
         }
@@ -652,5 +671,237 @@ fn main() {
             eprintln!("recordprims-driver: write stdout: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+/// An object with members sorted by name, as RFC 8785 JCS orders them, so
+/// the driver's output matches the Go driver's canonical data.
+fn obj(mut fields: Vec<(&str, Node)>) -> Node {
+    fields.sort_by(|a, b| a.0.cmp(b.0));
+    Node::object(
+        fields
+            .into_iter()
+            .map(|(k, v)| Member {
+                name: k.to_owned(),
+                value: v,
+            })
+            .collect(),
+    )
+}
+
+fn pin_data(p: &Pin) -> Node {
+    obj(vec![
+        ("stream", Node::string(&p.stream)),
+        ("record_id", Node::string(&p.record_id)),
+        ("revision", Node::uint(p.revision)),
+        ("digest", Node::string(&p.digest)),
+    ])
+}
+
+fn receipt_data(r: &Receipt) -> Node {
+    let mut f = vec![
+        ("v", Node::int(1)),
+        ("kind", Node::string("receipt")),
+        ("stream", Node::string(&r.stream)),
+        ("idempotency_key", Node::string(&r.idempotency_key)),
+        ("outcome", Node::string(r.outcome.as_str())),
+    ];
+    if let Some(seq) = r.seq.filter(|s| *s != 0) {
+        f.push(("seq", Node::uint(seq)));
+    }
+    if let Some(p) = &r.pin {
+        f.push(("pin", pin_data(p)));
+    }
+    if let Some(b) = r.body_status.as_deref().filter(|b| !b.is_empty()) {
+        f.push(("body_status", Node::string(b)));
+    }
+    if let Some(fm) = r.failure_model.as_deref().filter(|b| !b.is_empty()) {
+        f.push(("failure_model", Node::string(fm)));
+    }
+    if let Some(p) = &r.current {
+        f.push(("current", pin_data(p)));
+    }
+    obj(f)
+}
+
+/// Re-sorts every object in `n` by member name.
+fn sorted(n: Node) -> Node {
+    match n.kind {
+        Kind::Object => {
+            let mut fields: Vec<Member> = n
+                .fields
+                .into_iter()
+                .map(|m| Member {
+                    name: m.name,
+                    value: sorted(m.value),
+                })
+                .collect();
+            fields.sort_by(|a, b| a.name.cmp(&b.name));
+            Node::object(fields)
+        }
+        Kind::Array => Node::array(n.elems.into_iter().map(sorted).collect()),
+        _ => n,
+    }
+}
+
+struct CollectSink {
+    frames: Vec<Node>,
+}
+
+impl ReleaseSink for CollectSink {
+    fn frame(&mut self, h: &FrameHeader, r: &mut FrameReader<'_>) -> Result<(), Error> {
+        let mut b = Vec::new();
+        io::Read::read_to_end(r, &mut b).map_err(|e| Error::io("read", &e, false))?;
+        let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
+        self.frames.push(obj(vec![
+            ("index", Node::uint(h.index as u64)),
+            (
+                "kind",
+                Node::string(match h.kind {
+                    FrameKind::Record => "record",
+                    FrameKind::Body => "body",
+                }),
+            ),
+            ("length", Node::uint(h.length)),
+            ("digest", Node::string(&h.digest)),
+            ("pin", pin_data(&h.pin)),
+            ("bytes_hex", Node::string(hex)),
+        ]));
+        Ok(())
+    }
+}
+
+fn run_stream_op(he: &mut HandleEntry, op: &str, st: &Node) -> Result<Node, Error> {
+    let stream = opt_str(st, "stream").unwrap_or_default();
+    if op == "open_stream" {
+        let mode = match opt_str(st, "stream_mode").as_deref() {
+            Some("single_revision") => Mode::SingleRevision,
+            Some("revisioned") => Mode::Revisioned,
+            _ => return Err(Error::Schema("invalid stream mode".to_owned())),
+        };
+        let s = he.store.open_stream(&stream, mode, None)?;
+        he.streams.insert(stream, mode);
+        return Ok(obj(vec![
+            ("id", Node::string(s.id())),
+            ("mode", Node::string(s.mode().as_str())),
+        ]));
+    }
+    let Some(mode) = he.streams.get(&stream).copied() else {
+        return Err(Error::Schema(format!(
+            "stream {stream:?} not opened in this scenario"
+        )));
+    };
+    let s = he.store.open_stream(&stream, mode, None)?;
+    match op {
+        "append" => {
+            let record = st.get("record").map(wire::encode).unwrap_or_default();
+            let w = RecordWrite {
+                record,
+                idempotency_key: opt_str(st, "key").unwrap_or_default(),
+                ..RecordWrite::default()
+            };
+            Ok(receipt_data(&s.append(&w)?))
+        }
+        "head" => {
+            let rid = opt_str(st, "record_id").unwrap_or_default();
+            Ok(match s.head(&rid)? {
+                None => obj(vec![("found", Node::boolean(false))]),
+                Some(h) => obj(vec![
+                    ("found", Node::boolean(true)),
+                    ("pin", pin_data(&h.pin)),
+                    ("retired", Node::boolean(h.retired)),
+                ]),
+            })
+        }
+        "revisions" => {
+            let rid = opt_str(st, "record_id").unwrap_or_default();
+            let revs = s
+                .revisions(&rid)?
+                .into_iter()
+                .map(|rv| {
+                    let mut f = vec![
+                        ("pin", pin_data(&rv.pin)),
+                        ("payload_contract", Node::string(&rv.payload_contract)),
+                        ("has_body", Node::boolean(rv.has_body)),
+                        ("retired", Node::boolean(rv.retired)),
+                        ("at", Node::string(&rv.at)),
+                    ];
+                    if let Some(sup) = &rv.supersedes {
+                        f.push(("supersedes", pin_data(sup)));
+                    }
+                    obj(f)
+                })
+                .collect();
+            Ok(obj(vec![("revisions", Node::array(revs))]))
+        }
+        "reconcile" => {
+            let att = parse_instant(&opt_str(st, "attempted_at").unwrap_or_default())?;
+            let r = s.reconcile(&opt_str(st, "key").unwrap_or_default(), att)?;
+            let mut f = vec![
+                ("v", Node::int(1)),
+                ("kind", Node::string("reconciliation")),
+                ("result", Node::string(&r.result)),
+                ("stream", Node::string(&r.stream)),
+                ("idempotency_key", Node::string(&r.idempotency_key)),
+                ("attempted_at", Node::string(&r.attempted_at)),
+            ];
+            if let Some(reason) = &r.reason {
+                f.push(("reason", Node::string(reason)));
+            }
+            if let Some(raw) = &r.receipt {
+                let n = wire::parse_json(raw).map_err(|e| Error::Schema(e.to_string()))?;
+                f.push(("receipt", sorted(n)));
+            }
+            Ok(obj(f))
+        }
+        "release" => {
+            let purpose = match opt_str(st, "purpose").as_deref() {
+                Some("serve") => UsePurpose::Serve,
+                Some("export") => UsePurpose::Export,
+                Some("reuse") => UsePurpose::Reuse,
+                _ => return Err(Error::Schema("invalid release purpose".to_owned())),
+            };
+            let closure = match opt_str(st, "closure").as_deref() {
+                None | Some("") | Some("full_content") => UseClosure::FullContent,
+                Some("metadata_only") => UseClosure::MetadataOnly,
+                _ => return Err(Error::Schema("invalid release closure".to_owned())),
+            };
+            let mut sink = CollectSink { frames: Vec::new() };
+            let res = s.release(
+                &UseRequest {
+                    purpose,
+                    selection: Vec::new(),
+                    closure,
+                },
+                Some(&mut sink),
+            )?;
+            let mut f = vec![
+                (
+                    "outcome",
+                    Node::string(match res.outcome {
+                        ReleaseOutcome::Released => "released",
+                        ReleaseOutcome::Partial => "released_partial",
+                        ReleaseOutcome::Uncertain => "released_uncertain",
+                        ReleaseOutcome::Refused => "refused",
+                    }),
+                ),
+                ("cut", Node::uint(res.cut)),
+                (
+                    "selection",
+                    Node::array(res.selection.iter().map(pin_data).collect()),
+                ),
+                (
+                    "omitted",
+                    Node::array(res.omitted.iter().map(pin_data).collect()),
+                ),
+                ("frames_completed", Node::uint(res.frames_completed as u64)),
+                ("frames", Node::array(sink.frames)),
+            ];
+            if let Some(r) = &res.refusal_reason {
+                f.push(("refusal_reason", Node::string(r)));
+            }
+            Ok(obj(f))
+        }
+        other => Err(Error::Schema(format!("unsupported stream op {other:?}"))),
     }
 }
