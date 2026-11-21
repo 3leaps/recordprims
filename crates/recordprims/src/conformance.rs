@@ -132,6 +132,14 @@ fn journaled() -> Node {
     }])
 }
 
+/// Whether a parsed stratum profile names quarantined designated streams
+/// (present at all, even empty: the check stays conservative).
+fn profile_lists_quarantined(prof: &Node) -> bool {
+    prof.get("runtime")
+        .and_then(|r| r.get("quarantined_designated_streams"))
+        .is_some()
+}
+
 /// Vector inputs whose checks the Rust state does not implement yet.
 fn has_unported_input(v: &Node) -> bool {
     [
@@ -165,6 +173,10 @@ fn semantic_result(v: &Node) -> Semantic {
         v.get("profile")
             .map(|p| typed(p, wire::KIND_STRATUM_PROFILE))
     };
+    // Recovery validation runs on a profile that lists quarantined
+    // designated streams. Read the member from the parsed runtime, so every
+    // JSON spelling of the same profile gets the same coverage claim.
+    let mut quarantined = false;
     if let Some(prof) = prof {
         let prof = match prof {
             Ok(p) => p,
@@ -173,6 +185,7 @@ fn semantic_result(v: &Node) -> Semantic {
         if let Err(r) = journal::check_profile(&prof) {
             return Semantic::refused(r.reason, true);
         }
+        quarantined = profile_lists_quarantined(&prof);
         st.set_profile(&prof);
     }
     let mut entries = Vec::new();
@@ -199,16 +212,8 @@ fn semantic_result(v: &Node) -> Semantic {
     // Sharing-stream observation, recovery validation and source seals are
     // not ported: a vector carrying them can never be complete.
     // Recovery validation also runs on a first entry with a `recovery`
-    // header and on a profile that lists quarantined designated streams.
+    // header.
     let recovery_header = entries.first().is_some_and(|e| e.get("recovery").is_some());
-    let quarantined = v
-        .get("raw_profile")
-        .map(|p| p.str_val.contains("quarantined_designated_streams"))
-        .unwrap_or(false)
-        || v.get("profile")
-            .and_then(|p| p.get("runtime"))
-            .and_then(|r| r.get("quarantined_designated_streams"))
-            .is_some();
     let unported = has_unported_input(v) || recovery_header || quarantined;
     let complete = |st: &State| !unported && !st.partial();
 
@@ -541,4 +546,52 @@ fn v1_vectors() {
         got.len() - pass - partial
     );
     assert!(errors.is_empty(), "{}", errors.join("\n"));
+}
+
+/// Equivalent JSON spellings of a profile get the same coverage claim: an
+/// escaped member name must not hide quarantined designated streams.
+#[test]
+fn quarantined_detection_ignores_member_spelling() {
+    let path = repo_root()
+        .join("contract/crucible/schemas/durable-record/v1/vectors/body-content-stream-with-designation.json");
+    let raw = fs::read(&path).expect("fixture vector");
+    let base = wire::parse_json(&raw).expect("fixture parses");
+    let prof = base
+        .get("profile")
+        .expect("fixture has a structured profile");
+    let mut prof = prof.clone();
+    let rt = prof
+        .fields
+        .iter_mut()
+        .find(|f| f.name == "runtime")
+        .expect("runtime");
+    rt.value.fields.push(Member {
+        name: "quarantined_designated_streams".into(),
+        value: Node::array(vec![Node::string("store.bodies.0")]),
+    });
+    let literal = String::from_utf8(wire::encode(&prof)).expect("utf-8");
+    let escaped = literal.replace(
+        "\"quarantined_designated_streams\"",
+        "\"quarantined\\u005fdesignated_streams\"",
+    );
+    assert_ne!(literal, escaped, "the escape was applied");
+    let mut statuses = Vec::new();
+    for text in [literal, escaped] {
+        let mut v = base.clone();
+        v.fields.retain(|f| f.name != "profile");
+        v.fields.push(Member {
+            name: "raw_profile".into(),
+            value: Node::string(text),
+        });
+        assert!(
+            stage_result(&v).is_none(),
+            "wire stages accept both spellings"
+        );
+        statuses.push(semantic_result(&v).complete);
+    }
+    assert_eq!(
+        statuses,
+        vec![false, false],
+        "both spellings stay incomplete"
+    );
 }
