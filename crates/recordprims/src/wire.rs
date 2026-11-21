@@ -751,6 +751,21 @@ fn member_spec(kind: &str, name: &str) -> &'static str {
         ("journal_entry", "imported_from") => "source_pin",
         ("journal_entry", "body") => "lifecycle_body",
         ("journal_entry", "recovery") => "stream_recovery",
+        ("protection_receipt", "v" | "seq") => "int",
+        ("write_receipt", "v" | "seq") => "int",
+        ("write_receipt", "pin" | "current") => "pin",
+        ("write_receipt", "receipt") => "write_receipt",
+        ("export_request", "v" | "protection_cut" | "current_cut") => "int",
+        ("export_request" | "export_result", "selection" | "omitted") => "list:pin",
+        ("export_result", "protection_cut") => "int",
+        ("body_state_request", "body") => "lifecycle_body",
+        ("observed_sharing_stream", "journal" | "source_journal") => "list:journal_entry",
+        ("observed_sharing_stream", "ancestors") => "list:list:journal_entry",
+        ("observed_sharing_stream", "source_seal") => "seal_context",
+        ("removal_authorization" | "removal_eligibility", "body") => "lifecycle_body",
+        ("removal_authorization" | "removal_eligibility", "incarnation") => "int",
+        ("removal_eligibility", "observed_streams") => "list:observed_sharing_stream",
+        ("removal_eligibility", "authorization") => "removal_authorization",
         ("profile_runtime", "clock_skew_bound_ms" | "idempotency_window_ms") => "int",
         ("stratum_profile", "runtime") => "profile_runtime",
         _ => "opaque",
@@ -760,6 +775,31 @@ fn member_spec(kind: &str, name: &str) -> &'static str {
 /// Run stage 1 (`ingest`) and stage 2 (`numeric_domain`) on `raw` as document `kind`.
 pub(crate) fn ingest(raw: &[u8], kind: &str) -> Result<Node, Reject> {
     let mut n = parse_json(raw)?;
+    opaque_pass(&n, kind)?;
+    int_pass(&mut n, kind)?;
+    Ok(n)
+}
+
+/// Document kind of a receipt: `write_receipt` when its `kind` member is
+/// `receipt` or `reconciliation`, `protection_receipt` otherwise.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn receipt_kind(n: &Node) -> &'static str {
+    if n.kind == Kind::Object {
+        if let Some(k) = n.get("kind") {
+            if k.kind == Kind::String && (k.str_val == "receipt" || k.str_val == "reconciliation") {
+                return "write_receipt";
+            }
+        }
+    }
+    "protection_receipt"
+}
+
+/// Run stage 1 and stage 2 on a raw receipt, selecting its kind from the
+/// parsed root's `kind` member.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn ingest_receipt(raw: &[u8]) -> Result<Node, Reject> {
+    let mut n = parse_json(raw)?;
+    let kind = receipt_kind(&n);
     opaque_pass(&n, kind)?;
     int_pass(&mut n, kind)?;
     Ok(n)

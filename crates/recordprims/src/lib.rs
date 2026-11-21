@@ -22,6 +22,8 @@ mod sys;
 pub mod wire;
 
 #[cfg(test)]
+mod conformance;
+#[cfg(test)]
 mod tests;
 
 pub use body::{

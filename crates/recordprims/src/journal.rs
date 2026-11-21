@@ -100,7 +100,7 @@ fn present(n: &Node, name: &str) -> bool {
     matches!(n.get(name), Some(v) if v.kind != Kind::Null)
 }
 
-fn equal_nodes(a: Option<&Node>, b: Option<&Node>) -> bool {
+pub(crate) fn equal_nodes(a: Option<&Node>, b: Option<&Node>) -> bool {
     match (a, b) {
         (None, None) => true,
         (Some(x), Some(y)) => {
@@ -612,6 +612,7 @@ pub(crate) struct State {
     referenced_bodies: HashSet<BodyKey>,
     bodies: HashMap<BodyKey, BodyState>,
     open_starts: HashMap<BodyKey, HashSet<i64>>,
+    partial: bool,
 }
 
 fn is_integer_token(token: &str) -> bool {
@@ -680,6 +681,7 @@ impl State {
             referenced_bodies: HashSet::new(),
             bodies: HashMap::new(),
             open_starts: HashMap::new(),
+            partial: false,
         })
     }
 
@@ -718,6 +720,21 @@ impl State {
                 }
             }
         }
+    }
+
+    /// Reports whether an ingested entry needed semantics this replay does
+    /// not implement, so a later refusal could have been missed.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn partial(&self) -> bool {
+        self.partial
+    }
+
+    /// Sequence numbers of active protection holds, ascending.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn active_holds(&self) -> Vec<i64> {
+        let mut out: Vec<i64> = self.active.iter().copied().collect();
+        out.sort_unstable();
+        out
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -1095,7 +1112,7 @@ impl State {
                     self.check_review(&e, seq)?;
                 }
                 "conflicted" => {}
-                _ => {}
+                _ => self.partial = true,
             }
         }
         self.journal.push(e);
