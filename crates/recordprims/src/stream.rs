@@ -608,7 +608,7 @@ impl Store {
         }
         self.with_lock(|| {
             let sdir = stream_dir(id);
-            if !self.exists(&sdir)? {
+            if !self.dir_exists(&sdir)? {
                 let now = format_instant(self.clock.now());
                 return create_stream_journal(
                     &self.root,

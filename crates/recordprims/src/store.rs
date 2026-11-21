@@ -275,6 +275,17 @@ impl Store {
         acquire_store_lock(&self.root, self.fso, self.lock_timeout, f)
     }
 
+    /// Whether the directory `rel` exists. Opens it as a directory, which
+    /// Windows requires: a file open of a directory is refused there with an
+    /// access error, not reported as a non-regular file.
+    pub(crate) fn dir_exists(&self, rel: &str) -> Result<bool, Error> {
+        match self.root.stat_verified(rel, true, self.fso) {
+            Ok(_) => Ok(true),
+            Err(e) if e.is_not_found() => Ok(false),
+            Err(e) => Err(e.into_store_error("stat", false)),
+        }
+    }
+
     pub(crate) fn exists(&self, rel: &str) -> Result<bool, Error> {
         match self.root.stat_verified(rel, false, self.fso) {
             Ok(_) => Ok(true),

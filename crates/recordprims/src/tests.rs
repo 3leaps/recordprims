@@ -1033,12 +1033,15 @@ mod streams {
         let st = s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
         for marker in ["SEALED", "stream-seal.json", "reclaimed.json"] {
             let p = td.path().join(stream_dir("obs.t")).join(marker);
-            fs::write(&p, b"{}").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&p, fs::Permissions::from_mode(0o600)).unwrap();
-            }
+            // Written through the store root, so the file carries the
+            // owner-only permissions (Unix) or DACL (Windows) it verifies.
+            crate::store::write_file_durable(
+                &s.root,
+                &format!("{}/{marker}", stream_dir("obs.t")),
+                b"{}",
+                s.fso,
+            )
+            .unwrap();
             assert_eq!(st.head("a").unwrap_err(), Error::StreamSealed, "{marker}");
             let res = st.release(&serve(), None).unwrap();
             assert_eq!(res.outcome, ReleaseOutcome::Refused, "{marker}");
