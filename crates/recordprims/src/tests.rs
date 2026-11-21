@@ -938,15 +938,51 @@ mod streams {
         }
     }
 
+    /// Consumes the first frame fully, then fails on the next.
+    struct FailSecond {
+        seen: usize,
+    }
+    impl ReleaseSink for FailSecond {
+        fn frame(&mut self, _: &FrameHeader, r: &mut FrameReader<'_>) -> Result<(), Error> {
+            self.seen += 1;
+            if self.seen == 2 {
+                return Err(Error::Schema("caller detail".into()));
+            }
+            let mut b = Vec::new();
+            r.read_to_end(&mut b).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn release_sink_error_keeps_progress() {
+        let (s, _td, clk) = store_with_record();
+        let st = s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
+        clk.advance(Duration::from_secs(1));
+        st.append(&write("obs.t", "b", "k2")).unwrap();
+        let mut sink = FailSecond { seen: 0 };
+        let res = st.release(&serve(), Some(&mut sink)).unwrap();
+        assert_eq!(res.sink_error, Some(Error::SinkError));
+        assert_eq!(res.outcome, ReleaseOutcome::Uncertain);
+        assert_eq!(res.frames_completed, 1);
+        assert_eq!(res.frame_in_flight, Some(1));
+        let first = res.released_through_pin.expect("first frame delivered");
+        assert_eq!(first.record_id, "a");
+        assert_eq!(res.selection.len(), 2);
+    }
+
     #[test]
     fn release_sink_error_and_short_read() {
         let (s, _td, _clk) = store_with_record();
         let st = s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
-        assert_eq!(
-            st.release(&serve(), Some(&mut Failing)),
-            Err(Error::SinkError)
-        );
+        let res = st.release(&serve(), Some(&mut Failing)).unwrap();
+        assert_eq!(res.sink_error, Some(Error::SinkError));
+        assert_eq!(res.outcome, ReleaseOutcome::Uncertain);
+        assert_eq!(res.frame_in_flight, Some(0));
+        assert_eq!(res.frames_completed, 0);
+        assert_eq!(res.released_through_pin, None);
         let res = st.release(&serve(), Some(&mut Skipping)).unwrap();
+        assert_eq!(res.sink_error, None, "a short read is not a sink error");
         assert_eq!(res.outcome, ReleaseOutcome::Uncertain);
         assert_eq!(res.frame_in_flight, Some(0));
         assert_eq!(res.frames_completed, 0);

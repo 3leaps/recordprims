@@ -290,6 +290,11 @@ pub struct ReleaseResult {
     pub released_through_pin: Option<Pin>,
     /// Revisions not selected.
     pub omitted: Vec<Pin>,
+    /// [`Error::SinkError`] when a sink callback returned an error. Delivery
+    /// stopped there: the outcome is `Uncertain`, `frame_in_flight` names the
+    /// failed frame, and the progress fields describe the frames delivered
+    /// before it. The callback error's text is not disclosed.
+    pub sink_error: Option<Error>,
 }
 
 /// Kind of a released frame.
@@ -991,14 +996,14 @@ impl Stream<'_> {
     /// Evaluates `req` at the current cut while holding the store lock and
     /// delivers eligible frames to `sink` (record frames, each followed by
     /// its body frame under full-content closure). With no sink, it only
-    /// evaluates.
+    /// evaluates. A sink callback error is reported in
+    /// [`ReleaseResult::sink_error`], together with the delivery progress.
     pub fn release(
         &self,
         req: &UseRequest,
         sink: Option<&mut dyn ReleaseSink>,
     ) -> Result<ReleaseResult, Error> {
         let store = self.store;
-        let mut sink_failed = false;
         let refused = |reason: &str, cut: u64| ReleaseResult {
             outcome: ReleaseOutcome::Refused,
             refusal_reason: Some(reason.to_owned()),
@@ -1008,6 +1013,7 @@ impl Stream<'_> {
             frame_in_flight: None,
             released_through_pin: None,
             omitted: Vec::new(),
+            sink_error: None,
         };
         let res = store.with_lock(|| {
             let desig = match req.closure {
@@ -1151,6 +1157,7 @@ impl Stream<'_> {
                 frame_in_flight: None,
                 released_through_pin: None,
                 omitted: omitted.iter().map(|p| to_pin(p)).collect(),
+                sink_error: None,
             };
             let Some(sink) = sink else {
                 return Ok(res);
@@ -1169,7 +1176,9 @@ impl Stream<'_> {
                 if cb.is_err() || reader.pos as u64 != header.length || got != header.digest {
                     res.outcome = ReleaseOutcome::Uncertain;
                     res.frame_in_flight = Some(i);
-                    sink_failed = cb.is_err();
+                    if cb.is_err() {
+                        res.sink_error = Some(Error::SinkError);
+                    }
                     return Ok(res);
                 }
                 res.frames_completed += 1;
@@ -1177,9 +1186,6 @@ impl Stream<'_> {
             }
             Ok(res)
         })?;
-        if sink_failed {
-            return Err(Error::SinkError);
-        }
         Ok(res)
     }
 }

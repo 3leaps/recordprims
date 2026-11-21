@@ -875,6 +875,9 @@ fn run_stream_op(he: &mut HandleEntry, op: &str, st: &Node) -> Result<Node, Erro
                 },
                 Some(&mut sink),
             )?;
+            if let Some(e) = res.sink_error {
+                return Err(e);
+            }
             let mut f = vec![
                 (
                     "outcome",
