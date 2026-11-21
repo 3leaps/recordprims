@@ -328,9 +328,18 @@ fn semantic_result(v: &Node) -> Semantic {
                     Ok(res) => results.push(res),
                     Err(r) => return Semantic::refused(r.reason, complete(&st)),
                 }
+            } else if s.get("raw_use").is_some() || s.get("use").is_some() {
+                let u = match s.get("raw_use") {
+                    Some(raw) => wire::ingest(raw.str_val.as_bytes(), "export_request"),
+                    None => typed(s.get("use").expect("use step"), "export_request"),
+                };
+                match u.and_then(|u| st.use_request(&u)) {
+                    Ok(res) => results.push(res),
+                    Err(r) => return Semantic::refused(r.reason, complete(&st)),
+                }
             } else {
-                // body_state, removal_eligibility, verify_seal and use are
-                // not ported.
+                // body_state, removal_eligibility and verify_seal are not
+                // ported.
                 return Semantic::incomplete();
             }
         }

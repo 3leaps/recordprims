@@ -50,6 +50,12 @@ pub(crate) const REASON_CONTINUATION: &str = "continuation";
 pub(crate) const REASON_RECEIPT_MISMATCH: &str = "receipt_mismatch";
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const REASON_IDEMPOTENCY_CONFLICT: &str = "idempotency_conflict";
+pub(crate) const REASON_INVALID_PURPOSE: &str = "invalid_purpose";
+pub(crate) const REASON_PROTECTION_UNAVAILABLE: &str = "protection_unavailable";
+pub(crate) const REASON_RESTRICTIONS_PENDING: &str = "restrictions_pending";
+pub(crate) const REASON_EXPORT_SELECTION: &str = "export_selection";
+pub(crate) const REASON_PROTECTED_USE: &str = "protected_use";
+pub(crate) const REASON_BODY_CLOSURE: &str = "body_closure";
 
 /// Identifies a content-addressed body by its digest and byte length.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1042,6 +1048,169 @@ impl State {
             ));
         }
         Ok(verified_outcome())
+    }
+
+    /// Whether a use request must wait for a restriction review: on a plain
+    /// stream, when it names a source state; on a continuation, when the
+    /// upstream is unobserved or the request's source state digest differs
+    /// from the source's effective restriction manifest.
+    fn review_pending_for(&self, r: &Node) -> Result<bool, Reject> {
+        if self.continues.is_none() {
+            return Ok(present(r, "source_state_digest"));
+        }
+        if self.upstream_unobserved {
+            return Ok(true);
+        }
+        let sm_dig = source_manifest(&self.source)?;
+        if !present(r, "source_state_digest") {
+            return Ok(true);
+        }
+        Ok(str_of(r, "source_state_digest").map_or(true, |d| d != sm_dig))
+    }
+
+    /// Evaluates an export, serve or reuse request against the replayed
+    /// journal and source chain.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn use_request(&self, r: &Node) -> Result<Node, Reject> {
+        if r.kind != Kind::Object {
+            return Err(reject(REASON_SHAPE, "use: request is not an object"));
+        }
+        check_journal(&self.journal)?;
+        let refused = |reason: &str| {
+            Ok(Node::object(vec![
+                member("outcome", str_node("refused")),
+                member("reason", str_node(reason)),
+            ]))
+        };
+        let purpose = str_of(r, "purpose")?;
+        if !matches!(purpose, "serve" | "export" | "reuse") {
+            return refused(REASON_INVALID_PURPOSE);
+        }
+        let r_stream = str_of(r, "stream")?;
+        let prot_state = str_of(r, "protection_state")?;
+        let prot_cut = int_of(r, "protection_cut")?;
+        let cur_cut = int_of(r, "current_cut")?;
+        let rev_pend = self.review_pending_for(r)?;
+        let n = i64::try_from(self.journal.len()).unwrap_or(i64::MAX);
+        if r_stream != self.stream
+            || prot_state != "verified"
+            || prot_cut != n
+            || cur_cut != n
+            || rev_pend
+        {
+            return refused(REASON_PROTECTION_UNAVAILABLE);
+        }
+        if !self.review_current()? {
+            return refused(REASON_RESTRICTIONS_PENDING);
+        }
+        let (Some(sel_node), Some(om_node)) = (r.get("selection"), r.get("omitted")) else {
+            return Err(reject(
+                REASON_SHAPE,
+                "use: selection or omitted is not an array",
+            ));
+        };
+        if sel_node.kind != Kind::Array || om_node.kind != Kind::Array {
+            return Err(reject(
+                REASON_SHAPE,
+                "use: selection or omitted is not an array",
+            ));
+        }
+        let mut selected = HashSet::new();
+        let mut selected_pins = Vec::new();
+        for el in &sel_node.elems {
+            let p = pin_from_node(Some(el), "use.selection")?;
+            selected.insert(p.clone());
+            selected_pins.push(p);
+        }
+        let mut omitted = HashSet::new();
+        for el in &om_node.elems {
+            omitted.insert(pin_from_node(Some(el), "use.omitted")?);
+        }
+        if selected
+            .iter()
+            .chain(omitted.iter())
+            .any(|p| !self.records.contains_key(p))
+        {
+            return refused(REASON_TARGET_NOT_FOUND);
+        }
+        if selected.iter().any(|p| omitted.contains(p)) {
+            return refused(REASON_EXPORT_SELECTION);
+        }
+        if selected.len() + omitted.len() != self.records.len() {
+            return refused(REASON_EXPORT_SELECTION);
+        }
+        match r.get("inherited_block") {
+            Some(b) if b.kind == Kind::Bool => {
+                if b.bool_val {
+                    return refused(REASON_PROTECTED_USE);
+                }
+            }
+            _ => {
+                return Err(reject(
+                    REASON_SHAPE,
+                    "use: inherited_block is not a boolean",
+                ))
+            }
+        }
+        for p in &selected_pins {
+            if self.blocked(p)? {
+                return refused(REASON_PROTECTED_USE);
+            }
+        }
+        if purpose == "serve"
+            && selected_pins
+                .iter()
+                .any(|p| self.retired.contains(&p.record_id))
+        {
+            return refused(REASON_PROTECTED_USE);
+        }
+        let Some(bodies) = r.get("bodies").filter(|b| b.kind == Kind::Array) else {
+            return Err(reject(REASON_SHAPE, "use: bodies is not an array"));
+        };
+        let mut supplied: HashMap<String, i64> = HashMap::new();
+        for b in &bodies.elems {
+            if b.kind != Kind::Object {
+                return Err(reject(REASON_SHAPE, "use: body item is not an object"));
+            }
+            let hex_str = str_of(b, "hex")?;
+            let dig = str_of(b, "digest")?;
+            let Some(raw) = decode_hex(hex_str) else {
+                return refused(REASON_BODY_CLOSURE);
+            };
+            if sha256_prefixed(&raw) != dig || supplied.contains_key(dig) {
+                return refused(REASON_BODY_CLOSURE);
+            }
+            supplied.insert(dig.to_owned(), i64::try_from(raw.len()).unwrap_or(i64::MAX));
+        }
+        let mut needed: HashMap<String, i64> = HashMap::new();
+        for p in &selected {
+            let Some(body) = self.records[p]
+                .get("body")
+                .filter(|b| b.kind == Kind::Object)
+            else {
+                continue;
+            };
+            let b_dig = str_of(body, "digest")?.to_owned();
+            let b_len = int_of(body, "length")?;
+            if needed.get(&b_dig).is_some_and(|prev| *prev != b_len) {
+                return refused(REASON_BODY_CLOSURE);
+            }
+            needed.insert(b_dig, b_len);
+        }
+        if supplied.iter().any(|(d, l)| needed.get(d) != Some(l)) {
+            return refused(REASON_BODY_CLOSURE);
+        }
+        let closure = str_of(r, "closure")?;
+        if closure == "full_content" && supplied.len() != needed.len() {
+            return refused(REASON_BODY_CLOSURE);
+        }
+        Ok(Node::object(vec![
+            member("outcome", str_node("allowed")),
+            member("closure", str_node(closure)),
+            member("selection", sel_node.clone()),
+            member("omitted", om_node.clone()),
+            member("protection_cut", Node::int(prot_cut)),
+        ]))
     }
 
     fn has_record_id(&self, record_id: &str) -> bool {
@@ -2303,6 +2472,26 @@ fn content_receipt(
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
+fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
+}
+
+fn sha256_prefixed(b: &[u8]) -> String {
+    use sha2::{Digest as _, Sha256};
+    let sum = Sha256::digest(b);
+    let mut out = String::from("sha256:");
+    for byte in sum {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
 fn verified_outcome() -> Node {
     Node::object(vec![member("outcome", str_node("receipt_verified"))])
 }
