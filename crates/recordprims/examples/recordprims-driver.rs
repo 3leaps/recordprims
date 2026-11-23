@@ -691,6 +691,19 @@ fn main() {
 
 /// An object with members sorted by name, as RFC 8785 JCS orders them, so
 /// the driver's output matches the Go driver's canonical data.
+/// A pin object from a scenario step.
+fn pin_of(n: &Node) -> Pin {
+    Pin {
+        stream: opt_str(n, "stream").unwrap_or_default(),
+        record_id: opt_str(n, "record_id").unwrap_or_default(),
+        revision: n
+            .get("revision")
+            .and_then(|v| v.token.parse().ok())
+            .unwrap_or(0),
+        digest: opt_str(n, "digest").unwrap_or_default(),
+    }
+}
+
 /// Parses a JSON document returned by the library into sorted driver data.
 fn raw_data(raw: &[u8]) -> Result<Node, Error> {
     let n = wire::parse_json(raw).map_err(|e| Error::Schema(e.to_string()))?;
@@ -934,7 +947,10 @@ fn run_stream_op(he: &mut HandleEntry, op: &str, st: &Node) -> Result<Node, Erro
             let res = s.release(
                 &UseRequest {
                     purpose,
-                    selection: Vec::new(),
+                    selection: st
+                        .get("selection")
+                        .map(|a| a.elems.iter().map(pin_of).collect())
+                        .unwrap_or_default(),
                     closure,
                 },
                 Some(&mut sink),

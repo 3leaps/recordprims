@@ -365,6 +365,11 @@ with tempfile.TemporaryDirectory(prefix="recordprims-crosscheck-") as work_dir:
             {"op": "protect", "stream": S, "request": prot(S, "k-hold-ghost", "tombstone", ghost, at(6, 1))},
             {"op": "protect", "stream": S, "request": prot(Q, "k-hold-q", "tombstone", pin2, at(6, 1))},
             {"op": "release", "stream": S, "purpose": "export", "closure": "full_content"},
+            # An explicit selection applies to every purpose; a selected held
+            # revision is refused for each, beside an eligible pin or alone.
+            {"op": "release", "stream": S, "purpose": "export", "closure": "metadata_only", "selection": [pin2]},
+            {"op": "release", "stream": S, "purpose": "serve", "closure": "full_content", "selection": [pin2]},
+            {"op": "release", "stream": S, "purpose": "reuse", "closure": "metadata_only", "selection": [pin2]},
             t(6, 2), {"op": "protect", "stream": S, "request": prot(S, "k-rest", "restore", pin2, at(6, 2), reason="hold_released", restores=7)},
             t(6, 3), {"op": "retire", "stream": S, "record_id": "cpu-1", "reason": "withdrawn"},
             t(6, 4), {"op": "retire", "stream": S, "record_id": "cpu-1", "reason": "operator"},
@@ -389,6 +394,11 @@ with tempfile.TemporaryDirectory(prefix="recordprims-crosscheck-") as work_dir:
             {"op": "reconcile", "stream": S, "key": "k-ret", "attempted_at": at(6, 5)},
             {"op": "release", "stream": S, "purpose": "serve", "closure": "full_content"},
             {"op": "release", "stream": Q, "purpose": "serve", "closure": "metadata_only"},
+            # cpu-0 is retired: a selected revision is refused for serve and
+            # released for export and reuse.
+            {"op": "release", "stream": S, "purpose": "serve", "closure": "metadata_only", "selection": [pin2]},
+            {"op": "release", "stream": S, "purpose": "export", "closure": "metadata_only", "selection": [pin2]},
+            {"op": "release", "stream": S, "purpose": "reuse", "closure": "full_content", "selection": [pin2]},
         ]
 
     def scenario(store_dir=None):
@@ -431,6 +441,10 @@ with tempfile.TemporaryDirectory(prefix="recordprims-crosscheck-") as work_dir:
     for want in ("idempotency_conflict", "target_not_found"):
         if want not in seen_refusal:
             raise SystemExit(f"crosscheck: stream scenario did not exercise protect refusal {want!r}")
+    sel_rows = [r for r in stream_rows if r.get("op") == "release" and r.get("ok")]
+    sel_outcomes = {(r["data"]["outcome"], r["data"].get("refusal_reason")) for r in sel_rows}
+    if ("refused", "protected_use") not in sel_outcomes:
+        raise SystemExit("crosscheck: stream scenario did not refuse a selected revision")
     if "retired_record" not in seen_stream:
         raise SystemExit("crosscheck: stream scenario did not append to a retired record")
     if not any(f["kind"] == "body" for r in stream_rows if r.get("op") == "release" for f in r["data"]["frames"]):
