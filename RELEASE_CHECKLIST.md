@@ -1,8 +1,8 @@
 # Release Checklist
 
 How a maintainer cuts a recordprims release. A release is one signed annotated
-tag, `vX.Y.Z`, at a commit of `main`; it releases the Rust crate and the root Go
-module together. The signing material and the trust rules are in
+tag, `vX.Y.Z`, at a commit of `main`; it releases the root Go module, and the
+Rust crate once that is published. The signing material and the trust rules are in
 [docs/security/README.md](docs/security/README.md).
 
 Signing, tagging, publishing and registry uploads are maintainer steps on the

@@ -71,8 +71,8 @@ promise, and is not part of a release.
 
 ## Releases
 
-Each release is one signed tag, `vX.Y.Z`, covering the Go module and the Rust
-crate. See [RELEASE_NOTES.md](RELEASE_NOTES.md) for recent releases,
+Each release is one signed tag, `vX.Y.Z`, covering the Go module (and the Rust
+crate once it is published). See [RELEASE_NOTES.md](RELEASE_NOTES.md) for recent releases,
 [CHANGELOG.md](CHANGELOG.md) for the full history, and
 [docs/security/README.md](docs/security/README.md) for how to verify a release.
 

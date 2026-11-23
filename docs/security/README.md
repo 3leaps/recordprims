@@ -6,12 +6,13 @@ the first release, and landed through review.
 
 ## Release identity
 
-A release is one signed annotated tag, `vX.Y.Z`, at a commit of `main`. It
-releases the Rust crate and the root Go module (`github.com/3leaps/recordprims`)
-together. Official releases will use GPG-signed tags and `SHA256SUMS` and
-`SHA512SUMS` manifests, each carrying a minisign signature and an OpenPGP
-signature by the committed signing subkey. These are separate signatures, and
-all are required.
+A release is one signed annotated tag, `vX.Y.Z`, at a commit of `main`. The
+tag releases the root Go module (`github.com/3leaps/recordprims`). The Rust
+crate is a preview in the repository and is not published; when it is, the
+same tag will cover it. A release that publishes artifacts will also carry
+`SHA256SUMS` and `SHA512SUMS` manifests, each with a minisign signature and an
+OpenPGP signature by the committed signing subkey; these are separate
+signatures, and all will be required.
 
 Establish the expected GPG primary key, the exact signing subkey, and the
 minisign public-blob fingerprint through an independently trusted maintainer
@@ -51,9 +52,9 @@ fingerprint covers the decoded public blob, not its comment or the whole file.
 
 ## Tags
 
-A release is one tag, `vX.Y.Z`, which releases the Rust crate and the root Go
-module together. It must be annotated, signed by the committed signing subkey,
-tagged by the committed tagger identity, carry exactly the generated message
+A release is one tag, `vX.Y.Z`, which releases the root Go module (and the
+Rust crate, once it is published). It must be annotated, signed by the
+committed signing subkey, tagged by the committed tagger identity, carry exactly the generated message
 (`recordprims X.Y.Z`), and
 point at a commit whose root `go.mod` declares `github.com/3leaps/recordprims`.
 Verification refuses a release where the tag is missing or points elsewhere.
@@ -65,21 +66,23 @@ own "verified" flag is an additional check.
 
 ## Verify a release
 
-A plain `git verify-tag vX.Y.Z` in your own keyring reports `No public key`
-unless you have imported the signing key. Verify against the pin committed in
-the tagged commit instead, in an isolated keyring:
+Check which key actually signed the tag, not only that a signature verifies.
+Import the public keys committed in the tagged commit into an isolated keyring
+and read the signature status:
 
 ```bash
 git fetch --tags origin
-git checkout vX.Y.Z
 tmp="$(mktemp -d)"
-git show vX.Y.Z:docs/security/release-signing-keys.asc | gpg --homedir "$tmp" --import
-gpg --homedir "$tmp" --fingerprint   # compare the primary with keys/expected-fingerprints.txt
-GNUPGHOME="$tmp" git verify-tag vX.Y.Z
+git show refs/tags/vX.Y.Z:docs/security/release-signing-keys.asc | gpg --homedir "$tmp" --import
+GNUPGHOME="$tmp" git verify-tag --raw refs/tags/vX.Y.Z 2>&1 | grep VALIDSIG
 rm -rf "$tmp"
 ```
 
-Compare the primary fingerprint with one obtained through an independent
-channel, not only with the file beside it. Maintainers run the full check
-with `make release-validate-pin` and `make release-verify-remote-tag` (see
-[RELEASE_CHECKLIST.md](../../RELEASE_CHECKLIST.md), section 3).
+The `VALIDSIG` line names the signing subkey fingerprint first and the primary
+key fingerprint last. Compare both with values obtained through an
+independent channel; the committed `config/release/signing-subkey.txt` and
+`keys/expected-fingerprints.txt` must match them too, but they travel with the
+tag and are not independent. A plain `git verify-tag` in your own keyring
+reports `No public key` until the key is imported. Maintainers run the full
+check with `make release-validate-pin` and `make release-verify-remote-tag`
+(see [RELEASE_CHECKLIST.md](../../RELEASE_CHECKLIST.md), section 3).
