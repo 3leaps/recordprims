@@ -8,8 +8,9 @@
 4. `contract/PIN.md` for the pinned durable-record/v1 contract.
 
 recordprims is a **prims** library with two implementations under one
-contract: pure Go (the first) and Rust (the twin). Both must pass the same
-conformance suite with byte-identical normalised output before 0.1.0.
+contract: pure Go (the first) and Rust (the twin). Both are held to the same
+conformance suite with byte-identical normalised output; the Go module is the
+supported implementation and the Rust crate is a preview until it passes it.
 
 ## Operating model
 
