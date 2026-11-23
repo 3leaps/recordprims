@@ -204,6 +204,28 @@ pub fn parse_instant(s: &str) -> Result<Instant, Error> {
 ///
 /// This is a producer helper. Stored and received instants are verified with
 /// [`parse_instant`], which accepts only the canonical spelling.
+///
+/// ```
+/// use recordprims::normalize_producer_instant;
+///
+/// // A producer whose clock reads whole seconds or milliseconds passes what
+/// // it observed and puts the result in the record before its digest.
+/// assert_eq!(
+///     normalize_producer_instant("2026-11-23T12:00:00Z").unwrap(),
+///     "2026-11-23T12:00:00.000000Z"
+/// );
+/// assert_eq!(
+///     normalize_producer_instant("2026-11-23T12:00:00.123Z").unwrap(),
+///     "2026-11-23T12:00:00.123000Z"
+/// );
+/// assert_eq!(
+///     normalize_producer_instant("2026-11-23T12:00:00.123456Z").unwrap(),
+///     "2026-11-23T12:00:00.123456Z"
+/// );
+/// // Other spellings are refused, never repaired or rounded.
+/// assert!(normalize_producer_instant("2026-11-23T12:00:00+00:00").is_err());
+/// assert!(normalize_producer_instant("2026-11-23T12:00:00.1234Z").is_err());
+/// ```
 pub fn normalize_producer_instant(s: &str) -> Result<String, Error> {
     let b = s.as_bytes();
     let canonical = match (b.len(), s.get(..19), s.get(..23)) {
@@ -220,6 +242,18 @@ pub fn normalize_producer_instant(s: &str) -> Result<String, Error> {
 /// a value with a sub-microsecond remainder instead of truncating it, and a
 /// value outside years `0001` to `9999`. (The store's own clock goes through
 /// [`Instant::from_system_time`], which truncates.)
+///
+/// ```
+/// use std::time::{Duration, UNIX_EPOCH};
+/// use recordprims::producer_instant;
+///
+/// let exact = UNIX_EPOCH + Duration::new(1_795_435_200, 123_456_000);
+/// assert_eq!(producer_instant(exact).unwrap(), "2026-11-23T12:00:00.123456Z");
+///
+/// // A sub-microsecond remainder is refused, not truncated.
+/// let finer = UNIX_EPOCH + Duration::new(1_795_435_200, 123_456_789);
+/// assert!(producer_instant(finer).is_err());
+/// ```
 pub fn producer_instant(t: SystemTime) -> Result<String, Error> {
     let unix_micros = match t.duration_since(UNIX_EPOCH) {
         Ok(d) => {
