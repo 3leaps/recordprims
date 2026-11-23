@@ -818,7 +818,9 @@ fn run_stream_op(he: &mut HandleEntry, op: &str, st: &Node) -> Result<Node, Erro
                 Some("operator") => RetireReason::Operator,
                 _ => return Err(Error::Schema("invalid retire reason".to_owned())),
             };
-            let key = opt_str(st, "key").filter(|k| !k.is_empty());
+            // `"key": ""` reaches the API as `Some("")`, as the Go driver
+            // passes `WithRetireKey("")` under `retire_with_empty_key`.
+            let key = opt_str(st, "key");
             let rid = opt_str(st, "record_id").unwrap_or_default();
             let r = s.retire(&rid, reason, key.as_deref())?;
             let mut f = vec![("outcome", Node::string(r.outcome.as_str()))];

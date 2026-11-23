@@ -86,6 +86,7 @@ type stepInput struct {
 	Purpose             string          `json:"purpose,omitempty"`
 	Closure             string          `json:"closure,omitempty"`
 	Request             json.RawMessage `json:"request,omitempty"`
+	RetireWithEmptyKey  bool            `json:"retire_with_empty_key,omitempty"`
 }
 
 type stepOutput struct {
@@ -578,7 +579,7 @@ func runStreamOp(ctx context.Context, he *handleEntry, st stepInput) (any, error
 		return r, nil
 	case "retire":
 		var opts []recordprims.RetireOption
-		if st.Key != "" {
+		if st.Key != "" || st.RetireWithEmptyKey {
 			opts = append(opts, recordprims.WithRetireKey(st.Key))
 		}
 		r, err := s.Retire(ctx, st.RecordID, recordprims.RetireReason(st.Reason), opts...)

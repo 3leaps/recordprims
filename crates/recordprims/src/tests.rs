@@ -975,10 +975,33 @@ mod streams {
             Err(Error::Schema(_))
         ));
         assert!(matches!(
-            st.retire("b", RetireReason::Withdrawn, Some("")),
+            st.retire("b", RetireReason::Withdrawn, Some(&"k".repeat(257))),
             Err(Error::Schema(_))
         ));
         assert_eq!(st.head("b").unwrap().unwrap().pin.revision, 1);
+
+        // An empty key is an unkeyed retirement, as in Go.
+        clk.advance(Duration::from_secs(1));
+        st.append(&write("obs.t", "c", "k4")).unwrap();
+        clk.advance(Duration::from_secs(1));
+        let empty = st.retire("c", RetireReason::Withdrawn, Some("")).unwrap();
+        assert_eq!(
+            (empty.outcome, empty.receipt),
+            (RetireOutcome::Retired, None)
+        );
+        assert!(st.head("c").unwrap().unwrap().retired);
+        assert_eq!(
+            st.retire("c", RetireReason::Withdrawn, Some(""))
+                .unwrap()
+                .outcome,
+            RetireOutcome::AlreadyRetired
+        );
+        assert_eq!(
+            st.retire("zz", RetireReason::Withdrawn, Some(""))
+                .unwrap()
+                .outcome,
+            RetireOutcome::NoRecord
+        );
     }
 
     #[test]

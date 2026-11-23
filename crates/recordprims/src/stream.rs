@@ -1034,7 +1034,8 @@ impl Stream<'_> {
     /// Withdraws `record_id` from ordinary head resolution without removing
     /// retained history. With an idempotency `key`, the retirement shares
     /// the stream's idempotency window and returns a `durable-record/v1`
-    /// receipt; the key lookup precedes the target check.
+    /// receipt; the key lookup precedes the target check. An empty key is
+    /// the same as no key.
     pub fn retire(
         &self,
         record_id: &str,
@@ -1044,6 +1045,7 @@ impl Stream<'_> {
         if !valid_record_id(record_id) {
             return Err(Error::schema("invalid record_id"));
         }
+        let key = key.filter(|k| !k.is_empty());
         if let Some(k) = key {
             if !valid_wire_string(k, 1, 256) {
                 return Err(Error::schema("idempotency key invalid"));
