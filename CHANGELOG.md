@@ -7,6 +7,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Producer instants: `NormalizeProducerInstant` / `normalize_producer_instant`
+  turn a UTC instant observed at whole seconds, milliseconds or microseconds
+  into the canonical six-digit spelling, refusing every other spelling;
+  `ProducerInstant` / `producer_instant` format a native time value and refuse
+  a sub-microsecond remainder instead of truncating it. Go and Rust share the
+  vectors in `testdata/producer-instant.json`. The wire spelling and
+  `ParseInstant` are unchanged
 - Rust crate: verified store root with symlink, owner and permission checks
   (Unix and Windows), the cross-process store lock, content-addressed bodies
   (`put_body`, `remove_body`) and the `durable-record/v1` journal reader
