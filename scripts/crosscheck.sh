@@ -339,8 +339,56 @@ with tempfile.TemporaryDirectory(prefix="recordprims-crosscheck-") as work_dir:
             {"op": "release", "stream": S, "purpose": "serve", "closure": "full_content"},
             {"op": "release", "stream": S, "purpose": "export", "closure": "metadata_only"},
             {"op": "release", "stream": Q, "purpose": "reuse", "closure": "full_content"},
+        ] + protect_retire_steps(S, Q, a1, a2, t) + [
             t(4, 0), {"op": "append", "stream": S, "record": rec(S, "late", 1, {}), "key": "k-late"},
             {"op": "head", "stream": "never.opened", "record_id": "x"},
+        ]
+
+    def prot(stream, key, action, target, at, reason="security_hold", restores=None):
+        r = {"v": 1, "stream": stream, "idempotency_key": key, "action": action, "target": target,
+             "scope": "record", "reason": reason,
+             "evidence": {"ref": "case-1", "digest": "sha256:" + "e" * 64},
+             "observed_at": at, "provenance": PROV}
+        if restores is not None:
+            r["restores"] = restores
+        return r
+
+    def protect_retire_steps(S, Q, a1, a2, t):
+        pin2 = {"stream": S, "record_id": "cpu-0", "revision": 2, "digest": digest(a2)}
+        ghost = {"stream": S, "record_id": "cpu-9", "revision": 1, "digest": "sha256:" + "2" * 64}
+        at = lambda m, s: f"2026-10-25T12:{m:02d}:{s:02d}.000000Z"
+        hold = prot(S, "k-hold", "tombstone", pin2, at(6, 0))
+        return [
+            t(6, 0), {"op": "protect", "stream": S, "request": hold},
+            t(6, 1), {"op": "protect", "stream": S, "request": hold},
+            {"op": "protect", "stream": S, "request": prot(S, "k-hold", "tombstone", pin2, at(6, 1))},
+            {"op": "protect", "stream": S, "request": prot(S, "k-hold-ghost", "tombstone", ghost, at(6, 1))},
+            {"op": "protect", "stream": S, "request": prot(Q, "k-hold-q", "tombstone", pin2, at(6, 1))},
+            {"op": "release", "stream": S, "purpose": "export", "closure": "full_content"},
+            t(6, 2), {"op": "protect", "stream": S, "request": prot(S, "k-rest", "restore", pin2, at(6, 2), reason="hold_released", restores=7)},
+            t(6, 3), {"op": "retire", "stream": S, "record_id": "cpu-1", "reason": "withdrawn"},
+            t(6, 4), {"op": "retire", "stream": S, "record_id": "cpu-1", "reason": "operator"},
+            {"op": "retire", "stream": S, "record_id": "nobody", "reason": "withdrawn"},
+            {"op": "retire", "stream": S, "record_id": "cpu-0", "reason": "bogus"},
+            {"op": "retire", "stream": S, "record_id": "bad id", "reason": "withdrawn"},
+            t(6, 5), {"op": "retire", "stream": S, "record_id": "cpu-0", "reason": "superseded", "key": "k-ret"},
+            t(6, 6), {"op": "retire", "stream": S, "record_id": "cpu-0", "reason": "superseded", "key": "k-ret"},
+            {"op": "retire", "stream": S, "record_id": "cpu-0", "reason": "superseded", "key": "k-a2"},
+            {"op": "retire", "stream": S, "record_id": "ghost", "reason": "retention", "key": "k-ret-ghost"},
+            {"op": "retire", "stream": Q, "record_id": "only", "reason": "retention", "key": "k-ret-q"},
+            t(6, 7), {"op": "append", "stream": S, "record": rec(S, "cpu-1", 2, {"load": 1}, sup=digest(rec(S, "cpu-1", 1, None, body=True))), "key": "k-b2"},
+            # An explicitly empty key is an unkeyed retirement.
+            {"op": "retire", "stream": S, "record_id": "nobody", "reason": "withdrawn", "key": "", "retire_with_empty_key": True},
+            {"op": "retire", "stream": S, "record_id": "cpu-1", "reason": "withdrawn", "key": "", "retire_with_empty_key": True},
+            t(6, 8), {"op": "append", "stream": S, "record": rec(S, "cpu-2", 1, {"load": 2}), "key": "k-c2"},
+            t(6, 9), {"op": "retire", "stream": S, "record_id": "cpu-2", "reason": "withdrawn", "key": "", "retire_with_empty_key": True},
+            {"op": "head", "stream": S, "record_id": "cpu-0"},
+            {"op": "head", "stream": S, "record_id": "cpu-1"},
+            {"op": "head", "stream": S, "record_id": "cpu-2"},
+            {"op": "revisions", "stream": S, "record_id": "cpu-1"},
+            {"op": "reconcile", "stream": S, "key": "k-ret", "attempted_at": at(6, 5)},
+            {"op": "release", "stream": S, "purpose": "serve", "closure": "full_content"},
+            {"op": "release", "stream": Q, "purpose": "serve", "closure": "metadata_only"},
         ]
 
     def scenario(store_dir=None):
@@ -371,6 +419,20 @@ with tempfile.TemporaryDirectory(prefix="recordprims-crosscheck-") as work_dir:
     for want in ("appended", "revised", "idempotency_conflict", "revision_conflict", "no_head", "mode_violation"):
         if want not in seen_stream:
             raise SystemExit(f"crosscheck: stream scenario did not exercise append outcome {want!r}")
+    seen_retire = {r["data"].get("outcome") for r in stream_rows if r.get("op") == "retire" and r.get("ok")}
+    for want in ("retired", "already_retired", "no_record", "target_not_found", "idempotency_conflict"):
+        if want not in seen_retire:
+            raise SystemExit(f"crosscheck: stream scenario did not exercise retire outcome {want!r}")
+    seen_protect = {r["data"].get("outcome") for r in stream_rows if r.get("op") == "protect" and r.get("ok")}
+    for want in ("tombstoned", "untombstoned", "rejected"):
+        if want not in seen_protect:
+            raise SystemExit(f"crosscheck: stream scenario did not exercise protect outcome {want!r}")
+    seen_refusal = {r["data"].get("reason") for r in stream_rows if r.get("op") == "protect" and r.get("ok")}
+    for want in ("idempotency_conflict", "target_not_found"):
+        if want not in seen_refusal:
+            raise SystemExit(f"crosscheck: stream scenario did not exercise protect refusal {want!r}")
+    if "retired_record" not in seen_stream:
+        raise SystemExit("crosscheck: stream scenario did not append to a retired record")
     if not any(f["kind"] == "body" for r in stream_rows if r.get("op") == "release" for f in r["data"]["frames"]):
         raise SystemExit("crosscheck: stream scenario released no body frame")
 

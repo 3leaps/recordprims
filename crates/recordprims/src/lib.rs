@@ -41,7 +41,8 @@ pub use store::{
     ProfileRuntime, Store, DEFAULT_BODY_REMOVAL_STREAM, DEFAULT_IDEMPOTENCY_WINDOW,
 };
 pub use stream::{
-    Continues, FrameHeader, FrameKind, FrameReader, HeadInfo, Mode, Receipt, Reconciliation,
-    ReleaseOutcome, ReleaseResult, ReleaseSink, RevisionView, SourcePin, Stream, UseClosure,
+    Continues, FrameHeader, FrameKind, FrameReader, HeadInfo, Mode, ProtectionReceipt,
+    ProtectionRequest, Receipt, Reconciliation, ReleaseOutcome, ReleaseResult, ReleaseSink,
+    RetireOutcome, RetireReason, RetireResult, RevisionView, SourcePin, Stream, UseClosure,
     UsePurpose, UseRequest, Write, WriteOutcome,
 };

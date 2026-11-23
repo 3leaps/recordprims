@@ -181,6 +181,95 @@ pub struct Reconciliation {
     pub receipt: Option<Vec<u8>>,
 }
 
+/// The closed vocabulary of retirement reasons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RetireReason {
+    /// A newer record replaces this one.
+    Superseded,
+    /// The producer withdrew the record.
+    Withdrawn,
+    /// The retention policy ended the record.
+    Retention,
+    /// An operator retired the record.
+    Operator,
+}
+
+impl RetireReason {
+    /// The contract spelling of the reason.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Superseded => "superseded",
+            Self::Withdrawn => "withdrawn",
+            Self::Retention => "retention",
+            Self::Operator => "operator",
+        }
+    }
+}
+
+/// The outcome of [`Stream::retire`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RetireOutcome {
+    /// A retired entry was appended (or a keyed retirement was replayed).
+    Retired,
+    /// An unkeyed retirement found the record already retired.
+    AlreadyRetired,
+    /// An unkeyed retirement found no record with that id.
+    NoRecord,
+    /// A keyed retirement found no record with that id.
+    TargetNotFound,
+    /// The idempotency key is live for a different operation.
+    IdempotencyConflict,
+}
+
+impl RetireOutcome {
+    /// The contract spelling of the outcome.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Retired => "retired",
+            Self::AlreadyRetired => "already_retired",
+            Self::NoRecord => "no_record",
+            Self::TargetNotFound => "target_not_found",
+            Self::IdempotencyConflict => "idempotency_conflict",
+        }
+    }
+}
+
+/// The result of [`Stream::retire`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetireResult {
+    /// The outcome.
+    pub outcome: RetireOutcome,
+    /// Sequence number of the retired entry.
+    pub seq: Option<u64>,
+    /// Decision time of the retired entry.
+    pub at: Option<String>,
+    /// The `durable-record/v1` receipt (JSON) of a keyed retirement.
+    pub receipt: Option<Vec<u8>>,
+}
+
+/// A tombstone or restore request on a [`Stream`].
+#[derive(Debug, Clone, Default)]
+pub struct ProtectionRequest {
+    /// Raw JSON of the `durable-record/v1` protection request.
+    pub raw: Vec<u8>,
+}
+
+/// The result of [`Stream::protect`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtectionReceipt {
+    /// `tombstoned`, `untombstoned` or `rejected`.
+    pub outcome: String,
+    /// Sequence number of the accepted entry.
+    pub seq: Option<u64>,
+    /// Decision time of the accepted entry.
+    pub at: Option<String>,
+    /// The refusal reason, when `outcome` is `rejected`.
+    pub reason: Option<String>,
+    /// The `durable-record/v1` receipt (JSON).
+    pub raw: Vec<u8>,
+}
+
 /// The latest revision of a record on a stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeadInfo {
@@ -494,6 +583,15 @@ fn simple_receipt(stream: &str, key: &str, outcome: WriteOutcome) -> Receipt {
         failure_model: None,
         current: None,
     }
+}
+
+/// The decision time of journal entry `seq` (1-based).
+fn entry_at(st: &State, seq: i64) -> String {
+    usize::try_from(seq - 1)
+        .ok()
+        .and_then(|i| st.journal().get(i))
+        .map(|e| str_at(e, "at").to_owned())
+        .unwrap_or_default()
 }
 
 fn entry_head(seq: i64, stream: &str, typ: &str, at: &str) -> Vec<Member> {
@@ -930,6 +1028,173 @@ impl Stream<'_> {
             idempotency_key: str_at(&node, "idempotency_key").to_owned(),
             attempted_at: str_at(&node, "attempted_at").to_owned(),
             receipt,
+        })
+    }
+
+    /// Withdraws `record_id` from ordinary head resolution without removing
+    /// retained history. With an idempotency `key`, the retirement shares
+    /// the stream's idempotency window and returns a `durable-record/v1`
+    /// receipt; the key lookup precedes the target check. An empty key is
+    /// the same as no key.
+    pub fn retire(
+        &self,
+        record_id: &str,
+        reason: RetireReason,
+        key: Option<&str>,
+    ) -> Result<RetireResult, Error> {
+        if !valid_record_id(record_id) {
+            return Err(Error::schema("invalid record_id"));
+        }
+        let key = key.filter(|k| !k.is_empty());
+        if let Some(k) = key {
+            if !valid_wire_string(k, 1, 256) {
+                return Err(Error::schema("idempotency key invalid"));
+            }
+        }
+        let store = self.store;
+        store.with_lock(|| {
+            let mut rep = store.replay_stream(&self.id)?;
+            if rep.last_seq >= MAX_SAFE_INTEGER {
+                return Err(Error::schema("stream seq exhausted"));
+            }
+            let now = store.now_micros();
+            if rep.last_at.is_some_and(|la| now < la) {
+                return Err(Error::ClockRegression);
+            }
+            let at = format_instant(now);
+
+            if let Some(k) = key {
+                let req = Node::object(vec![
+                    m("stream", s(&self.id)),
+                    m("record_id", s(record_id)),
+                    m("reason", s(reason.as_str())),
+                    m("idempotency_key", s(k)),
+                ]);
+                let prev_len = rep.st.len();
+                let rc = rep
+                    .st
+                    .retire(&req, &at)
+                    .map_err(|r| Error::schema(reject_reason(&r)))?;
+                let rc_bytes = wire::encode(&rc);
+                match str_at(&rc, "outcome") {
+                    "retired" => {}
+                    o => {
+                        let outcome = if o == journal::REASON_IDEMPOTENCY_CONFLICT {
+                            RetireOutcome::IdempotencyConflict
+                        } else {
+                            RetireOutcome::TargetNotFound
+                        };
+                        return Ok(RetireResult {
+                            outcome,
+                            seq: None,
+                            at: None,
+                            receipt: Some(rc_bytes),
+                        });
+                    }
+                }
+                if rep.st.len() > prev_len {
+                    let mut line = wire::encode(&rep.st.journal()[prev_len]);
+                    line.push(b'\n');
+                    store.append_line(&mut rep, &line)?;
+                }
+                return Ok(RetireResult {
+                    outcome: RetireOutcome::Retired,
+                    seq: u64::try_from(int_at(&rc, "seq")).ok(),
+                    at: Some(entry_at(&rep.st, int_at(&rc, "seq"))),
+                    receipt: Some(rc_bytes),
+                });
+            }
+
+            if rep.st.head_pin(record_id).is_none() {
+                return Ok(RetireResult {
+                    outcome: RetireOutcome::NoRecord,
+                    seq: None,
+                    at: None,
+                    receipt: None,
+                });
+            }
+            if let Some((seq, at)) = rep.st.first_retired(record_id) {
+                return Ok(RetireResult {
+                    outcome: RetireOutcome::AlreadyRetired,
+                    seq: u64::try_from(seq).ok(),
+                    at: Some(at),
+                    receipt: None,
+                });
+            }
+            let seq = rep.last_seq + 1;
+            let mut f = entry_head(seq, &self.id, "retired", &at);
+            f.push(m("record_id", s(record_id)));
+            f.push(m("reason", s(reason.as_str())));
+            let entry = Node::object(f);
+            shape::validate("v1/journal-entry.schema.json", &entry)
+                .map_err(|_| Error::schema("retired entry shape"))?;
+            rep.st
+                .ingest(entry.clone())
+                .map_err(|r| Error::journal_invalid(reject_reason(&r)))?;
+            let mut line = wire::encode(&entry);
+            line.push(b'\n');
+            store.append_line(&mut rep, &line)?;
+            Ok(RetireResult {
+                outcome: RetireOutcome::Retired,
+                seq: u64::try_from(seq).ok(),
+                at: Some(at),
+                receipt: None,
+            })
+        })
+    }
+
+    /// Applies or restores a protection hold (a tombstone or restore
+    /// request). A refused request returns outcome `rejected` with the
+    /// refusal reason; it appends nothing.
+    pub fn protect(&self, req: &ProtectionRequest) -> Result<ProtectionReceipt, Error> {
+        let rn = wire::ingest(&req.raw, "protection_request").map_err(|r| {
+            Error::schema(format!("protection request ingest: {}", reject_reason(&r)))
+        })?;
+        shape::validate("v1/protection-request.schema.json", &rn)
+            .map_err(|_| Error::schema("protection request shape"))?;
+        if str_at(&rn, "stream") != self.id {
+            return Err(Error::schema("protection request stream mismatch"));
+        }
+        let store = self.store;
+        store.with_lock(|| {
+            let mut rep = store.replay_stream(&self.id)?;
+            if rep.last_seq >= MAX_SAFE_INTEGER {
+                return Err(Error::schema("stream seq exhausted"));
+            }
+            let now = store.now_micros();
+            if rep.last_at.is_some_and(|la| now < la) {
+                return Err(Error::ClockRegression);
+            }
+            let at = format_instant(now);
+            let prev_len = rep.st.len();
+            let rc = rep
+                .st
+                .request(&rn, &at)
+                .map_err(|r| Error::schema(reject_reason(&r)))?;
+            let raw = wire::encode(&rc);
+            let outcome = str_at(&rc, "outcome").to_owned();
+            if outcome != "tombstoned" && outcome != "untombstoned" {
+                return Ok(ProtectionReceipt {
+                    outcome: "rejected".to_owned(),
+                    seq: None,
+                    at: None,
+                    reason: Some(outcome),
+                    raw,
+                });
+            }
+            if rep.st.len() > prev_len {
+                let mut line = wire::encode(&rep.st.journal()[prev_len]);
+                line.push(b'\n');
+                store.append_line(&mut rep, &line)?;
+            }
+            let seq = int_at(&rc, "seq");
+            Ok(ProtectionReceipt {
+                outcome,
+                seq: u64::try_from(seq).ok(),
+                at: Some(entry_at(&rep.st, seq)),
+                reason: None,
+                raw,
+            })
         })
     }
 
