@@ -1302,6 +1302,7 @@ mod producer_instant {
     #[test]
     fn native_values_match_the_shared_vectors() {
         let v = vectors();
+        let mut unrepresentable = Vec::new();
         for c in &v.get("native").unwrap().elems {
             let name = text(c, "name");
             let secs: i64 = c.get("unix_seconds").unwrap().token.parse().unwrap();
@@ -1311,6 +1312,18 @@ mod producer_instant {
             } else {
                 UNIX_EPOCH - Duration::new(secs.unsigned_abs(), 0) + Duration::new(0, nanos)
             };
+            // SystemTime resolution is platform-defined (100 ns on Windows).
+            // A vector the platform cannot hold exactly is not this
+            // platform's input; the Go tests and the other vectors cover it.
+            let want_ns = i128::from(secs) * 1_000_000_000 + i128::from(nanos);
+            let held_ns = match t.duration_since(UNIX_EPOCH) {
+                Ok(d) => i128::try_from(d.as_nanos()).unwrap(),
+                Err(e) => -i128::try_from(e.duration().as_nanos()).unwrap(),
+            };
+            if held_ns != want_ns {
+                unrepresentable.push(name.to_owned());
+                continue;
+            }
             let got = producer_instant(t);
             if refused(c) {
                 assert!(
@@ -1320,6 +1333,20 @@ mod producer_instant {
             } else {
                 assert_eq!(got.unwrap(), text(c, "canonical"), "{name}");
             }
+        }
+        // Only sub-100 ns values may be unrepresentable, and only where the
+        // platform clock is coarser than a nanosecond.
+        if cfg!(windows) {
+            assert_eq!(
+                unrepresentable,
+                ["one nanosecond"],
+                "unrepresentable vectors"
+            );
+        } else {
+            assert!(
+                unrepresentable.is_empty(),
+                "unrepresentable vectors: {unrepresentable:?}"
+            );
         }
         // The store clock still truncates; the producer path refuses.
         let t = UNIX_EPOCH + Duration::new(1_795_435_200, 123_456_789);
