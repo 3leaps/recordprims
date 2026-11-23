@@ -189,3 +189,84 @@ func TestTamperedRecordSchemaRefusesTheRegistry(t *testing.T) {
 		t.Fatalf("Open = %v", err)
 	}
 }
+
+// repinDecision rewrites the decision descriptor in the fixture's registry,
+// re-pins the registry in the project config, and opens the project.
+func repinDecision(t *testing.T, f *fixture, owner string, revision float64) (*Writer, error) {
+	t.Helper()
+	regPath := filepath.Join(f.root, "registry", "registry.json")
+	raw, err := os.ReadFile(regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reg map[string]any
+	if err := json.Unmarshal(raw, &reg); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range reg["descriptors"].([]any) {
+		if dm := d.(map[string]any); dm["kind"] == "decision" {
+			dm["owner"], dm["descriptor_revision"] = owner, revision
+		}
+	}
+	out, _ := json.MarshalIndent(reg, "", "  ")
+	if err := os.WriteFile(regPath, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	cfgRaw, _ := os.ReadFile(f.project)
+	json.Unmarshal(cfgRaw, &cfg)
+	cfg["registry"].(map[string]any)["digest"] = fileDigest(out)
+	f.writeConfig(t, cfg)
+	w, err := Open(f.project, f.opts("rowan"))
+	if err == nil {
+		t.Cleanup(func() { w.Close() })
+	}
+	return w, err
+}
+
+// The registry admits exactly the descriptor owners and revisions the record
+// wrapper schema admits: at the bound the emitted payload conforms, one past
+// it the registry is refused, so no accepted record can fail its wrapper.
+func TestDescriptorBoundsMatchTheWrapperSchema(t *testing.T) {
+	long := strings.Repeat("a", 127)
+	for _, c := range []struct {
+		name     string
+		owner    string
+		revision float64
+		ok       bool
+	}{
+		{"owner components at 127", long + "/" + long, 1, true},
+		{"revision at 2^53-1", "example.org/project-records", 1<<53 - 1, true},
+		{"first owner component at 128", long + "a/x", 1, false},
+		{"second owner component at 128", "x/" + long + "a", 1, false},
+		{"revision past 2^53-1", "example.org/project-records", 1 << 53, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t, "168h")
+			w, err := repinDecision(t, f, c.owner, c.revision)
+			if !c.ok {
+				if err == nil || !strings.Contains(err.Error(), "malformed") {
+					t.Fatalf("registry opened: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			res := mustRecord(t, w, decisionRequest(t, "dec-bound", "op-bound"), OutcomeAccepted)
+			cs, err := w.serve(ctx, w.streams["decision"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rec struct {
+				Payload json.RawMessage `json:"payload"`
+			}
+			if err := json.Unmarshal(cs.records[*res.Pin], &rec); err != nil {
+				t.Fatal(err)
+			}
+			if err := validate(t, "record", w.Registry().Record.SchemaJSON(), rec.Payload); err != nil {
+				t.Fatalf("payload at the bound fails the wrapper schema: %v", err)
+			}
+		})
+	}
+}

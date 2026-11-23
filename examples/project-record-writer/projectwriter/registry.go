@@ -81,8 +81,13 @@ type Registry struct {
 
 var (
 	reContract = regexp.MustCompile(`^contract: [a-z0-9][a-z0-9-]*/v[0-9]+$`)
-	reOwner    = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*/[a-z0-9][a-z0-9.-]*$`)
+	// reOwner stays within the record wrapper schema's owner bound (127
+	// characters per component).
+	reOwner = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,126}/[a-z0-9][a-z0-9.-]{0,126}$`)
 )
+
+// maxSafeInteger is the largest descriptor revision the wrapper schema admits.
+const maxSafeInteger = 1<<53 - 1
 
 // sensitivityRank and retentionRank order the classifier values that a
 // record may carry; unknown is a deferred decision and never meets a floor.
@@ -127,7 +132,7 @@ func loadRegistry(path, digest string) (*Registry, error) {
 	}
 	seen := map[string]bool{}
 	for i, d := range r.Descriptors {
-		if d == nil || !reKind.MatchString(d.Kind) || !reOwner.MatchString(d.Owner) || d.Revision < 1 ||
+		if d == nil || !reKind.MatchString(d.Kind) || !reOwner.MatchString(d.Owner) || d.Revision < 1 || d.Revision > maxSafeInteger ||
 			!reContract.MatchString(d.EntryContract) || d.Carrier != "payload" ||
 			(d.RevisionPolicy != "revisioned" && d.RevisionPolicy != "single") ||
 			!knownClass(d.WriterClass) ||
