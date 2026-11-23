@@ -72,10 +72,18 @@ and read the signature status:
 
 ```bash
 git fetch --tags origin
-tmp="$(mktemp -d)"
-git show refs/tags/vX.Y.Z:docs/security/release-signing-keys.asc | gpg --homedir "$tmp" --import
-GNUPGHOME="$tmp" git verify-tag --raw refs/tags/vX.Y.Z 2>&1 | grep VALIDSIG
-rm -rf "$tmp"
+(
+  set -eu
+  tag=refs/tags/vX.Y.Z
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  git show "$tag:docs/security/release-signing-keys.asc" | gpg --homedir "$tmp" --import
+  if ! status="$(GNUPGHOME="$tmp" git verify-tag --raw "$tag" 2>&1)"; then
+    echo "tag signature did not verify" >&2
+    exit 1
+  fi
+  printf '%s\n' "$status" | grep '^\[GNUPG:\] VALIDSIG '
+)
 ```
 
 The `VALIDSIG` line names the signing subkey fingerprint first and the primary
