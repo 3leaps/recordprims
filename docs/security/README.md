@@ -1,8 +1,8 @@
 # Release Signing and Verification
 
-recordprims has not been released. This page states the release trust model
-and its trust files. The signing pins and fingerprint anchors are written once,
-before the first release, and land through review.
+This page states the release trust model, its trust files, and how to verify
+a release. The signing pins and fingerprint anchors were written once, before
+the first release, and landed through review.
 
 ## Release identity
 
@@ -62,3 +62,24 @@ Tag verification reads committed public data from the tagged commit in an
 isolated keyring and requires the exact signing subkey of the approved primary,
 which comes from the maintainer environment, never from the tree. The forge's
 own "verified" flag is an additional check.
+
+## Verify a release
+
+A plain `git verify-tag vX.Y.Z` in your own keyring reports `No public key`
+unless you have imported the signing key. Verify against the pin committed in
+the tagged commit instead, in an isolated keyring:
+
+```bash
+git fetch --tags origin
+git checkout vX.Y.Z
+tmp="$(mktemp -d)"
+git show vX.Y.Z:docs/security/release-signing-keys.asc | gpg --homedir "$tmp" --import
+gpg --homedir "$tmp" --fingerprint   # compare the primary with keys/expected-fingerprints.txt
+GNUPGHOME="$tmp" git verify-tag vX.Y.Z
+rm -rf "$tmp"
+```
+
+Compare the primary fingerprint with one obtained through an independent
+channel, not only with the file beside it. Maintainers run the full check
+with `make release-validate-pin` and `make release-verify-remote-tag` (see
+[RELEASE_CHECKLIST.md](../../RELEASE_CHECKLIST.md), section 3).

@@ -3,17 +3,17 @@
 # schema lands in a separate crucible change and this file follows it.
 schema: "contract:taxonomy/v0/repo-declaration.schema.json"
 class: prims
-profile: B              # locked parallel pure-Go and Rust implementations
-profile_status: bootstrapping   # operating tree: Go (named in README)
-leaf: false             # depends on sibling prims (allow-listed in scripts/deps-check.sh)
+profile: B  # locked parallel pure-Go and Rust implementations
+profile_status: bootstrapping  # operating tree: Go (named in README)
+leaf: false  # depends on sibling prims (allow-listed in scripts/deps-check.sh)
 category: library
 env_prefix: RECORDPRIMS_
 umbrella_prefix: null
 surfaces: [library, cli]
 bindings:
-  go: planned           # the first implementation (0.0.x)
-  rust: planned         # the twin; operating by 0.1.x
-  typescript: planned   # from the Rust tree (napi-rs); docs/decisions/ADR-0001
-  python: planned       # from the Rust tree (PyO3/maturin); docs/decisions/ADR-0001
+  go: planned  # the first implementation (0.0.x)
+  rust: planned  # the twin; operating by 0.1.x
+  typescript: planned  # from the Rust tree (napi-rs); docs/decisions/ADR-0001
+  python: planned  # from the Rust tree (PyO3/maturin); docs/decisions/ADR-0001
 target_registries: [go_proxy, crates_io, npm, pypi]
 extensions: []

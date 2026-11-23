@@ -9,7 +9,7 @@ export PYTHON
 
 .DEFAULT_GOAL := help
 .PHONY: all help check check-platform precommit fmt fmt-check lint test test-go test-rust \
-        example-check example-schemas \
+        example-check example-schemas lint-yaml fmt-yaml \
         test-faultpoints faultpoint-exclusion contract-check contract-oracle conformance crosscheck unsafe-check unsafe-check-test deps-check api-scan api-scan-test deny go-standalone surface-scan content-check \
         surface-tests prepush pr-final workflow-pin release-tooling-test checklist-targets doctor doctor-test \
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
@@ -25,7 +25,7 @@ help: ## Show available targets
 
 check-platform: fmt-check lint test example-check test-faultpoints faultpoint-exclusion contract-check conformance crosscheck unsafe-check unsafe-check-test deps-check api-scan api-scan-test content-check surface-tests checklist-targets version-check license-check license-check-test ## Platform-native subset of check (no goneat, cargo-deny, or PyYAML required)
 
-check: check-platform contract-oracle workflow-pin release-tooling-test deny ## Everything CI runs on one host
+check: check-platform contract-oracle workflow-pin release-tooling-test deny lint-yaml ## Everything CI runs on one host
 
 precommit: fmt-check lint ## Fast pre-commit gate
 
@@ -169,6 +169,17 @@ doctor: ## Report host tool versions against the recommended minimums (DOCTOR_SC
 fmt: ## Format Go and Rust
 	gofmt -w $$(git ls-files '*.go')
 	cargo fmt --all
+
+YAMLFMT ?= yamlfmt
+YAMLLINT ?= yamllint
+YAML_FILES = .yamlfmt .yamllint .fulmen/repo.yaml '.github/**/*.yml' '.github/**/*.yaml' '.goneat/**/*.yaml'
+
+lint-yaml: ## YAML two-space format and yamllint (.yamlfmt, .yamllint)
+	$(YAMLFMT) -dstar -lint $(YAML_FILES)
+	$(YAMLLINT) --strict -c .yamllint .yamlfmt .yamllint .fulmen .github .goneat
+
+fmt-yaml: ## Format YAML with .yamlfmt (a workflow change also needs its pin updated)
+	$(YAMLFMT) -dstar $(YAML_FILES)
 
 fmt-check: ## Check formatting
 	@out="$$(gofmt -l $$(git ls-files '*.go'))"; if [ -n "$$out" ]; then echo "gofmt: $$out" >&2; exit 1; fi

@@ -17,6 +17,9 @@ maintainer's machine. CI holds no signing, release or registry authority.
   the recommended minimum in `.goneat/tools.yaml` and fails on any tool that is
   missing, older, or whose version it cannot read.
 - decernor 0.1.8 or newer as a regular file at an absolute path.
+- A `gh` login that can read the repository's administration settings
+  (workflow token permissions, rulesets and immutable releases). A token
+  without that access fails `make release-github-preflight` with HTTP 403.
 - limensafe and the maintainer's catalog, which the pre-tag gate requires for
   the public-surface scan (it never runs in CI).
 - The ceremony environment (outside this repository), exported in the shell
@@ -44,6 +47,10 @@ maintainer's machine. CI holds no signing, release or registry authority.
   `RECORDPRIMS_RELEASE_ANCHOR_FILE` must lie in an existing directory outside
   the repository and not yet exist before `make release-record-anchor`. A bare
   `RELEASE_TAG` is refused by `make`.
+
+Start each ceremony in a fresh shell on a clean `main`: load the maintainer
+environment file, check that it reports the intended `RECORDPRIMS_RELEASE_TAG`,
+create `$RECORDPRIMS_TAG_MESSAGE_DIR`, and run every later step in that shell.
 
 ## 0. First adoption only: public pins
 

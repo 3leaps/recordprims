@@ -27,26 +27,20 @@
 #
 # Third-party actions and container images are pinned by digest/commit. Custom
 # runner labels are declared in .github/actionlint.yaml.
-
 name: CI
-
 on:
   push:
     branches: [main]
   pull_request:
-
 permissions:
   contents: read
-
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
-
 env:
   CARGO_TERM_COLOR: always
   RUST_TOOLCHAIN: 1.88.0
   GO_VERSION: 1.26.10
-
 jobs:
   check-linux:
     name: check (x86_64-unknown-linux-gnu)
@@ -66,11 +60,11 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # reviewed 2026-08-04 commit
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # reviewed 2026-08-04 commit
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
@@ -94,7 +88,6 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git status --porcelain
           test -z "$(git status --porcelain)"
-
   check:
     name: check (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
@@ -112,7 +105,7 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: make check-platform
@@ -121,7 +114,6 @@ jobs:
           target: ${{ matrix.target }}
           rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
           go-version: ${{ env.GO_VERSION }}
-
   check-linux-arm64:
     name: check (aarch64-unknown-linux-gnu)
     # Same-repo only: fork PRs cannot use organization larger runners.
@@ -142,11 +134,11 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # reviewed 2026-08-04 commit
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # reviewed 2026-08-04 commit
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
@@ -170,7 +162,6 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git status --porcelain
           test -z "$(git status --porcelain)"
-
   check-arm64:
     name: check (${{ matrix.target }})
     # Same-repo only: fork PRs cannot use organization larger runners.
@@ -188,7 +179,7 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: make check-platform
@@ -197,7 +188,6 @@ jobs:
           target: ${{ matrix.target }}
           rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
           go-version: ${{ env.GO_VERSION }}
-
   workflow-lint:
     name: workflow-lint
     runs-on: ubuntu-latest
@@ -210,14 +200,13 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: actionlint
         run: |
           actionlint --version
           actionlint -color
-
   go-standalone:
     # The Go module must stand alone: copied outside the repository with only
     # its own files, built and tested with GOWORK off and cgo disabled.
@@ -235,7 +224,7 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: Go module outside the repository
