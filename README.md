@@ -33,11 +33,15 @@ plan is recorded in [ADR-0001](docs/decisions/ADR-0001-profile-b-twin-and-bindin
 
 | Surface | Status |
 | --- | --- |
-| `durable-record/v1` records written by the Go module | Stable. Records stay readable from the contract alone. |
-| Go module, local filesystem store (`recordprims-fs/v2`) | Supported. Any breaking change before 1.0 comes in a new minor release and is listed in the changelog. |
+| `durable-record/v1` records written by the Go module | Conform to `durable-record/v1` as pinned, and later releases keep reading them. The contract itself is proposed and experimental upstream. |
+| Go module | Supported. Any breaking API change before 1.0 comes in a new minor release and is listed in the changelog. |
+| Local filesystem store format (`recordprims-fs/v2`) | Later 0.x releases open a store written by 0.1.0, or a store-format change ships with a documented migration and a changelog entry. |
 | Rust crate | Preview, not published. Plain streams only. |
 | Bucket stratum (`internal/stratum/bucketcas`) | Experimental and internal; no public API, not tested against a cloud storage provider. |
 | TypeScript and Python bindings | Planned. |
+
+Not claimed: use of one store from more than one host, network or cloud
+storage, or survival of power loss.
 
 The Go module implements the `durable-record/v1` store (`recordprims-fs/v2`),
 passing all 400 vectors of the pinned `3leaps/crucible` `v0.2.10` contract: a

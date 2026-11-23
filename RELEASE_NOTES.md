@@ -13,13 +13,19 @@ The first minor release: the pure-Go `durable-record/v1` store
 (`recordprims-fs/v2`) for use in applications, passing all 400 vectors of the
 pinned `3leaps/crucible` `v0.2.10` contract.
 
-- The Go module and its local filesystem store are supported; any breaking
-  change before 1.0 comes in a new minor release.
+- The Go module is supported; any breaking API change before 1.0 comes in a
+  new minor release. Later 0.x releases open a `recordprims-fs/v2` store
+  written by 0.1.0, or a store-format change ships with a documented
+  migration and a changelog entry.
+- Records conform to `durable-record/v1` as pinned; the contract itself is
+  proposed and experimental upstream.
 - `UseRequest.Selection` releases exact revisions for serve, export and reuse.
 - Producer-instant helpers in Go and Rust.
 - The Rust crate is a preview in the repository and is not published. The
   internal bucket stratum is experimental and has not been tested against a
   cloud storage provider.
+- Not claimed: one store used from more than one host, network or cloud
+  storage, or survival of power loss.
 - One signed tag, `v0.1.0`. No registry package is published beyond the Go
   module tag.
 
