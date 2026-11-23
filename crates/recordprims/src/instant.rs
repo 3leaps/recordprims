@@ -186,6 +186,103 @@ pub fn parse_instant(s: &str) -> Result<Instant, Error> {
     Instant::from_utc(year, month, day, hour, minute, second, micro)
 }
 
+/// Converts a UTC instant observed by a producer into the canonical
+/// spelling, for use in new records before their digest is computed. It
+/// accepts exactly three spellings:
+///
+/// ```text
+/// 2026-11-23T12:00:00Z         whole seconds
+/// 2026-11-23T12:00:00.123Z     exactly three fractional digits
+/// 2026-11-23T12:00:00.123456Z  exactly six fractional digits (returned unchanged)
+/// ```
+///
+/// The result always has six fractional digits; the conversion only appends
+/// zeros, so it is lossless. Every other spelling is refused with
+/// [`Error::Schema`], never rounded or repaired: other fraction lengths, an
+/// offset, a lowercase `t` or `z`, a comma fraction, an invalid calendar
+/// date, a leap second and year `0000`.
+///
+/// This is a producer helper. Stored and received instants are verified with
+/// [`parse_instant`], which accepts only the canonical spelling.
+///
+/// ```
+/// use recordprims::normalize_producer_instant;
+///
+/// // A producer whose clock reads whole seconds or milliseconds passes what
+/// // it observed and puts the result in the record before its digest.
+/// assert_eq!(
+///     normalize_producer_instant("2026-11-23T12:00:00Z").unwrap(),
+///     "2026-11-23T12:00:00.000000Z"
+/// );
+/// assert_eq!(
+///     normalize_producer_instant("2026-11-23T12:00:00.123Z").unwrap(),
+///     "2026-11-23T12:00:00.123000Z"
+/// );
+/// assert_eq!(
+///     normalize_producer_instant("2026-11-23T12:00:00.123456Z").unwrap(),
+///     "2026-11-23T12:00:00.123456Z"
+/// );
+/// // Other spellings are refused, never repaired or rounded.
+/// assert!(normalize_producer_instant("2026-11-23T12:00:00+00:00").is_err());
+/// assert!(normalize_producer_instant("2026-11-23T12:00:00.1234Z").is_err());
+/// ```
+pub fn normalize_producer_instant(s: &str) -> Result<String, Error> {
+    let b = s.as_bytes();
+    let canonical = match (b.len(), s.get(..19), s.get(..23)) {
+        (20, Some(head), _) if b[19] == b'Z' => format!("{head}.000000Z"),
+        (24, _, Some(head)) if b[19] == b'.' && b[23] == b'Z' => format!("{head}000Z"),
+        (27, _, _) => s.to_owned(),
+        _ => return Err(Error::schema("producer instant spelling")),
+    };
+    parse_instant(&canonical)?;
+    Ok(canonical)
+}
+
+/// Returns the canonical spelling of `t` for use in a new record. It refuses
+/// a value with a sub-microsecond remainder instead of truncating it, and a
+/// value outside years `0001` to `9999`. (The store's own clock goes through
+/// [`Instant::from_system_time`], which truncates.)
+///
+/// ```
+/// use std::time::{Duration, UNIX_EPOCH};
+/// use recordprims::producer_instant;
+///
+/// let exact = UNIX_EPOCH + Duration::new(1_795_435_200, 123_456_000);
+/// assert_eq!(producer_instant(exact).unwrap(), "2026-11-23T12:00:00.123456Z");
+///
+/// // A sub-microsecond remainder is refused, not truncated.
+/// let finer = UNIX_EPOCH + Duration::new(1_795_435_200, 123_456_789);
+/// assert!(producer_instant(finer).is_err());
+/// ```
+pub fn producer_instant(t: SystemTime) -> Result<String, Error> {
+    let unix_micros = match t.duration_since(UNIX_EPOCH) {
+        Ok(d) => {
+            if d.subsec_nanos() % 1_000 != 0 {
+                return Err(Error::schema(
+                    "producer instant has a sub-microsecond remainder",
+                ));
+            }
+            i64::try_from(d.as_micros()).ok()
+        }
+        Err(e) => {
+            let d = e.duration();
+            if d.subsec_nanos() % 1_000 != 0 {
+                return Err(Error::schema(
+                    "producer instant has a sub-microsecond remainder",
+                ));
+            }
+            i64::try_from(d.as_micros()).ok().map(|m| -m)
+        }
+    };
+    let instant = unix_micros
+        .ok_or_else(|| Error::schema("producer instant outside years 0001 to 9999"))
+        .and_then(|m| {
+            Instant::from_unix_micros(m)
+                .map_err(|_| Error::schema("producer instant outside years 0001 to 9999"))
+        })?;
+    Ok(format_instant(instant))
+}
+
 fn parse_digits(b: &[u8], start: usize, len: usize) -> Option<u32> {
     let mut val = 0u32;
     for &c in &b[start..start + len] {

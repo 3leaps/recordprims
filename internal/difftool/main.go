@@ -399,6 +399,14 @@ func runScenario(sc scenarioInput) (scenarioOutput, error) {
 				Formatted: recordprims.FormatInstant(ts),
 			})
 
+		case "normalize_producer_instant":
+			out, err := recordprims.NormalizeProducerInstant(st.Input)
+			if err != nil {
+				results = append(results, classifyErr(st.Op, err))
+				continue
+			}
+			results = append(results, stepOutput{Op: st.Op, OK: true, Formatted: out})
+
 		case "fs_write":
 			b, err := decodeStepBytes(st)
 			if err != nil {

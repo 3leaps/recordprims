@@ -1,0 +1,383 @@
+{
+  "description": "Producer-instant vectors: spellings accepted by NormalizeProducerInstant / normalize_producer_instant and their canonical output, refused spellings, native time values (Unix seconds plus a nanosecond offset in 0..1e9) and record digests that must not depend on the accepted input spelling. The record template uses the payload member observed_at.",
+  "spellings": [
+    {
+      "name": "whole seconds",
+      "input": "2026-11-23T12:00:00Z",
+      "canonical": "2026-11-23T12:00:00.000000Z"
+    },
+    {
+      "name": "milliseconds",
+      "input": "2026-11-23T12:00:00.123Z",
+      "canonical": "2026-11-23T12:00:00.123000Z"
+    },
+    {
+      "name": "microseconds, unchanged",
+      "input": "2026-11-23T12:00:00.123456Z",
+      "canonical": "2026-11-23T12:00:00.123456Z"
+    },
+    {
+      "name": "zero milliseconds",
+      "input": "2026-11-23T12:00:00.000Z",
+      "canonical": "2026-11-23T12:00:00.000000Z"
+    },
+    {
+      "name": "canonical zero fraction",
+      "input": "2026-11-23T12:00:00.000000Z",
+      "canonical": "2026-11-23T12:00:00.000000Z"
+    },
+    {
+      "name": "leap day",
+      "input": "2024-02-29T23:59:59.999Z",
+      "canonical": "2024-02-29T23:59:59.999000Z"
+    },
+    {
+      "name": "first instant",
+      "input": "0001-01-01T00:00:00Z",
+      "canonical": "0001-01-01T00:00:00.000000Z"
+    },
+    {
+      "name": "last instant",
+      "input": "9999-12-31T23:59:59.999999Z",
+      "canonical": "9999-12-31T23:59:59.999999Z"
+    },
+    {
+      "name": "before 1970",
+      "input": "1969-12-31T23:59:59.500Z",
+      "canonical": "1969-12-31T23:59:59.500000Z"
+    },
+    {
+      "name": "one fractional digit",
+      "input": "2026-11-23T12:00:00.1Z",
+      "refused": true
+    },
+    {
+      "name": "two fractional digits",
+      "input": "2026-11-23T12:00:00.12Z",
+      "refused": true
+    },
+    {
+      "name": "four fractional digits",
+      "input": "2026-11-23T12:00:00.1234Z",
+      "refused": true
+    },
+    {
+      "name": "five fractional digits",
+      "input": "2026-11-23T12:00:00.12345Z",
+      "refused": true
+    },
+    {
+      "name": "seven fractional digits",
+      "input": "2026-11-23T12:00:00.1234567Z",
+      "refused": true
+    },
+    {
+      "name": "nine fractional digits",
+      "input": "2026-11-23T12:00:00.123456789Z",
+      "refused": true
+    },
+    {
+      "name": "empty fraction",
+      "input": "2026-11-23T12:00:00.Z",
+      "refused": true
+    },
+    {
+      "name": "numeric offset",
+      "input": "2026-11-23T12:00:00+00:00",
+      "refused": true
+    },
+    {
+      "name": "offset with milliseconds",
+      "input": "2026-11-23T12:00:00.123+00:00",
+      "refused": true
+    },
+    {
+      "name": "offset with microseconds",
+      "input": "2026-11-23T12:00:00.123456+00:00",
+      "refused": true
+    },
+    {
+      "name": "non-zero offset",
+      "input": "2026-11-23T13:00:00+01:00",
+      "refused": true
+    },
+    {
+      "name": "lowercase t",
+      "input": "2026-11-23t12:00:00Z",
+      "refused": true
+    },
+    {
+      "name": "lowercase z",
+      "input": "2026-11-23T12:00:00z",
+      "refused": true
+    },
+    {
+      "name": "lowercase z with milliseconds",
+      "input": "2026-11-23T12:00:00.123z",
+      "refused": true
+    },
+    {
+      "name": "comma fraction",
+      "input": "2026-11-23T12:00:00,123Z",
+      "refused": true
+    },
+    {
+      "name": "comma fraction, six digits",
+      "input": "2026-11-23T12:00:00,123456Z",
+      "refused": true
+    },
+    {
+      "name": "February 30",
+      "input": "2026-02-30T12:00:00Z",
+      "refused": true
+    },
+    {
+      "name": "February 29 in a common year",
+      "input": "2025-02-29T12:00:00.000Z",
+      "refused": true
+    },
+    {
+      "name": "month 13",
+      "input": "2026-13-01T12:00:00Z",
+      "refused": true
+    },
+    {
+      "name": "hour 24",
+      "input": "2026-11-23T24:00:00Z",
+      "refused": true
+    },
+    {
+      "name": "minute 60",
+      "input": "2026-11-23T12:60:00Z",
+      "refused": true
+    },
+    {
+      "name": "leap second",
+      "input": "2026-12-31T23:59:60Z",
+      "refused": true
+    },
+    {
+      "name": "leap second with milliseconds",
+      "input": "2026-12-31T23:59:60.000Z",
+      "refused": true
+    },
+    {
+      "name": "year 0000",
+      "input": "0000-01-01T00:00:00Z",
+      "refused": true
+    },
+    {
+      "name": "space separator",
+      "input": "2026-11-23 12:00:00Z",
+      "refused": true
+    },
+    {
+      "name": "no seconds",
+      "input": "2026-11-23T12:00Z",
+      "refused": true
+    },
+    {
+      "name": "no zone",
+      "input": "2026-11-23T12:00:00",
+      "refused": true
+    },
+    {
+      "name": "date only",
+      "input": "2026-11-23",
+      "refused": true
+    },
+    {
+      "name": "empty",
+      "input": "",
+      "refused": true
+    },
+    {
+      "name": "non-digit fraction",
+      "input": "2026-11-23T12:00:00.12aZ",
+      "refused": true
+    },
+    {
+      "name": "signed year",
+      "input": "+2026-11-23T12:00:00Z",
+      "refused": true
+    },
+    {
+      "name": "trailing character",
+      "input": "2026-11-23T12:00:00.123ZZ",
+      "refused": true
+    },
+    {
+      "name": "leading space",
+      "input": " 2026-11-23T12:00:00Z",
+      "refused": true
+    },
+    {
+      "name": "non-ASCII digits",
+      "input": "２０２６-11-23T12:00:00Z",
+      "refused": true
+    }
+  ],
+  "native": [
+    {
+      "name": "whole second",
+      "unix_seconds": 1795435200,
+      "nanos": 0,
+      "canonical": "2026-11-23T12:00:00.000000Z"
+    },
+    {
+      "name": "milliseconds",
+      "unix_seconds": 1795435200,
+      "nanos": 123000000,
+      "canonical": "2026-11-23T12:00:00.123000Z"
+    },
+    {
+      "name": "microseconds",
+      "unix_seconds": 1795435200,
+      "nanos": 123456000,
+      "canonical": "2026-11-23T12:00:00.123456Z"
+    },
+    {
+      "name": "before 1970",
+      "unix_seconds": -1,
+      "nanos": 500000000,
+      "canonical": "1969-12-31T23:59:59.500000Z"
+    },
+    {
+      "name": "first instant",
+      "unix_seconds": -62135596800,
+      "nanos": 0,
+      "canonical": "0001-01-01T00:00:00.000000Z"
+    },
+    {
+      "name": "last instant",
+      "unix_seconds": 253402300799,
+      "nanos": 999999000,
+      "canonical": "9999-12-31T23:59:59.999999Z"
+    },
+    {
+      "name": "sub-microsecond remainder",
+      "unix_seconds": 1795435200,
+      "nanos": 123456789,
+      "refused": true
+    },
+    {
+      "name": "one nanosecond",
+      "unix_seconds": 1795435200,
+      "nanos": 1,
+      "refused": true
+    },
+    {
+      "name": "sub-microsecond remainder in 100 ns steps",
+      "unix_seconds": 1795435200,
+      "nanos": 123456700,
+      "refused": true
+    },
+    {
+      "name": "sub-microsecond remainder before 1970",
+      "unix_seconds": -1,
+      "nanos": 999999999,
+      "refused": true
+    },
+    {
+      "name": "sub-microsecond remainder before 1970 in 100 ns steps",
+      "unix_seconds": -1,
+      "nanos": 999999900,
+      "refused": true
+    },
+    {
+      "name": "year 0000",
+      "unix_seconds": -62135596801,
+      "nanos": 0,
+      "refused": true
+    },
+    {
+      "name": "year 10000",
+      "unix_seconds": 253402300800,
+      "nanos": 0,
+      "refused": true
+    }
+  ],
+  "record_digests": [
+    {
+      "inputs": [
+        "2026-11-23T12:00:00Z",
+        "2026-11-23T12:00:00.000Z",
+        "2026-11-23T12:00:00.000000Z"
+      ],
+      "canonical": "2026-11-23T12:00:00.000000Z",
+      "record": {
+        "v": 1,
+        "stream": "obs.producer",
+        "record_id": "reading-1",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "payload": {
+          "observed_at": "2026-11-23T12:00:00.000000Z",
+          "value": 7
+        },
+        "provenance": {
+          "actor_kind": "process",
+          "actor": "producer"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "record_digest": "sha256:910ca1054b7f312364da7e11eb290d6d77b5b978b896bbe3bb9eb4d4bd26cb6f"
+    },
+    {
+      "inputs": [
+        "2026-11-23T12:00:00.123Z",
+        "2026-11-23T12:00:00.123000Z"
+      ],
+      "canonical": "2026-11-23T12:00:00.123000Z",
+      "record": {
+        "v": 1,
+        "stream": "obs.producer",
+        "record_id": "reading-1",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "payload": {
+          "observed_at": "2026-11-23T12:00:00.123000Z",
+          "value": 7
+        },
+        "provenance": {
+          "actor_kind": "process",
+          "actor": "producer"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "record_digest": "sha256:23000254584742331f293a44486989ffcb7a0346203c9abda159f3a2e5f7abee"
+    },
+    {
+      "inputs": [
+        "2026-11-23T12:00:00.123456Z"
+      ],
+      "canonical": "2026-11-23T12:00:00.123456Z",
+      "record": {
+        "v": 1,
+        "stream": "obs.producer",
+        "record_id": "reading-1",
+        "revision": 1,
+        "payload_contract": "contract: example/v0",
+        "payload": {
+          "observed_at": "2026-11-23T12:00:00.123456Z",
+          "value": 7
+        },
+        "provenance": {
+          "actor_kind": "process",
+          "actor": "producer"
+        },
+        "classification": {
+          "retention": "standard",
+          "sensitivity": "0-public"
+        }
+      },
+      "record_digest": "sha256:c3e5fa6166b2e7a13269acc49af300d2810c665b6dc20940b93f3e3f5831db5c"
+    }
+  ]
+}

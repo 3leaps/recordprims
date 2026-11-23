@@ -486,8 +486,40 @@ with tempfile.TemporaryDirectory(prefix="recordprims-crosscheck-") as work_dir:
         if collect_tree(writer_dir, "streams") != before:
             raise SystemExit(f"crosscheck: {label} rewrote stream files on a read")
 
+    # 5. Producer instants: the shared vectors plus single-character edits of
+    # each accepted spelling give the same verdict and the same bytes from both
+    # implementations.
+    with open(os.path.join(root, "testdata", "producer-instant.json"), encoding="utf-8") as f:
+        pvec = json.load(f)
+    inputs = [c["input"] for c in pvec["spellings"]]
+    alphabet = "0123456789TZtz.,:+- \u00e9"
+    for c in pvec["spellings"]:
+        if c.get("refused"):
+            continue
+        s = c["input"]
+        for i in range(len(s) + 1):
+            inputs.append(s[:i] + s[i + 1:])
+            for ch in alphabet:
+                inputs.append(s[:i] + ch + s[i + 1:])
+                inputs.append(s[:i] + ch + s[i:])
+    inputs = sorted(set(inputs))
+    pscen = {"id": "producer-instant", "steps": [{"op": "normalize_producer_instant", "input": s} for s in inputs]}
+    go_p = json.loads(run_driver(go_driver, [pscen])[0])["results"]
+    rs_p = json.loads(run_driver(rust_driver, [pscen])[0])["results"]
+    for s, g_r, r_r in zip(inputs, go_p, rs_p):
+        if g_r != r_r:
+            raise SystemExit(f"crosscheck: producer instant {s!r} diverged:\n  Go:   {g_r}\n  Rust: {r_r}")
+    want = {c["input"]: c.get("canonical") for c in pvec["spellings"]}
+    for s, g_r in zip(inputs, go_p):
+        if s in want and (g_r.get("formatted") if g_r.get("ok") else None) != want[s]:
+            raise SystemExit(f"crosscheck: producer instant {s!r} = {g_r}, vectors want {want[s]!r}")
+    accepted = sum(1 for r in go_p if r.get("ok"))
+    if accepted < 10 or accepted == len(inputs):
+        raise SystemExit(f"crosscheck: producer instant inputs not discriminating ({accepted}/{len(inputs)} accepted)")
+
 print(
     f"[ok] crosscheck ({len(boundary_cases)} boundary scenarios, "
-    "byte-identical store/body/stream layout, Go<->Rust cross-open)"
+    "byte-identical store/body/stream layout, Go<->Rust cross-open, "
+    f"{len(inputs)} producer instants)"
 )
 PY

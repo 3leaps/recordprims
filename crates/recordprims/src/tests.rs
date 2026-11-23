@@ -1248,3 +1248,167 @@ mod streams {
         ));
     }
 }
+
+mod producer_instant {
+    use super::*;
+    use crate::instant::{normalize_producer_instant, producer_instant};
+    use crate::stream::{Mode, Write, WriteOutcome};
+    use crate::wire::{self, Kind, Node};
+    use std::time::UNIX_EPOCH;
+
+    /// testdata/producer-instant.json, shared with the Go tests.
+    fn vectors() -> Node {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/producer-instant.json");
+        let raw = fs::read(&path).unwrap();
+        let v = wire::parse_json(&raw).unwrap();
+        for list in ["spellings", "native", "record_digests"] {
+            assert!(!v.get(list).unwrap().elems.is_empty(), "{list} is empty");
+        }
+        v
+    }
+
+    fn text<'a>(n: &'a Node, k: &str) -> &'a str {
+        n.get(k).map_or("", |v| v.str_val.as_str())
+    }
+
+    fn refused(n: &Node) -> bool {
+        n.get("refused")
+            .is_some_and(|v| v.kind == Kind::Bool && v.bool_val)
+    }
+
+    #[test]
+    fn spellings_match_the_shared_vectors() {
+        let v = vectors();
+        for c in &v.get("spellings").unwrap().elems {
+            let (name, input) = (text(c, "name"), text(c, "input"));
+            let got = normalize_producer_instant(input);
+            if refused(c) {
+                assert!(
+                    matches!(got, Err(Error::Schema(_))),
+                    "{name}: {input:?} = {got:?}, want a Schema refusal"
+                );
+                continue;
+            }
+            let out = got.unwrap_or_else(|e| panic!("{name}: {input:?}: {e:?}"));
+            assert_eq!(out, text(c, "canonical"), "{name}");
+            assert!(parse_instant(&out).is_ok(), "{name}: output not canonical");
+            assert_eq!(normalize_producer_instant(&out).unwrap(), out, "{name}");
+            // A lenient spelling never passes the strict wire parser.
+            assert_eq!(parse_instant(input).is_ok(), input == out, "{name}");
+        }
+    }
+
+    #[test]
+    fn native_values_match_the_shared_vectors() {
+        let v = vectors();
+        let mut unrepresentable = Vec::new();
+        for c in &v.get("native").unwrap().elems {
+            let name = text(c, "name");
+            let secs: i64 = c.get("unix_seconds").unwrap().token.parse().unwrap();
+            let nanos: u32 = c.get("nanos").unwrap().token.parse().unwrap();
+            let t = if secs >= 0 {
+                UNIX_EPOCH + Duration::new(secs.unsigned_abs(), nanos)
+            } else {
+                UNIX_EPOCH - Duration::new(secs.unsigned_abs(), 0) + Duration::new(0, nanos)
+            };
+            // SystemTime resolution is platform-defined (100 ns on Windows).
+            // A vector the platform cannot hold exactly is not this
+            // platform's input; the Go tests and the other vectors cover it.
+            let want_ns = i128::from(secs) * 1_000_000_000 + i128::from(nanos);
+            let held_ns = match t.duration_since(UNIX_EPOCH) {
+                Ok(d) => i128::try_from(d.as_nanos()).unwrap(),
+                Err(e) => -i128::try_from(e.duration().as_nanos()).unwrap(),
+            };
+            if held_ns != want_ns {
+                unrepresentable.push(name.to_owned());
+                continue;
+            }
+            let got = producer_instant(t);
+            if refused(c) {
+                assert!(
+                    matches!(got, Err(Error::Schema(_))),
+                    "{name}: {got:?}, want a Schema refusal"
+                );
+            } else {
+                assert_eq!(got.unwrap(), text(c, "canonical"), "{name}");
+            }
+        }
+        // Only values with a nonzero remainder below 100 ns may be
+        // unrepresentable, and only where SystemTime counts 100 ns steps
+        // (Windows). The "in 100 ns steps" vectors keep a sub-microsecond
+        // remainder there, so refusal is still exercised on every platform.
+        if cfg!(windows) {
+            assert_eq!(
+                unrepresentable,
+                [
+                    "sub-microsecond remainder",
+                    "one nanosecond",
+                    "sub-microsecond remainder before 1970"
+                ],
+                "unrepresentable vectors"
+            );
+        } else {
+            assert!(
+                unrepresentable.is_empty(),
+                "unrepresentable vectors: {unrepresentable:?}"
+            );
+        }
+        // The store clock still truncates; the producer path refuses.
+        let t = UNIX_EPOCH + Duration::new(1_795_435_200, 123_456_789);
+        assert_eq!(
+            format_instant(Instant::from_system_time(t)),
+            "2026-11-23T12:00:00.123456Z"
+        );
+        assert!(producer_instant(t).is_err());
+    }
+
+    fn record_with(tmpl: &Node, at: &str) -> Vec<u8> {
+        let mut rec = tmpl.clone();
+        let payload = rec.fields.iter_mut().find(|m| m.name == "payload").unwrap();
+        let obs = payload
+            .value
+            .fields
+            .iter_mut()
+            .find(|m| m.name == "observed_at")
+            .unwrap();
+        obs.value = Node::string(at);
+        wire::encode(&rec)
+    }
+
+    #[test]
+    fn record_digest_does_not_depend_on_the_input_spelling() {
+        let v = vectors();
+        for c in &v.get("record_digests").unwrap().elems {
+            let (s, _td, clk) = open_body_store();
+            let st = s
+                .open_stream("obs.producer", Mode::Revisioned, None)
+                .unwrap();
+            let tmpl = c.get("record").unwrap();
+            let mut first = None;
+            for input in &c.get("inputs").unwrap().elems {
+                let at = normalize_producer_instant(&input.str_val).unwrap();
+                assert_eq!(at, text(c, "canonical"));
+                clk.advance(Duration::from_secs(1));
+                let rc = st
+                    .append(&Write {
+                        record: record_with(tmpl, &at),
+                        idempotency_key: "k-producer".into(),
+                        ..Write::default()
+                    })
+                    .unwrap();
+                assert_eq!(rc.outcome, WriteOutcome::Appended, "{}", input.str_val);
+                assert_eq!(
+                    rc.pin.as_ref().unwrap().digest,
+                    text(c, "record_digest"),
+                    "{}",
+                    input.str_val
+                );
+                match &first {
+                    None => first = Some(rc),
+                    Some(f) => assert_eq!(&rc, f, "replay returns the original receipt"),
+                }
+            }
+        }
+    }
+}

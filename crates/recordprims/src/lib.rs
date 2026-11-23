@@ -33,7 +33,10 @@ pub use body::{
     RemoveBodyRequest, RemoveBodyResult, DEFAULT_PENDING_BODY_TTL,
 };
 pub use error::{is_indeterminate, DamagedTailKind, Error, ErrorCode, IoClass};
-pub use instant::{format_instant, parse_instant, Clock, Instant, SystemClock};
+pub use instant::{
+    format_instant, normalize_producer_instant, parse_instant, producer_instant, Clock, Instant,
+    SystemClock,
+};
 #[doc(hidden)]
 pub use lock::FileLock;
 pub use store::{

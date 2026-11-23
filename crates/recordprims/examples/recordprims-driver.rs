@@ -14,11 +14,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use recordprims::fsroot;
 use recordprims::wire::{self, Kind, Member, Node};
 use recordprims::{
-    format_instant, init, is_indeterminate, open, parse_instant, Authorization, Clock, Error,
-    FileLock, FrameHeader, FrameKind, FrameReader, InitOptions, Instant, Mode, OpenOptions, Pin,
-    ProtectionRequest, Provenance, Receipt, ReleaseOutcome, ReleaseSink, RemoveBodyReason,
-    RemoveBodyRequest, RetireReason, Store, UseClosure, UsePurpose, UseRequest,
-    Write as RecordWrite,
+    format_instant, init, is_indeterminate, normalize_producer_instant, open, parse_instant,
+    Authorization, Clock, Error, FileLock, FrameHeader, FrameKind, FrameReader, InitOptions,
+    Instant, Mode, OpenOptions, Pin, ProtectionRequest, Provenance, Receipt, ReleaseOutcome,
+    ReleaseSink, RemoveBodyReason, RemoveBodyRequest, RetireReason, Store, UseClosure, UsePurpose,
+    UseRequest, Write as RecordWrite,
 };
 
 struct StepClock {
@@ -513,6 +513,19 @@ fn run_scenario(sc: &Node) -> Result<Node, String> {
                     }
                 }
 
+                "normalize_producer_instant" => {
+                    let inp = opt_str(st, "input").unwrap_or_default();
+                    match normalize_producer_instant(&inp) {
+                        Ok(out) => results.push(ok_node(
+                            &op,
+                            vec![Member {
+                                name: "formatted".to_owned(),
+                                value: Node::string(out),
+                            }],
+                        )),
+                        Err(e) => results.push(classify_err(&op, &e)),
+                    }
+                }
                 "parse_instant" => {
                     let inp = opt_str(st, "input").unwrap_or_default();
                     match parse_instant(&inp) {
