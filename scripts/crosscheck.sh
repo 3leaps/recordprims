@@ -278,8 +278,154 @@ with tempfile.TemporaryDirectory(prefix="recordprims-crosscheck-") as work_dir:
         if g_map != r_map:
             raise SystemExit(f"crosscheck: post-cross-mutation {sub} trees diverged")
 
+
+    # 4. Streams: the same op script on fresh stores gives identical outputs,
+    # identical journals and heads/records indexes, and keys indexes that
+    # differ only in the per-store keyed MAC. Each side then reads the other's
+    # streams without rewriting any index.
+    import hashlib
+
+    def jcs(o):
+        return json.dumps(o, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+    def digest(o):
+        return "sha256:" + hashlib.sha256(jcs(o).encode()).hexdigest()
+
+    BODY_DIG = "sha256:492989c80e0dc0a4fbd5bb5823d942793b1d74527b60fdd0458d8d12526dff1c"
+    PROV = {"actor_kind": "process", "actor": "crosscheck"}
+    CLS = {"retention": "standard", "sensitivity": "0-public"}
+
+    def rec(stream, rid, rev, payload=None, sup=None, body=False):
+        r = {"v": 1, "stream": stream, "record_id": rid, "revision": rev,
+             "payload_contract": "contract: example/v0", "provenance": PROV, "classification": CLS}
+        if payload is not None:
+            r["payload"] = payload
+        if sup is not None:
+            r["supersedes"] = {"revision": rev - 1, "digest": sup}
+        if body:
+            r["body"] = {"digest": BODY_DIG, "length": 11, "media_type": "text/plain"}
+        return r
+
+    def stream_steps():
+        S, Q = "obs.cpu", "obs.single"
+        a1 = rec(S, "cpu-0", 1, {"load": 3})
+        a2 = rec(S, "cpu-0", 2, {"load": 5}, sup=digest(a1))
+        bad = rec(S, "cpu-0", 3, {"load": 9}, sup="sha256:" + "0" * 64)
+        b1 = rec(S, "cpu-1", 1, None, body=True)
+        q1 = rec(Q, "only", 1, {"x": 1})
+        q2 = rec(Q, "only", 2, {"x": 2}, sup=digest(q1))
+        nohead = rec(S, "ghost", 2, {"load": 0}, sup="sha256:" + "1" * 64)
+        t = lambda m, s: {"op": "set_clock", "at": f"2026-10-25T12:{m:02d}:{s:02d}.000000Z"}
+        return [
+            {"op": "open_stream", "stream": S, "stream_mode": "revisioned"},
+            {"op": "open_stream", "stream": Q, "stream_mode": "single_revision"},
+            {"op": "open_stream", "stream": S, "stream_mode": "single_revision"},
+            {"op": "open_stream", "stream": "bodies", "stream_mode": "revisioned"},
+            t(5, 0), {"op": "append", "stream": S, "record": a1, "key": "k-a1"},
+            t(5, 1), {"op": "append", "stream": S, "record": a1, "key": "k-a1"},
+            t(5, 2), {"op": "append", "stream": S, "record": a2, "key": "k-a1"},
+            t(5, 3), {"op": "append", "stream": S, "record": a2, "key": "k-a2"},
+            t(5, 4), {"op": "append", "stream": S, "record": bad, "key": "k-bad"},
+            t(5, 5), {"op": "append", "stream": S, "record": nohead, "key": "k-ghost"},
+            t(5, 6), {"op": "append", "stream": S, "record": b1, "key": "k-b1"},
+            t(5, 7), {"op": "append", "stream": Q, "record": q1, "key": "k-q1"},
+            t(5, 8), {"op": "append", "stream": Q, "record": q2, "key": "k-q2"},
+            {"op": "head", "stream": S, "record_id": "cpu-0"},
+            {"op": "head", "stream": S, "record_id": "nobody"},
+            {"op": "revisions", "stream": S, "record_id": "cpu-0"},
+            {"op": "revisions", "stream": S, "record_id": "cpu-1"},
+            t(5, 9), {"op": "reconcile", "stream": S, "key": "k-a2", "attempted_at": "2026-10-25T12:05:03.000000Z"},
+            {"op": "reconcile", "stream": S, "key": "k-never", "attempted_at": "2026-10-25T12:05:03.000000Z"},
+            {"op": "release", "stream": S, "purpose": "serve", "closure": "full_content"},
+            {"op": "release", "stream": S, "purpose": "export", "closure": "metadata_only"},
+            {"op": "release", "stream": Q, "purpose": "reuse", "closure": "full_content"},
+            t(4, 0), {"op": "append", "stream": S, "record": rec(S, "late", 1, {}), "key": "k-late"},
+            {"op": "head", "stream": "never.opened", "record_id": "x"},
+        ]
+
+    def scenario(store_dir=None):
+        sc = {"id": "stream-differential", "steps": [
+            {"op": "init", "at": "2026-10-25T12:00:00.000000Z"},
+            {"op": "open", "at": "2026-10-25T12:00:01.000000Z", "pending_body_ttl_ms": 60000},
+            {"op": "put_body", "data_utf8": "alpha-body\n", "media_type": "text/plain"},
+        ] + stream_steps() + [{"op": "close"}]}
+        if store_dir:
+            sc["store_dir"] = store_dir
+        return sc
+
+
+    go_sdir = os.path.join(work_dir, "streams-go")
+    rs_sdir = os.path.join(work_dir, "streams-rust")
+    for d in (go_sdir, rs_sdir):
+        os.mkdir(d, 0o700)
+        os.chmod(d, 0o700)
+    go_stream = run_driver(go_driver, [scenario(go_sdir)])
+    rs_stream = run_driver(rust_driver, [scenario(rs_sdir)])
+    if go_stream != rs_stream:
+        for g_r, r_r in zip(json.loads(go_stream[0])["results"], json.loads(rs_stream[0])["results"]):
+            if g_r != r_r:
+                raise SystemExit(f"crosscheck: stream step diverged:\n  Go:   {g_r}\n  Rust: {r_r}")
+        raise SystemExit("crosscheck: stream scenario outputs diverged")
+    stream_rows = json.loads(go_stream[0])["results"]
+    seen_stream = {r["data"].get("outcome") for r in stream_rows if r.get("op") == "append" and r.get("ok")}
+    for want in ("appended", "revised", "idempotency_conflict", "revision_conflict", "no_head", "mode_violation"):
+        if want not in seen_stream:
+            raise SystemExit(f"crosscheck: stream scenario did not exercise append outcome {want!r}")
+    if not any(f["kind"] == "body" for r in stream_rows if r.get("op") == "release" for f in r["data"]["frames"]):
+        raise SystemExit("crosscheck: stream scenario released no body frame")
+
+    # keys.idx carries a MAC under each store's own diagnostic key, so its
+    # key ids and the content digest over them differ between two stores.
+    # The cross-open below proves each side computes the other's MACs: a
+    # reader that disagreed would rewrite the writer's keys.idx.
+    def mask_keys(raw):
+        doc = json.loads(raw)
+        doc["content_digest"] = "masked"
+        for e in doc["entries"]:
+            e["key_id"] = "masked"
+        return doc
+
+    g_map = collect_tree(go_sdir, "streams")
+    r_map = collect_tree(rs_sdir, "streams")
+    if set(g_map) != set(r_map):
+        raise SystemExit(f"crosscheck: stream file sets differ: Go={sorted(g_map)} Rust={sorted(r_map)}")
+    if not any(rel.endswith("/keys.idx") for rel in g_map):
+        raise SystemExit("crosscheck: stream scenario wrote no indexes")
+    for rel in sorted(g_map):
+        if rel.endswith("/keys.idx"):
+            same = mask_keys(g_map[rel]) == mask_keys(r_map[rel])
+        else:
+            same = g_map[rel] == r_map[rel]
+        if not same:
+            raise SystemExit(
+                f"crosscheck: {rel} differs between Go and Rust:\n  Go:   {g_map[rel]!r}\n  Rust: {r_map[rel]!r}"
+            )
+
+    def read_steps(store_dir):
+        steps = [{"op": "open", "at": "2026-10-25T12:30:00.000000Z"}]
+        for sid, mode in (("obs.cpu", "revisioned"), ("obs.single", "single_revision")):
+            steps.append({"op": "open_stream", "stream": sid, "stream_mode": mode})
+        steps += [
+            {"op": "head", "stream": "obs.cpu", "record_id": "cpu-0"},
+            {"op": "revisions", "stream": "obs.cpu", "record_id": "cpu-0"},
+            {"op": "release", "stream": "obs.cpu", "purpose": "serve", "closure": "full_content"},
+            {"op": "release", "stream": "obs.single", "purpose": "export", "closure": "metadata_only"},
+            {"op": "close"},
+        ]
+        return {"id": "stream-cross-read", "store_dir": store_dir, "steps": steps}
+
+    for writer_dir, reader, label in ((go_sdir, rust_driver, "Rust reading Go"), (rs_sdir, go_driver, "Go reading Rust")):
+        before = collect_tree(writer_dir, "streams")
+        own = go_driver if reader == rust_driver else rust_driver
+        want = run_driver(own, [read_steps(writer_dir)])
+        got = run_driver(reader, [read_steps(writer_dir)])
+        if want != got:
+            raise SystemExit(f"crosscheck: {label} streams diverged:\n  writer: {want[0]}\n  reader: {got[0]}")
+        if collect_tree(writer_dir, "streams") != before:
+            raise SystemExit(f"crosscheck: {label} rewrote stream files on a read")
+
 print(
     f"[ok] crosscheck ({len(boundary_cases)} boundary scenarios, "
-    "byte-identical store/body layout, Go<->Rust cross-open)"
+    "byte-identical store/body/stream layout, Go<->Rust cross-open)"
 )
 PY

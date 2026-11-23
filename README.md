@@ -20,7 +20,7 @@ active development; the Rust implementation is held to the same suite before
 | Language | Package | Status |
 | --- | --- | --- |
 | Go | `github.com/3leaps/recordprims` | in development; the first implementation |
-| Rust | `recordprims` (crates.io) | in development: store root, lock, bodies and the v1 journal reader; streams and compaction to follow |
+| Rust | `recordprims` (crates.io) | in development: store root, lock, bodies and plain streams (open, append, head, revisions, reconcile, release); retire, protect and compaction to follow |
 | TypeScript | `@3leaps/recordprims` (npm), from the Rust implementation | planned |
 | Python | `recordprims` (PyPI), from the Rust implementation | planned |
 
@@ -40,11 +40,12 @@ watermarked local stream indexes, and an internal conditional-PUT bucket CAS
 stratum.
 
 The Rust crate implements the verified store root, the store lock,
-content-addressed bodies and the `durable-record/v1` journal reader. A
-differential check runs the same operations through both implementations and
-requires identical bytes, and each opens stores the other wrote. The Rust
-stream write path, Rust compaction, and the TypeScript and Python bindings land
-before 0.1.0.
+content-addressed bodies and plain streams: open, append, head, revisions,
+reconcile and release. It runs the `durable-record/v1` vectors with its own
+ledger. A differential check runs the same operations through both
+implementations and requires identical bytes, and each opens stores the other
+wrote. Rust retire and protect, Rust continuations and compaction, and the
+TypeScript and Python bindings land before 0.1.0.
 
 Storage backends sit behind an internal seam; the guarantees a backend must
 provide are described in [docs/storage-strata.md](docs/storage-strata.md).

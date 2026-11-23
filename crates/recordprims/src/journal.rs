@@ -46,6 +46,16 @@ pub(crate) const REASON_HOLD_MISMATCH: &str = "hold_mismatch";
 pub(crate) const REASON_OBSERVATION_ORDER: &str = "observation_order";
 pub(crate) const REASON_BODY_LIFECYCLE: &str = "body_lifecycle";
 pub(crate) const REASON_CONTINUATION: &str = "continuation";
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const REASON_RECEIPT_MISMATCH: &str = "receipt_mismatch";
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const REASON_IDEMPOTENCY_CONFLICT: &str = "idempotency_conflict";
+pub(crate) const REASON_INVALID_PURPOSE: &str = "invalid_purpose";
+pub(crate) const REASON_PROTECTION_UNAVAILABLE: &str = "protection_unavailable";
+pub(crate) const REASON_RESTRICTIONS_PENDING: &str = "restrictions_pending";
+pub(crate) const REASON_EXPORT_SELECTION: &str = "export_selection";
+pub(crate) const REASON_PROTECTED_USE: &str = "protected_use";
+pub(crate) const REASON_BODY_CLOSURE: &str = "body_closure";
 
 /// Identifies a content-addressed body by its digest and byte length.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -100,7 +110,7 @@ fn present(n: &Node, name: &str) -> bool {
     matches!(n.get(name), Some(v) if v.kind != Kind::Null)
 }
 
-fn equal_nodes(a: Option<&Node>, b: Option<&Node>) -> bool {
+pub(crate) fn equal_nodes(a: Option<&Node>, b: Option<&Node>) -> bool {
     match (a, b) {
         (None, None) => true,
         (Some(x), Some(y)) => {
@@ -563,6 +573,16 @@ struct LiveEntry {
     id: KeyIdentity,
     at: Instant,
     record_id: String,
+    receipt: Node,
+}
+
+/// A live idempotency key: its operation kind, identity value and stored
+/// receipt.
+#[derive(Debug, Clone)]
+pub(crate) struct LiveKey {
+    pub kind: &'static str,
+    pub value: String,
+    pub receipt: Node,
 }
 
 #[derive(Debug, Clone)]
@@ -612,6 +632,7 @@ pub(crate) struct State {
     referenced_bodies: HashSet<BodyKey>,
     bodies: HashMap<BodyKey, BodyState>,
     open_starts: HashMap<BodyKey, HashSet<i64>>,
+    partial: bool,
 }
 
 fn is_integer_token(token: &str) -> bool {
@@ -680,6 +701,7 @@ impl State {
             referenced_bodies: HashSet::new(),
             bodies: HashMap::new(),
             open_starts: HashMap::new(),
+            partial: false,
         })
     }
 
@@ -720,6 +742,21 @@ impl State {
         }
     }
 
+    /// Reports whether an ingested entry needed semantics this replay does
+    /// not implement, so a later refusal could have been missed.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn partial(&self) -> bool {
+        self.partial
+    }
+
+    /// Sequence numbers of active protection holds, ascending.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn active_holds(&self) -> Vec<i64> {
+        let mut out: Vec<i64> = self.active.iter().copied().collect();
+        out.sort_unstable();
+        out
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.journal.len()
     }
@@ -728,16 +765,513 @@ impl State {
         &self.journal
     }
 
+    /// The live key's operation kind, identity value, record id and stored
+    /// receipt, when `key` is live in the idempotency window at `at`.
+    pub(crate) fn live_key(&self, key: &str, at: Instant) -> Option<LiveKey> {
+        self.live(key, at).map(|p| LiveKey {
+            kind: p.id.kind,
+            value: p.id.value.clone(),
+            receipt: p.receipt.clone(),
+        })
+    }
+
+    /// The highest accepted revision of `record_id` on the stream.
+    pub(crate) fn head_pin(&self, record_id: &str) -> Option<Pin> {
+        self.records
+            .keys()
+            .filter(|p| p.record_id == record_id)
+            .max_by_key(|p| p.revision)
+            .cloned()
+    }
+
+    /// Accepted record revisions, keyed by pin.
+    pub(crate) fn records(&self) -> &HashMap<Pin, Node> {
+        &self.records
+    }
+
+    /// Whether `record_id` has been retired on this stream.
+    pub(crate) fn is_retired(&self, record_id: &str) -> bool {
+        self.retired.contains(record_id)
+    }
+
     pub(crate) fn stream(&self) -> &str {
         &self.stream
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn last_at(&self) -> Instant {
+        self.journal
+            .last()
+            .and_then(|e| e.get("at"))
+            .and_then(|a| parse_instant(&a.str_val).ok())
+            .unwrap_or_else(|| Instant::from_unix_micros(i64::MIN / 2).expect("floor instant"))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn next_seq(&self, op: &str) -> Result<i64, Reject> {
+        let seq = i64::try_from(self.journal.len())
+            .unwrap_or(i64::MAX)
+            .saturating_add(1);
+        if seq > wire::MAX_SAFE_INTEGER {
+            return Err(reject(
+                wire::REASON_NUMERIC_DOMAIN,
+                format!("{op}: seq exceeds {}", wire::MAX_SAFE_INTEGER),
+            ));
+        }
+        Ok(seq)
+    }
+
+    fn protection_receipt(&self, r: &Node, seq: i64) -> Result<Node, Reject> {
+        if r.kind != Kind::Object {
+            return Err(reject(REASON_SHAPE, "protection request is not an object"));
+        }
+        let stream = str_of(r, "stream")?;
+        let key = str_of(r, "idempotency_key")?;
+        let action = str_of(r, "action")?;
+        let outcome = if action == "tombstone" {
+            "tombstoned"
+        } else {
+            "untombstoned"
+        };
+        let rdig = record_digest(r)?;
+        Ok(Node::object(vec![
+            member("v", Node::int(1)),
+            member("stream", str_node(stream)),
+            member("idempotency_key", str_node(key)),
+            member("outcome", str_node(outcome)),
+            member("seq", Node::int(seq)),
+            member("request_digest", str_node(&rdig)),
+            member("failure_model", str_node(&self.failure_model)),
+        ]))
+    }
+
+    fn retirement_receipt(&self, r: &Node, seq: i64) -> Result<Node, Reject> {
+        if r.kind != Kind::Object {
+            return Err(reject(REASON_SHAPE, "retirement request is not an object"));
+        }
+        let stream = str_of(r, "stream")?;
+        let key = str_of(r, "idempotency_key")?;
+        let rid = str_of(r, "record_id")?;
+        let rdig = record_digest(r)?;
+        Ok(Node::object(vec![
+            member("v", Node::int(1)),
+            member("kind", str_node("receipt")),
+            member("stream", str_node(stream)),
+            member("idempotency_key", str_node(key)),
+            member("outcome", str_node("retired")),
+            member("seq", Node::int(seq)),
+            member("record_id", str_node(rid)),
+            member("request_digest", str_node(&rdig)),
+            member("failure_model", str_node(&self.failure_model)),
+        ]))
+    }
+
+    /// Evaluates protection request `r` at decision time `at_str`, appending
+    /// a tombstoned or untombstoned entry when accepted and returning the
+    /// protection receipt. Live-key replay precedes target and state checks.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn request(&mut self, r: &Node, at_str: &str) -> Result<Node, Reject> {
+        if r.kind != Kind::Object {
+            return Err(reject(REASON_SHAPE, "request: not an object"));
+        }
+        check_journal(&self.journal)?;
+        let at = instant_of(at_str, "request at")?;
+        if at < self.last_at() {
+            return Err(reject(
+                REASON_JOURNAL_TIME,
+                "request: at precedes the journal",
+            ));
+        }
+        let obs = str_of(r, "observed_at")?;
+        instant_of(obs, "request.observed_at")?;
+        let r_stream = str_of(r, "stream")?.to_owned();
+        let key = str_of(r, "idempotency_key")?.to_owned();
+        let rdig = record_digest(r)?;
+        let mut reason = "";
+        if r_stream == self.stream {
+            if let Some(prior) = self.live(&key, at) {
+                if prior.id.kind == "protection" && prior.id.value == rdig {
+                    return Ok(prior.receipt.clone());
+                }
+                reason = REASON_IDEMPOTENCY_CONFLICT;
+            }
+        }
+        if reason.is_empty() {
+            reason = self.refusal(r, at)?;
+        }
+        if !reason.is_empty() {
+            return Ok(Node::object(vec![
+                member("v", Node::int(1)),
+                member("stream", str_node(&r_stream)),
+                member("idempotency_key", str_node(&key)),
+                member("outcome", str_node(reason)),
+            ]));
+        }
+        let seq = self.next_seq("request")?;
+        let rcpt = self.protection_receipt(r, seq)?;
+        let outcome = str_of(&rcpt, "outcome")?.to_owned();
+        let entry = Node::object(vec![
+            member("v", Node::int(1)),
+            member("seq", Node::int(seq)),
+            member("group", Node::int(seq)),
+            member("group_size", Node::int(1)),
+            member("stream", str_node(&self.stream.clone())),
+            member("type", str_node(&outcome)),
+            member("at", str_node(at_str)),
+            member("request", r.clone()),
+            member("request_digest", str_node(&rdig)),
+        ]);
+        self.ingest(entry)?;
+        Ok(rcpt)
+    }
+
+    /// Evaluates keyed retirement request `r` at decision time `at_str`,
+    /// appending a retired entry when accepted and returning the receipt.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn retire(&mut self, r: &Node, at_str: &str) -> Result<Node, Reject> {
+        if r.kind != Kind::Object {
+            return Err(reject(REASON_SHAPE, "retire: not an object"));
+        }
+        check_journal(&self.journal)?;
+        let at = instant_of(at_str, "retire at")?;
+        if at < self.last_at() {
+            return Err(reject(
+                REASON_JOURNAL_TIME,
+                "retire: at precedes the journal",
+            ));
+        }
+        let r_stream = str_of(r, "stream")?.to_owned();
+        let key = str_of(r, "idempotency_key")?.to_owned();
+        let rid = str_of(r, "record_id")?.to_owned();
+        let retire_reason = str_of(r, "reason")?.to_owned();
+        let rdig = record_digest(r)?;
+        let mut reason = "";
+        if r_stream == self.stream {
+            if let Some(prior) = self.live(&key, at) {
+                if prior.id.kind == "retirement" && prior.id.value == rdig {
+                    return Ok(prior.receipt.clone());
+                }
+                reason = REASON_IDEMPOTENCY_CONFLICT;
+            }
+        }
+        if reason.is_empty() && (r_stream != self.stream || !self.has_record_id(&rid)) {
+            reason = REASON_TARGET_NOT_FOUND;
+        }
+        if !reason.is_empty() {
+            return Ok(Node::object(vec![
+                member("v", Node::int(1)),
+                member("kind", str_node("receipt")),
+                member("stream", str_node(&r_stream)),
+                member("idempotency_key", str_node(&key)),
+                member("outcome", str_node(reason)),
+            ]));
+        }
+        let seq = self.next_seq("retire")?;
+        let entry = Node::object(vec![
+            member("v", Node::int(1)),
+            member("seq", Node::int(seq)),
+            member("group", Node::int(seq)),
+            member("group_size", Node::int(1)),
+            member("stream", str_node(&self.stream.clone())),
+            member("type", str_node("retired")),
+            member("at", str_node(at_str)),
+            member("record_id", str_node(&rid)),
+            member("reason", str_node(&retire_reason)),
+            member("idempotency_key", str_node(&key)),
+            member("request_digest", str_node(&rdig)),
+        ]);
+        self.ingest(entry)?;
+        self.retirement_receipt(r, seq)
+    }
+
+    /// Looks up `key` at decision time `at_str` for an attempt at
+    /// `attempted_at_str`, returning the reconciliation document.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn reconcile(
+        &self,
+        key: &str,
+        at_str: &str,
+        attempted_at_str: &str,
+    ) -> Result<Node, Reject> {
+        check_journal(&self.journal)?;
+        instant_of(attempted_at_str, "reconcile attempted_at")?;
+        let at = instant_of(at_str, "reconcile at")?;
+        if at < self.last_at() {
+            return Err(reject(
+                REASON_JOURNAL_TIME,
+                "reconcile: at precedes the journal",
+            ));
+        }
+        let mut fields = vec![
+            member("v", Node::int(1)),
+            member("kind", str_node("reconciliation")),
+            member("stream", str_node(&self.stream)),
+            member("idempotency_key", str_node(key)),
+            member("attempted_at", str_node(attempted_at_str)),
+        ];
+        if let Some(prior) = self.live(key, at) {
+            fields.push(member("result", str_node("found")));
+            fields.push(member("receipt", prior.receipt.clone()));
+        } else {
+            fields.push(member("result", str_node("unknown")));
+            fields.push(member("reason", str_node("coverage_unprovable")));
+        }
+        Ok(Node::object(fields))
+    }
+
+    /// Checks a received receipt or reconciliation against the journal.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn verify_receipt(&self, received: &Node) -> Result<Node, Reject> {
+        if received.kind != Kind::Object {
+            return Err(reject(REASON_SHAPE, "receipt: not an object"));
+        }
+        if received
+            .get("kind")
+            .is_some_and(|k| k.kind == Kind::String && k.str_val == "reconciliation")
+        {
+            let att = str_of(received, "attempted_at")?;
+            instant_of(att, "reconciliation attempted_at")?;
+            for f in ["window_covers_from", "window_covers_until"] {
+                if present(received, f) {
+                    let v = str_of(received, f)?;
+                    instant_of(v, &format!("reconciliation {f}"))?;
+                }
+            }
+            return Ok(verified_outcome());
+        }
+        let outcome = str_of(received, "outcome")?;
+        if !matches!(outcome, "tombstoned" | "untombstoned" | "retired") {
+            return Err(reject(
+                REASON_RECEIPT_MISMATCH,
+                format!("receipt: outcome {outcome:?} is not an accepted protection or retirement receipt"),
+            ));
+        }
+        if int_of(received, "v").ok() != Some(1) {
+            return Err(reject(REASON_RECEIPT_MISMATCH, "receipt: v is not 1"));
+        }
+        let seq = int_of(received, "seq")?;
+        let n = i64::try_from(self.journal.len()).unwrap_or(i64::MAX);
+        if seq < 1 || seq > n {
+            return Err(reject(
+                REASON_RECEIPT_MISMATCH,
+                format!("receipt: seq {seq} is out of range"),
+            ));
+        }
+        let entry = &self.journal[(seq - 1) as usize];
+        let etyp = str_of(entry, "type")?;
+        let expected = if outcome == "retired" {
+            if etyp != "retired" || !present(entry, "idempotency_key") {
+                return Err(reject(
+                    REASON_RECEIPT_MISMATCH,
+                    format!("receipt: seq {seq} is not a keyed retirement"),
+                ));
+            }
+            self.retirement_receipt(&retirement_request(entry), seq)?
+        } else {
+            if etyp != "tombstoned" && etyp != "untombstoned" {
+                return Err(reject(
+                    REASON_RECEIPT_MISMATCH,
+                    format!("receipt: seq {seq} is not a protection entry"),
+                ));
+            }
+            let Some(req) = entry.get("request") else {
+                return Err(reject(REASON_SHAPE, "protection request is not an object"));
+            };
+            self.protection_receipt(req, seq)?
+        };
+        if !equal_nodes(Some(received), Some(&expected)) {
+            return Err(reject(
+                REASON_RECEIPT_MISMATCH,
+                format!("receipt: does not match journal entry {seq}"),
+            ));
+        }
+        Ok(verified_outcome())
+    }
+
+    /// Whether a use request must wait for a restriction review: on a plain
+    /// stream, when it names a source state; on a continuation, when the
+    /// upstream is unobserved or the request's source state digest differs
+    /// from the source's effective restriction manifest.
+    fn review_pending_for(&self, r: &Node) -> Result<bool, Reject> {
+        if self.continues.is_none() {
+            return Ok(present(r, "source_state_digest"));
+        }
+        if self.upstream_unobserved {
+            return Ok(true);
+        }
+        let sm_dig = source_manifest(&self.source)?;
+        if !present(r, "source_state_digest") {
+            return Ok(true);
+        }
+        Ok(str_of(r, "source_state_digest").map_or(true, |d| d != sm_dig))
+    }
+
+    /// Evaluates an export, serve or reuse request against the replayed
+    /// journal and source chain.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn use_request(&self, r: &Node) -> Result<Node, Reject> {
+        if r.kind != Kind::Object {
+            return Err(reject(REASON_SHAPE, "use: request is not an object"));
+        }
+        check_journal(&self.journal)?;
+        let refused = |reason: &str| {
+            Ok(Node::object(vec![
+                member("outcome", str_node("refused")),
+                member("reason", str_node(reason)),
+            ]))
+        };
+        let purpose = str_of(r, "purpose")?;
+        if !matches!(purpose, "serve" | "export" | "reuse") {
+            return refused(REASON_INVALID_PURPOSE);
+        }
+        let r_stream = str_of(r, "stream")?;
+        let prot_state = str_of(r, "protection_state")?;
+        let prot_cut = int_of(r, "protection_cut")?;
+        let cur_cut = int_of(r, "current_cut")?;
+        let rev_pend = self.review_pending_for(r)?;
+        let n = i64::try_from(self.journal.len()).unwrap_or(i64::MAX);
+        if r_stream != self.stream
+            || prot_state != "verified"
+            || prot_cut != n
+            || cur_cut != n
+            || rev_pend
+        {
+            return refused(REASON_PROTECTION_UNAVAILABLE);
+        }
+        if !self.review_current()? {
+            return refused(REASON_RESTRICTIONS_PENDING);
+        }
+        let (Some(sel_node), Some(om_node)) = (r.get("selection"), r.get("omitted")) else {
+            return Err(reject(
+                REASON_SHAPE,
+                "use: selection or omitted is not an array",
+            ));
+        };
+        if sel_node.kind != Kind::Array || om_node.kind != Kind::Array {
+            return Err(reject(
+                REASON_SHAPE,
+                "use: selection or omitted is not an array",
+            ));
+        }
+        let mut selected = HashSet::new();
+        let mut selected_pins = Vec::new();
+        for el in &sel_node.elems {
+            let p = pin_from_node(Some(el), "use.selection")?;
+            selected.insert(p.clone());
+            selected_pins.push(p);
+        }
+        let mut omitted = HashSet::new();
+        for el in &om_node.elems {
+            omitted.insert(pin_from_node(Some(el), "use.omitted")?);
+        }
+        if selected
+            .iter()
+            .chain(omitted.iter())
+            .any(|p| !self.records.contains_key(p))
+        {
+            return refused(REASON_TARGET_NOT_FOUND);
+        }
+        if selected.iter().any(|p| omitted.contains(p)) {
+            return refused(REASON_EXPORT_SELECTION);
+        }
+        if selected.len() + omitted.len() != self.records.len() {
+            return refused(REASON_EXPORT_SELECTION);
+        }
+        match r.get("inherited_block") {
+            Some(b) if b.kind == Kind::Bool => {
+                if b.bool_val {
+                    return refused(REASON_PROTECTED_USE);
+                }
+            }
+            _ => {
+                return Err(reject(
+                    REASON_SHAPE,
+                    "use: inherited_block is not a boolean",
+                ))
+            }
+        }
+        for p in &selected_pins {
+            if self.blocked(p)? {
+                return refused(REASON_PROTECTED_USE);
+            }
+        }
+        if purpose == "serve"
+            && selected_pins
+                .iter()
+                .any(|p| self.retired.contains(&p.record_id))
+        {
+            return refused(REASON_PROTECTED_USE);
+        }
+        let Some(bodies) = r.get("bodies").filter(|b| b.kind == Kind::Array) else {
+            return Err(reject(REASON_SHAPE, "use: bodies is not an array"));
+        };
+        let mut supplied: HashMap<String, i64> = HashMap::new();
+        for b in &bodies.elems {
+            if b.kind != Kind::Object {
+                return Err(reject(REASON_SHAPE, "use: body item is not an object"));
+            }
+            let hex_str = str_of(b, "hex")?;
+            let dig = str_of(b, "digest")?;
+            let Some(raw) = decode_hex(hex_str) else {
+                return refused(REASON_BODY_CLOSURE);
+            };
+            if sha256_prefixed(&raw) != dig || supplied.contains_key(dig) {
+                return refused(REASON_BODY_CLOSURE);
+            }
+            supplied.insert(dig.to_owned(), i64::try_from(raw.len()).unwrap_or(i64::MAX));
+        }
+        let mut needed: HashMap<String, i64> = HashMap::new();
+        for p in &selected {
+            let Some(body) = self.records[p]
+                .get("body")
+                .filter(|b| b.kind == Kind::Object)
+            else {
+                continue;
+            };
+            let b_dig = str_of(body, "digest")?.to_owned();
+            let b_len = int_of(body, "length")?;
+            if needed.get(&b_dig).is_some_and(|prev| *prev != b_len) {
+                return refused(REASON_BODY_CLOSURE);
+            }
+            needed.insert(b_dig, b_len);
+        }
+        if supplied.iter().any(|(d, l)| needed.get(d) != Some(l)) {
+            return refused(REASON_BODY_CLOSURE);
+        }
+        let closure = str_of(r, "closure")?;
+        if closure == "full_content" && supplied.len() != needed.len() {
+            return refused(REASON_BODY_CLOSURE);
+        }
+        Ok(Node::object(vec![
+            member("outcome", str_node("allowed")),
+            member("closure", str_node(closure)),
+            member("selection", sel_node.clone()),
+            member("omitted", om_node.clone()),
+            member("protection_cut", Node::int(prot_cut)),
+        ]))
     }
 
     fn has_record_id(&self, record_id: &str) -> bool {
         self.records.keys().any(|p| p.record_id == record_id)
     }
 
-    fn remember(&mut self, key: String, id: KeyIdentity, at: Instant, record_id: String) {
-        self.keys.insert(key, LiveEntry { id, at, record_id });
+    fn remember(
+        &mut self,
+        key: String,
+        id: KeyIdentity,
+        at: Instant,
+        record_id: String,
+        receipt: Node,
+    ) {
+        self.keys.insert(
+            key,
+            LiveEntry {
+                id,
+                at,
+                record_id,
+                receipt,
+            },
+        );
     }
 
     fn live(&self, key: &str, at: Instant) -> Option<&LiveEntry> {
@@ -956,12 +1490,23 @@ impl State {
                             format!("{where_ctx}: idempotency key {key:?} is still live"),
                         ));
                     }
-                    if present(&e, "body_status") {
-                        let _ = str_of(&e, "body_status")?;
-                    }
+                    let body_status = if present(&e, "body_status") {
+                        str_of(&e, "body_status")?.to_owned()
+                    } else {
+                        String::new()
+                    };
                     if let Some(rec) = e.get("record") {
                         self.records.insert(p.clone(), rec.clone());
                     }
+                    let rcpt = content_receipt(
+                        &self.stream,
+                        &key,
+                        &typ,
+                        &p,
+                        seq,
+                        &self.failure_model,
+                        &body_status,
+                    );
                     self.remember(
                         key,
                         KeyIdentity {
@@ -970,6 +1515,7 @@ impl State {
                         },
                         at,
                         p.record_id,
+                        rcpt,
                     );
                 }
                 "deduplicated" => {
@@ -1041,6 +1587,7 @@ impl State {
                             format!("{where_ctx}: protection journal operation refused"),
                         ));
                     }
+                    let rcpt = self.protection_receipt(req, seq)?;
                     self.apply(req, seq)?;
                     self.remember(
                         key,
@@ -1050,6 +1597,7 @@ impl State {
                         },
                         at,
                         String::new(),
+                        rcpt,
                     );
                     self.restricted_at.push(seq);
                 }
@@ -1078,6 +1626,7 @@ impl State {
                                 format!("{where_ctx}: idempotency key {key:?} is still live"),
                             ));
                         }
+                        let rcpt = self.retirement_receipt(&r, seq)?;
                         self.remember(
                             key,
                             KeyIdentity {
@@ -1086,6 +1635,7 @@ impl State {
                             },
                             at,
                             rid.clone(),
+                            rcpt,
                         );
                     }
                     self.retired.insert(rid);
@@ -1095,7 +1645,7 @@ impl State {
                     self.check_review(&e, seq)?;
                 }
                 "conflicted" => {}
-                _ => {}
+                _ => self.partial = true,
             }
         }
         self.journal.push(e);
@@ -1912,6 +2462,76 @@ fn pin_of(e: &Node, where_ctx: &str) -> Result<Pin, Reject> {
         revision: int_of(rec, "revision")?,
         digest: str_of(e, "digest")?.to_owned(),
     })
+}
+
+fn str_node(s: &str) -> Node {
+    Node::string(s)
+}
+
+fn member(name: &str, value: Node) -> Member {
+    Member {
+        name: name.to_owned(),
+        value,
+    }
+}
+
+pub(crate) fn pin_node(p: &Pin) -> Node {
+    Node::object(vec![
+        member("stream", str_node(&p.stream)),
+        member("record_id", str_node(&p.record_id)),
+        member("revision", Node::int(p.revision)),
+        member("digest", str_node(&p.digest)),
+    ])
+}
+
+fn content_receipt(
+    stream: &str,
+    key: &str,
+    outcome: &str,
+    p: &Pin,
+    seq: i64,
+    failure_model: &str,
+    body_status: &str,
+) -> Node {
+    let mut fields = vec![
+        member("v", Node::int(1)),
+        member("kind", str_node("receipt")),
+        member("stream", str_node(stream)),
+        member("idempotency_key", str_node(key)),
+        member("outcome", str_node(outcome)),
+        member("pin", pin_node(p)),
+        member("seq", Node::int(seq)),
+        member("failure_model", str_node(failure_model)),
+    ];
+    if !body_status.is_empty() {
+        fields.push(member("body_status", str_node(body_status)));
+    }
+    Node::object(fields)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
+}
+
+fn sha256_prefixed(b: &[u8]) -> String {
+    use sha2::{Digest as _, Sha256};
+    let sum = Sha256::digest(b);
+    let mut out = String::from("sha256:");
+    for byte in sum {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+fn verified_outcome() -> Node {
+    Node::object(vec![member("outcome", str_node("receipt_verified"))])
 }
 
 fn retirement_request(e: &Node) -> Node {
