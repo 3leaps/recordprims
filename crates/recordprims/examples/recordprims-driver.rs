@@ -16,8 +16,9 @@ use recordprims::wire::{self, Kind, Member, Node};
 use recordprims::{
     format_instant, init, is_indeterminate, open, parse_instant, Authorization, Clock, Error,
     FileLock, FrameHeader, FrameKind, FrameReader, InitOptions, Instant, Mode, OpenOptions, Pin,
-    Provenance, Receipt, ReleaseOutcome, ReleaseSink, RemoveBodyReason, RemoveBodyRequest, Store,
-    UseClosure, UsePurpose, UseRequest, Write as RecordWrite,
+    ProtectionRequest, Provenance, Receipt, ReleaseOutcome, ReleaseSink, RemoveBodyReason,
+    RemoveBodyRequest, RetireReason, Store, UseClosure, UsePurpose, UseRequest,
+    Write as RecordWrite,
 };
 
 struct StepClock {
@@ -592,7 +593,8 @@ fn run_scenario(sc: &Node) -> Result<Node, String> {
                     results.push(classify_err(&op, &err));
                 }
 
-                "open_stream" | "append" | "head" | "revisions" | "reconcile" | "release" => {
+                "open_stream" | "append" | "retire" | "protect" | "head" | "revisions"
+                | "reconcile" | "release" => {
                     let he = handles
                         .get_mut(&hname)
                         .ok_or_else(|| format!("unknown handle {hname:?}"))?;
@@ -676,6 +678,12 @@ fn main() {
 
 /// An object with members sorted by name, as RFC 8785 JCS orders them, so
 /// the driver's output matches the Go driver's canonical data.
+/// Parses a JSON document returned by the library into sorted driver data.
+fn raw_data(raw: &[u8]) -> Result<Node, Error> {
+    let n = wire::parse_json(raw).map_err(|e| Error::Schema(e.to_string()))?;
+    Ok(sorted(n))
+}
+
 fn obj(mut fields: Vec<(&str, Node)>) -> Node {
     fields.sort_by(|a, b| a.0.cmp(b.0));
     Node::object(
@@ -801,6 +809,47 @@ fn run_stream_op(he: &mut HandleEntry, op: &str, st: &Node) -> Result<Node, Erro
                 ..RecordWrite::default()
             };
             Ok(receipt_data(&s.append(&w)?))
+        }
+        "retire" => {
+            let reason = match opt_str(st, "reason").as_deref() {
+                Some("superseded") => RetireReason::Superseded,
+                Some("withdrawn") => RetireReason::Withdrawn,
+                Some("retention") => RetireReason::Retention,
+                Some("operator") => RetireReason::Operator,
+                _ => return Err(Error::Schema("invalid retire reason".to_owned())),
+            };
+            let key = opt_str(st, "key").filter(|k| !k.is_empty());
+            let rid = opt_str(st, "record_id").unwrap_or_default();
+            let r = s.retire(&rid, reason, key.as_deref())?;
+            let mut f = vec![("outcome", Node::string(r.outcome.as_str()))];
+            if let Some(seq) = r.seq {
+                f.push(("seq", Node::uint(seq)));
+            }
+            if let Some(at) = &r.at {
+                f.push(("at", Node::string(at)));
+            }
+            if let Some(raw) = &r.receipt {
+                f.push(("receipt", raw_data(raw)?));
+            }
+            Ok(obj(f))
+        }
+        "protect" => {
+            let raw = st.get("request").map(wire::encode).unwrap_or_default();
+            let r = s.protect(&ProtectionRequest { raw })?;
+            let mut f = vec![
+                ("outcome", Node::string(&r.outcome)),
+                ("receipt", raw_data(&r.raw)?),
+            ];
+            if let Some(seq) = r.seq {
+                f.push(("seq", Node::uint(seq)));
+            }
+            if let Some(at) = &r.at {
+                f.push(("at", Node::string(at)));
+            }
+            if let Some(reason) = &r.reason {
+                f.push(("reason", Node::string(reason)));
+            }
+            Ok(obj(f))
         }
         "head" => {
             let rid = opt_str(st, "record_id").unwrap_or_default();

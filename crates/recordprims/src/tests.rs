@@ -856,8 +856,8 @@ mod streams {
     use super::*;
     use crate::store::stream_dir;
     use crate::stream::{
-        Continues, FrameHeader, FrameReader, Mode, ReleaseOutcome, ReleaseSink, UseClosure,
-        UsePurpose, UseRequest, Write, WriteOutcome,
+        Continues, FrameHeader, FrameReader, Mode, ProtectionRequest, ReleaseOutcome, ReleaseSink,
+        RetireOutcome, RetireReason, UseClosure, UsePurpose, UseRequest, Write, WriteOutcome,
     };
 
     fn record(stream: &str, rid: &str, rev: u64) -> Vec<u8> {
@@ -890,6 +890,146 @@ mod streams {
         let r = st.append(&write("obs.t", "a", "k1")).unwrap();
         assert_eq!(r.outcome, WriteOutcome::Appended);
         (s, td, clk)
+    }
+
+    fn protection(
+        stream: &str,
+        key: &str,
+        action: &str,
+        rid: &str,
+        digest_hex: &str,
+        extra: &str,
+    ) -> ProtectionRequest {
+        ProtectionRequest {
+            raw: format!(
+                r#"{{"v":1,"stream":"{stream}","idempotency_key":"{key}","action":"{action}"{extra},"target":{{"stream":"{stream}","record_id":"{rid}","revision":1,"digest":"sha256:{digest_hex}"}},"scope":"record","reason":"{reason}","evidence":{{"ref":"case-1","digest":"sha256:{e}"}},"observed_at":"2026-01-01T00:00:00.000000Z","provenance":{{"actor_kind":"process","actor":"test"}}}}"#,
+                e = "e".repeat(64),
+                reason = if action == "restore" { "hold_released" } else { "security_hold" },
+            )
+            .into_bytes(),
+        }
+    }
+
+    #[test]
+    fn retire_unkeyed_and_keyed_outcomes() {
+        let (s, _td, clk) = store_with_record();
+        let st = s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
+        clk.advance(Duration::from_secs(1));
+        st.append(&write("obs.t", "b", "k2")).unwrap();
+
+        clk.advance(Duration::from_secs(1));
+        let r = st.retire("a", RetireReason::Withdrawn, None).unwrap();
+        assert_eq!(
+            (r.outcome, r.seq, r.receipt),
+            (RetireOutcome::Retired, Some(4), None)
+        );
+        let at = r.at.unwrap();
+        clk.advance(Duration::from_secs(1));
+        let again = st.retire("a", RetireReason::Operator, None).unwrap();
+        assert_eq!(again.outcome, RetireOutcome::AlreadyRetired);
+        assert_eq!((again.seq, again.at), (Some(4), Some(at)));
+        assert_eq!(
+            st.retire("zz", RetireReason::Withdrawn, None)
+                .unwrap()
+                .outcome,
+            RetireOutcome::NoRecord
+        );
+        assert!(st.head("a").unwrap().unwrap().retired);
+        assert_eq!(
+            st.append(&Write {
+                record: record("obs.t", "a", 1),
+                idempotency_key: "k3".into(),
+                ..Write::default()
+            })
+            .unwrap()
+            .outcome,
+            WriteOutcome::RetiredRecord
+        );
+
+        let keyed = st
+            .retire("b", RetireReason::Retention, Some("k-r"))
+            .unwrap();
+        assert_eq!(
+            (keyed.outcome, keyed.seq),
+            (RetireOutcome::Retired, Some(5))
+        );
+        clk.advance(Duration::from_secs(1));
+        let replay = st
+            .retire("b", RetireReason::Retention, Some("k-r"))
+            .unwrap();
+        assert_eq!(replay, keyed, "a keyed replay returns the stored receipt");
+        assert_eq!(
+            st.retire("b", RetireReason::Retention, Some("k2"))
+                .unwrap()
+                .outcome,
+            RetireOutcome::IdempotencyConflict
+        );
+        assert_eq!(
+            st.retire("zz", RetireReason::Retention, Some("k-z"))
+                .unwrap()
+                .outcome,
+            RetireOutcome::TargetNotFound
+        );
+        assert!(matches!(
+            st.retire("bad id", RetireReason::Withdrawn, None),
+            Err(Error::Schema(_))
+        ));
+        assert!(matches!(
+            st.retire("b", RetireReason::Withdrawn, Some("")),
+            Err(Error::Schema(_))
+        ));
+        assert_eq!(st.head("b").unwrap().unwrap().pin.revision, 1);
+    }
+
+    #[test]
+    fn protect_hold_refuses_export_until_restored() {
+        let (s, _td, clk) = store_with_record();
+        let st = s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
+        let pin = st.head("a").unwrap().unwrap().pin;
+        let dhex = pin.digest.strip_prefix("sha256:").unwrap().to_owned();
+        let export = UseRequest {
+            purpose: UsePurpose::Export,
+            selection: vec![pin],
+            closure: UseClosure::MetadataOnly,
+        };
+
+        clk.advance(Duration::from_secs(1));
+        let hold = protection("obs.t", "k-h", "tombstone", "a", &dhex, "");
+        let rc = st.protect(&hold).unwrap();
+        assert_eq!((rc.outcome.as_str(), rc.seq), ("tombstoned", Some(3)));
+        clk.advance(Duration::from_secs(1));
+        assert_eq!(
+            st.protect(&hold).unwrap(),
+            rc,
+            "replay returns the stored receipt"
+        );
+        let res = st.release(&export, None).unwrap();
+        assert_eq!(res.outcome, ReleaseOutcome::Refused);
+        assert_eq!(res.refusal_reason.as_deref(), Some("protected_use"));
+
+        let ghost = protection("obs.t", "k-g", "tombstone", "zz", &dhex, "");
+        let rej = st.protect(&ghost).unwrap();
+        assert_eq!(rej.outcome, "rejected");
+        assert_eq!(rej.reason.as_deref(), Some("target_not_found"));
+        assert_eq!(rej.seq, None);
+        assert!(matches!(
+            st.protect(&protection("obs.other", "k-x", "tombstone", "a", &dhex, "")),
+            Err(Error::Schema(_))
+        ));
+        assert!(matches!(
+            st.protect(&ProtectionRequest {
+                raw: b"{}".to_vec()
+            }),
+            Err(Error::Schema(_))
+        ));
+
+        let restore = protection("obs.t", "k-u", "restore", "a", &dhex, r#","restores":3"#);
+        let un = st.protect(&restore).unwrap();
+        assert_eq!((un.outcome.as_str(), un.seq), ("untombstoned", Some(4)));
+        assert_eq!(
+            st.release(&export, None).unwrap().outcome,
+            ReleaseOutcome::Released
+        );
     }
 
     struct Reenter<'a> {
@@ -1043,6 +1183,17 @@ mod streams {
             )
             .unwrap();
             assert_eq!(st.head("a").unwrap_err(), Error::StreamSealed, "{marker}");
+            assert_eq!(
+                st.retire("a", RetireReason::Withdrawn, None).unwrap_err(),
+                Error::StreamSealed,
+                "{marker}"
+            );
+            let hold = protection("obs.t", "k-h", "tombstone", "a", &"0".repeat(64), "");
+            assert_eq!(
+                st.protect(&hold).unwrap_err(),
+                Error::StreamSealed,
+                "{marker}"
+            );
             let res = st.release(&serve(), None).unwrap();
             assert_eq!(res.outcome, ReleaseOutcome::Refused, "{marker}");
             fs::remove_file(&p).unwrap();

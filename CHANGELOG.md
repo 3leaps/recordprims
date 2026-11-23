@@ -10,8 +10,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Rust crate: verified store root with symlink, owner and permission checks
   (Unix and Windows), the cross-process store lock, content-addressed bodies
   (`put_body`, `remove_body`) and the `durable-record/v1` journal reader
-- Rust plain streams: `Store::open_stream`, `Stream::append`, `head`,
-  `revisions`, `reconcile` and `release`, with the derived stream indexes.
+- Rust plain streams: `Store::open_stream`, `Stream::append`, `retire`,
+  `protect`, `head`, `revisions`, `reconcile` and `release`, with the derived
+  stream indexes.
   Continuation streams and streams carrying compaction state are refused
 - Rust conformance driver: the `durable-record/v1` vectors run through the
   Rust journal state, with its own ledger (`conformance/v1-ledger-rust.json`)

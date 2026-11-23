@@ -794,6 +794,24 @@ impl State {
         self.retired.contains(record_id)
     }
 
+    /// The sequence number and decision time of the first retired entry for
+    /// `record_id`, when it is retired.
+    pub(crate) fn first_retired(&self, record_id: &str) -> Option<(i64, String)> {
+        if !self.retired.contains(record_id) {
+            return None;
+        }
+        self.journal.iter().find_map(|e| {
+            let typ = e.get("type").map(|v| v.str_val.as_str());
+            let rid = e.get("record_id").map(|v| v.str_val.as_str());
+            (typ == Some("retired") && rid == Some(record_id)).then(|| {
+                (
+                    e.get("seq").map_or(0, |v| v.int_val),
+                    e.get("at").map(|v| v.str_val.clone()).unwrap_or_default(),
+                )
+            })
+        })
+    }
+
     pub(crate) fn stream(&self) -> &str {
         &self.stream
     }
@@ -869,7 +887,6 @@ impl State {
     /// Evaluates protection request `r` at decision time `at_str`, appending
     /// a tombstoned or untombstoned entry when accepted and returning the
     /// protection receipt. Live-key replay precedes target and state checks.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn request(&mut self, r: &Node, at_str: &str) -> Result<Node, Reject> {
         if r.kind != Kind::Object {
             return Err(reject(REASON_SHAPE, "request: not an object"));
@@ -927,7 +944,6 @@ impl State {
 
     /// Evaluates keyed retirement request `r` at decision time `at_str`,
     /// appending a retired entry when accepted and returning the receipt.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn retire(&mut self, r: &Node, at_str: &str) -> Result<Node, Reject> {
         if r.kind != Kind::Object {
             return Err(reject(REASON_SHAPE, "retire: not an object"));

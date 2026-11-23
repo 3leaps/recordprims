@@ -85,6 +85,7 @@ type stepInput struct {
 	AttemptedAt         string          `json:"attempted_at,omitempty"`
 	Purpose             string          `json:"purpose,omitempty"`
 	Closure             string          `json:"closure,omitempty"`
+	Request             json.RawMessage `json:"request,omitempty"`
 }
 
 type stepOutput struct {
@@ -468,7 +469,7 @@ func runScenario(sc scenarioInput) (scenarioOutput, error) {
 			cleanErr := fmt.Errorf("recordprims: discarding staged body after %w: %w", recordprims.ErrSchema, &recordprims.IOError{Op: "unlink", Class: "permission"})
 			results = append(results, classifyErr(st.Op, cleanErr))
 
-		case "open_stream", "append", "head", "revisions", "reconcile", "release":
+		case "open_stream", "append", "retire", "protect", "head", "revisions", "reconcile", "release":
 			he, ok := handles[hname]
 			if !ok {
 				return scenarioOutput{}, fmt.Errorf("unknown handle %q", hname)
@@ -575,6 +576,42 @@ func runStreamOp(ctx context.Context, he *handleEntry, st stepInput) (any, error
 			return nil, err
 		}
 		return r, nil
+	case "retire":
+		var opts []recordprims.RetireOption
+		if st.Key != "" {
+			opts = append(opts, recordprims.WithRetireKey(st.Key))
+		}
+		r, err := s.Retire(ctx, st.RecordID, recordprims.RetireReason(st.Reason), opts...)
+		if err != nil {
+			return nil, err
+		}
+		out := map[string]any{"outcome": string(r.Outcome)}
+		if r.Seq != 0 {
+			out["seq"] = r.Seq
+		}
+		if r.At != "" {
+			out["at"] = r.At
+		}
+		if len(r.Receipt) > 0 {
+			out["receipt"] = r.Receipt
+		}
+		return out, nil
+	case "protect":
+		r, err := s.Protect(ctx, recordprims.ProtectionRequest{Raw: st.Request})
+		if err != nil {
+			return nil, err
+		}
+		out := map[string]any{"outcome": r.Outcome, "receipt": r.Raw}
+		if r.Seq != 0 {
+			out["seq"] = r.Seq
+		}
+		if r.At != "" {
+			out["at"] = r.At
+		}
+		if r.Reason != "" {
+			out["reason"] = r.Reason
+		}
+		return out, nil
 	case "head":
 		info, found, err := s.Head(st.RecordID)
 		if err != nil {
