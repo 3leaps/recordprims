@@ -89,7 +89,7 @@ func Init(dir, branch, entryPath string) (*Repo, error) {
 	if err := os.WriteFile(cfg, nil, 0o600); err != nil {
 		return nil, err
 	}
-	r := &Repo{Dir: filepath.Join(dir, "repo"), Branch: branch, Path: entryPath, env: append(os.Environ(),
+	r := &Repo{Dir: filepath.Join(dir, "repo"), Branch: branch, Path: entryPath, env: append(cleanEnv(),
 		"GIT_CONFIG_GLOBAL="+cfg, "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_NAME=Fixture", "GIT_AUTHOR_EMAIL=fixture@example.org",
 		"GIT_COMMITTER_NAME=Fixture", "GIT_COMMITTER_EMAIL=fixture@example.org",
@@ -114,6 +114,18 @@ func Init(dir, branch, entryPath string) (*Repo, error) {
 		return nil, err
 	}
 	return r, nil
+}
+
+// cleanEnv is the process environment without inherited GIT_* variables,
+// so a caller's GIT_DIR or config overrides cannot redirect the fixture.
+func cleanEnv() []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(kv), "GIT_") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 func (r *Repo) git(args ...string) (string, error) {
@@ -243,16 +255,14 @@ func (r *Repo) Accept(p ProposalRef, rv Revalidation) (AcceptanceRef, error) {
 	if head != rv.ValidatedParent {
 		return AcceptanceRef{}, ErrStale
 	}
-	// Build the candidate on a detached head at the validated parent.
-	if _, err := r.git("checkout", "-q", "--detach", rv.ValidatedParent); err != nil {
-		return AcceptanceRef{}, err
+	// Build the candidate merge commit without touching the checkout: the
+	// merged tree from merge-tree, then a commit with both parents.
+	tree, err := r.git("merge-tree", "--write-tree", rv.ValidatedParent, p.Commit)
+	if err != nil {
+		return AcceptanceRef{}, fmt.Errorf("the proposal does not merge cleanly: %w", err)
 	}
-	defer r.git("checkout", "-q", "-f", r.Branch)
-	if _, err := r.git("merge", "-q", "--no-ff", "-m", "Accept "+p.RecordID, p.Commit); err != nil {
-		r.git("merge", "--abort")
-		return AcceptanceRef{}, err
-	}
-	candidate, err := r.git("rev-parse", "HEAD")
+	tree = strings.Fields(tree)[0]
+	candidate, err := r.git("commit-tree", tree, "-p", rv.ValidatedParent, "-p", p.Commit, "-m", "Accept "+p.RecordID)
 	if err != nil {
 		return AcceptanceRef{}, err
 	}
@@ -275,8 +285,19 @@ func (r *Repo) Accept(p ProposalRef, rv Revalidation) (AcceptanceRef, error) {
 	if digest != rv.EntryDigest {
 		return AcceptanceRef{}, fmt.Errorf("the merged file differs from the validated entry")
 	}
-	// Advance the designated branch only from the validated parent.
-	if _, err := r.git("update-ref", "refs/heads/"+r.Branch, candidate, rv.ValidatedParent); err != nil {
+	// Advance the designated branch only from the validated parent. When it
+	// is checked out, fast-forward it, which keeps unrelated local edits and
+	// refuses edits the merge would overwrite; otherwise move the ref with an
+	// expected old value.
+	current, _ := r.git("symbolic-ref", "-q", "HEAD")
+	if current == "refs/heads/"+r.Branch {
+		if h, err := r.Head(r.Branch); err != nil || h != rv.ValidatedParent {
+			return AcceptanceRef{}, ErrStale
+		}
+		if _, err := r.git("merge", "-q", "--ff-only", candidate); err != nil {
+			return AcceptanceRef{}, fmt.Errorf("fast-forward refused (local edits in the way?): %w", err)
+		}
+	} else if _, err := r.git("update-ref", "refs/heads/"+r.Branch, candidate, rv.ValidatedParent); err != nil {
 		return AcceptanceRef{}, ErrStale
 	}
 	return AcceptanceRef{Branch: r.Branch, MergeCommit: candidate, Parent: f[1], ProposalCommit: f[2], File: p.File, Digest: digest}, nil

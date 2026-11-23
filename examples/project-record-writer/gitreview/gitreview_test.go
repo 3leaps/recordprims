@@ -73,6 +73,13 @@ func TestReviewedDecisionFixture(t *testing.T) {
 		t.Fatalf("proposals = %+v %+v", night, pilot)
 	}
 
+	// An unrelated, uncommitted edit in the checkout survives acceptance.
+	readme := filepath.Join(r.Dir, "README.md")
+	local := []byte("# Runbook decisions\n\nLocal note, not committed.\n")
+	if err := os.WriteFile(readme, local, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	// The first is fresh and merges with its base as the first parent.
 	rv, err := r.Revalidate(night, decisionValidator)
 	if err != nil || !rv.OK || rv.Stale || rv.ValidatedParent != night.Base {
@@ -81,6 +88,13 @@ func TestReviewedDecisionFixture(t *testing.T) {
 	acc, err := r.Accept(night, rv)
 	if err != nil || acc.Parent != night.Base || acc.ProposalCommit != night.Commit {
 		t.Fatalf("accept night = %+v, %v", acc, err)
+	}
+
+	if got, _ := os.ReadFile(readme); string(got) != string(local) {
+		t.Fatalf("acceptance discarded a local edit: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(r.Dir, "decisions", "dec-night-arrivals.json")); err != nil {
+		t.Fatalf("the accepted file is not in the checkout: %v", err)
 	}
 
 	// The second is now stale. Revalidation is against the actual merge
@@ -125,6 +139,15 @@ func TestReviewedDecisionFixture(t *testing.T) {
 	}
 	if _, err := r.Accept(b, rvb); err == nil {
 		t.Fatal("a competing proposal was accepted")
+	}
+
+	if got, _ := os.ReadFile(readme); string(got) != string(local) {
+		t.Fatalf("a later acceptance discarded a local edit: %q", got)
+	}
+	// A caller's GIT_DIR does not redirect the fixture.
+	t.Setenv("GIT_DIR", t.TempDir())
+	if _, err := Init(t.TempDir(), "main", "decisions"); err != nil {
+		t.Fatalf("Init with GIT_DIR set: %v", err)
 	}
 
 	// An invalid entry is refused at proposal time.

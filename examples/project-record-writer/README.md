@@ -168,9 +168,10 @@ the `git` binary:
   file, and refused as a competing edit if it did. The result is bound to the
   proposal commit, its file and the digest of the validated entry.
 - `Accept` takes a revalidation of that proposal only. It builds the merge
-  commit, checks its parents and the accepted file's digest, and only then
-  advances the designated branch, and only if the branch still points at the
-  validated parent. It returns the acceptance reference: the merge commit, its
+  commit without touching the checkout, checks its parents and the accepted
+  file's digest, and only then advances the designated branch, and only if the
+  branch still points at the validated parent. Unrelated local edits in the
+  checkout are kept. It returns the acceptance reference: the merge commit, its
   validated parent, the proposal commit and the digest of the accepted file.
 
 This is a fixture. It makes no durability claim for Git, uses no forge, and its
