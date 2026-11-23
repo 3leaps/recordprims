@@ -1334,12 +1334,18 @@ mod producer_instant {
                 assert_eq!(got.unwrap(), text(c, "canonical"), "{name}");
             }
         }
-        // Only sub-100 ns values may be unrepresentable, and only where the
-        // platform clock is coarser than a nanosecond.
+        // Only values with a nonzero remainder below 100 ns may be
+        // unrepresentable, and only where SystemTime counts 100 ns steps
+        // (Windows). The "in 100 ns steps" vectors keep a sub-microsecond
+        // remainder there, so refusal is still exercised on every platform.
         if cfg!(windows) {
             assert_eq!(
                 unrepresentable,
-                ["one nanosecond"],
+                [
+                    "sub-microsecond remainder",
+                    "one nanosecond",
+                    "sub-microsecond remainder before 1970"
+                ],
                 "unrepresentable vectors"
             );
         } else {

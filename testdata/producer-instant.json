@@ -267,9 +267,21 @@
       "refused": true
     },
     {
+      "name": "sub-microsecond remainder in 100 ns steps",
+      "unix_seconds": 1795435200,
+      "nanos": 123456700,
+      "refused": true
+    },
+    {
       "name": "sub-microsecond remainder before 1970",
       "unix_seconds": -1,
       "nanos": 999999999,
+      "refused": true
+    },
+    {
+      "name": "sub-microsecond remainder before 1970 in 100 ns steps",
+      "unix_seconds": -1,
+      "nanos": 999999900,
       "refused": true
     },
     {
