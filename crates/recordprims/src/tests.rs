@@ -854,7 +854,7 @@ fn test_unix_fifo_refused_without_blocking() {
 
 mod streams {
     use super::*;
-    use crate::store::stream_dir;
+    use crate::store::{stream_dir, Pin};
     use crate::stream::{
         Continues, FrameHeader, FrameReader, Mode, ProtectionRequest, ReleaseOutcome, ReleaseSink,
         RetireOutcome, RetireReason, UseClosure, UsePurpose, UseRequest, Write, WriteOutcome,
@@ -1053,6 +1053,101 @@ mod streams {
             st.release(&export, None).unwrap().outcome,
             ReleaseOutcome::Released
         );
+    }
+
+    #[derive(Default)]
+    struct Frames(Vec<Pin>);
+
+    impl ReleaseSink for Frames {
+        fn frame(&mut self, h: &FrameHeader, r: &mut FrameReader<'_>) -> Result<(), Error> {
+            let mut b = Vec::new();
+            r.read_to_end(&mut b).unwrap();
+            self.0.push(h.pin.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn explicit_selection_applies_to_every_purpose() {
+        let (s, _td, clk) = open_body_store();
+        let st = s.open_stream("sel", Mode::Revisioned, None).unwrap();
+        let mut pins = std::collections::HashMap::new();
+        for id in ["plain", "other", "retired", "held"] {
+            clk.advance(Duration::from_secs(1));
+            let rc = st.append(&write("sel", id, &format!("k-{id}"))).unwrap();
+            pins.insert(id, rc.pin.unwrap());
+        }
+        clk.advance(Duration::from_secs(1));
+        st.retire("retired", RetireReason::Withdrawn, None).unwrap();
+        clk.advance(Duration::from_secs(1));
+        let held = pins["held"].clone();
+        let hex = held.digest.strip_prefix("sha256:").unwrap().to_owned();
+        let hold = st
+            .protect(&protection("sel", "k-hold", "tombstone", "held", &hex, ""))
+            .unwrap();
+        assert_eq!(hold.outcome, "tombstoned");
+
+        for purpose in [UsePurpose::Serve, UsePurpose::Export, UsePurpose::Reuse] {
+            for closure in [UseClosure::MetadataOnly, UseClosure::FullContent] {
+                let req = |selection: Vec<Pin>| UseRequest {
+                    purpose,
+                    selection,
+                    closure,
+                };
+                let mut sink = Frames::default();
+                let res = st
+                    .release(&req(vec![pins["plain"].clone()]), Some(&mut sink))
+                    .unwrap();
+                assert_eq!(res.outcome, ReleaseOutcome::Released, "{purpose:?}");
+                assert_eq!(sink.0, vec![pins["plain"].clone()], "{purpose:?}");
+                assert_eq!(res.omitted.len(), 3, "{purpose:?}");
+
+                let mut sink = Frames::default();
+                let res = st
+                    .release(
+                        &req(vec![pins["plain"].clone(), held.clone()]),
+                        Some(&mut sink),
+                    )
+                    .unwrap();
+                assert_eq!(res.outcome, ReleaseOutcome::Refused, "{purpose:?} held");
+                assert_eq!(res.refusal_reason.as_deref(), Some("protected_use"));
+                assert!(sink.0.is_empty(), "{purpose:?} held delivered frames");
+
+                let mut sink = Frames::default();
+                let res = st
+                    .release(&req(vec![pins["retired"].clone()]), Some(&mut sink))
+                    .unwrap();
+                if purpose == UsePurpose::Serve {
+                    assert_eq!(res.outcome, ReleaseOutcome::Refused, "serve retired");
+                    assert_eq!(res.refusal_reason.as_deref(), Some("protected_use"));
+                    assert!(sink.0.is_empty(), "serve retired delivered frames");
+                } else {
+                    assert_eq!(res.outcome, ReleaseOutcome::Released, "{purpose:?} retired");
+                    assert_eq!(sink.0.len(), 1);
+                }
+            }
+        }
+
+        for (purpose, want) in [
+            (UsePurpose::Serve, 2),
+            (UsePurpose::Export, 3),
+            (UsePurpose::Reuse, 3),
+        ] {
+            let mut sink = Frames::default();
+            let res = st
+                .release(
+                    &UseRequest {
+                        purpose,
+                        selection: Vec::new(),
+                        closure: UseClosure::MetadataOnly,
+                    },
+                    Some(&mut sink),
+                )
+                .unwrap();
+            assert_eq!(res.outcome, ReleaseOutcome::Released, "{purpose:?}");
+            assert_eq!(sink.0.len(), want, "{purpose:?} empty selection");
+            assert_eq!(res.omitted.len(), 4 - want, "{purpose:?} omitted");
+        }
     }
 
     struct Reenter<'a> {

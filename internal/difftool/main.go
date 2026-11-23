@@ -57,36 +57,37 @@ type authInput struct {
 }
 
 type stepInput struct {
-	Op                  string          `json:"op"`
-	Handle              string          `json:"handle,omitempty"`
-	Subdir              string          `json:"subdir,omitempty"`
-	At                  string          `json:"at,omitempty"`
-	WindowMS            *int64          `json:"window_ms,omitempty"`
-	BodyRemovalStream   string          `json:"body_removal_stream,omitempty"`
-	PendingBodyTTLMS    *int64          `json:"pending_body_ttl_ms,omitempty"`
-	LockTimeoutMS       *int64          `json:"lock_timeout_ms,omitempty"`
-	DataUTF8            string          `json:"data_utf8,omitempty"`
-	DataHex             string          `json:"data_hex,omitempty"`
-	MediaType           string          `json:"media_type,omitempty"`
-	Digest              string          `json:"digest,omitempty"`
-	Length              int64           `json:"length,omitempty"`
-	CompleteIncarnation *uint64         `json:"complete_incarnation,omitempty"`
-	Reason              string          `json:"reason,omitempty"`
-	Provenance          *provInput      `json:"provenance,omitempty"`
-	Authorization       *authInput      `json:"authorization,omitempty"`
-	Input               string          `json:"input,omitempty"`
-	Rel                 string          `json:"rel,omitempty"`
-	Mode                *uint32         `json:"mode,omitempty"`
-	Stream              string          `json:"stream,omitempty"`
-	StreamMode          string          `json:"stream_mode,omitempty"`
-	Record              json.RawMessage `json:"record,omitempty"`
-	Key                 string          `json:"key,omitempty"`
-	RecordID            string          `json:"record_id,omitempty"`
-	AttemptedAt         string          `json:"attempted_at,omitempty"`
-	Purpose             string          `json:"purpose,omitempty"`
-	Closure             string          `json:"closure,omitempty"`
-	Request             json.RawMessage `json:"request,omitempty"`
-	RetireWithEmptyKey  bool            `json:"retire_with_empty_key,omitempty"`
+	Op                  string            `json:"op"`
+	Handle              string            `json:"handle,omitempty"`
+	Subdir              string            `json:"subdir,omitempty"`
+	At                  string            `json:"at,omitempty"`
+	WindowMS            *int64            `json:"window_ms,omitempty"`
+	BodyRemovalStream   string            `json:"body_removal_stream,omitempty"`
+	PendingBodyTTLMS    *int64            `json:"pending_body_ttl_ms,omitempty"`
+	LockTimeoutMS       *int64            `json:"lock_timeout_ms,omitempty"`
+	DataUTF8            string            `json:"data_utf8,omitempty"`
+	DataHex             string            `json:"data_hex,omitempty"`
+	MediaType           string            `json:"media_type,omitempty"`
+	Digest              string            `json:"digest,omitempty"`
+	Length              int64             `json:"length,omitempty"`
+	CompleteIncarnation *uint64           `json:"complete_incarnation,omitempty"`
+	Reason              string            `json:"reason,omitempty"`
+	Provenance          *provInput        `json:"provenance,omitempty"`
+	Authorization       *authInput        `json:"authorization,omitempty"`
+	Input               string            `json:"input,omitempty"`
+	Rel                 string            `json:"rel,omitempty"`
+	Mode                *uint32           `json:"mode,omitempty"`
+	Stream              string            `json:"stream,omitempty"`
+	StreamMode          string            `json:"stream_mode,omitempty"`
+	Record              json.RawMessage   `json:"record,omitempty"`
+	Key                 string            `json:"key,omitempty"`
+	RecordID            string            `json:"record_id,omitempty"`
+	AttemptedAt         string            `json:"attempted_at,omitempty"`
+	Purpose             string            `json:"purpose,omitempty"`
+	Closure             string            `json:"closure,omitempty"`
+	Request             json.RawMessage   `json:"request,omitempty"`
+	RetireWithEmptyKey  bool              `json:"retire_with_empty_key,omitempty"`
+	Selection           []recordprims.Pin `json:"selection,omitempty"`
 }
 
 type stepOutput struct {
@@ -654,7 +655,7 @@ func runStreamOp(ctx context.Context, he *handleEntry, st stepInput) (any, error
 		}
 		return s.Reconcile(st.Key, att)
 	case "release":
-		var sel []recordprims.Pin
+		sel := st.Selection
 		sink := &collectSink{}
 		res, err := s.Release(ctx, recordprims.UseRequest{
 			Purpose: recordprims.UsePurpose(st.Purpose), Selection: sel, Closure: recordprims.UseClosure(st.Closure),

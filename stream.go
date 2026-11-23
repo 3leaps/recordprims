@@ -218,8 +218,17 @@ const (
 
 // UseRequest asks the store to evaluate and deliver a release at the current cut.
 type UseRequest struct {
-	Purpose   UsePurpose
-	Selection []Pin // only for PurposeExport; empty selects all eligible for serve/reuse
+	Purpose UsePurpose
+	// Selection lists exact revision pins to release, for any purpose. Every
+	// selected pin is evaluated: if one is not eligible (a held revision for
+	// any purpose, or a retired record's revision for PurposeServe), the whole
+	// release is refused with protected_use and no frame is delivered.
+	//
+	// An empty Selection releases every eligible revision at the cut: for
+	// PurposeServe, unretired and unheld revisions; for PurposeExport and
+	// PurposeReuse, unheld revisions. Revisions not released are reported in
+	// ReleaseResult.Omitted.
+	Selection []Pin
 	Closure   UseClosure
 }
 

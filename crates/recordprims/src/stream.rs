@@ -301,7 +301,7 @@ pub struct RevisionView {
 pub enum UsePurpose {
     /// Serve current content; retired records are excluded.
     Serve,
-    /// Export a selection.
+    /// Export content; retired records are included.
     Export,
     /// Reuse content.
     Reuse,
@@ -341,7 +341,15 @@ impl UseClosure {
 pub struct UseRequest {
     /// Purpose of the release.
     pub purpose: UsePurpose,
-    /// Pins to release; empty selects every eligible revision.
+    /// Exact revision pins to release, for any purpose. Every selected pin
+    /// is evaluated: if one is not eligible (a held revision for any purpose,
+    /// or a retired record's revision for [`UsePurpose::Serve`]), the whole
+    /// release is refused with `protected_use` and no frame is delivered.
+    ///
+    /// An empty selection releases every eligible revision at the cut: for
+    /// `Serve`, unretired and unheld revisions; for `Export` and `Reuse`,
+    /// unheld revisions. Revisions not released are reported in
+    /// [`ReleaseResult::omitted`].
     pub selection: Vec<Pin>,
     /// Body closure.
     pub closure: UseClosure,
