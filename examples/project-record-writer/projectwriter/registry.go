@@ -25,7 +25,7 @@ type Descriptor struct {
 	Kind              string         `json:"kind"`
 	Owner             string         `json:"owner"`
 	Revision          int            `json:"descriptor_revision"`
-	PayloadContract   string         `json:"payload_contract"`
+	EntryContract     string         `json:"entry_contract"`
 	Schema            FileRef        `json:"schema"`
 	Carrier           string         `json:"carrier"`
 	RevisionPolicy    string         `json:"revision_policy"`
@@ -55,13 +55,27 @@ func (d *Descriptor) ExamplePath() string {
 	return filepath.Join(d.registryDirectory, filepath.FromSlash(d.Example))
 }
 
+// RecordContract is the contract of the stored payload every record carries
+// (the wrapper around an entry), with its pinned schema.
+type RecordContract struct {
+	PayloadContract string  `json:"payload_contract"`
+	Schema          FileRef `json:"schema"`
+	schemaRaw       []byte
+}
+
+// SchemaJSON is the pinned wrapper schema.
+func (c *RecordContract) SchemaJSON() []byte { return c.schemaRaw }
+
 // Registry is a versioned list of descriptors. It keeps earlier descriptor
 // revisions so records written under them can still be checked; the newest
-// unretired revision of each kind is the one used for new writes.
+// unretired revision of each kind is the one used for new writes. Record
+// names the contract of the stored payload; each descriptor names the
+// contract of the entry inside it.
 type Registry struct {
-	Name        string        `json:"registry"`
-	Version     string        `json:"registry_version"`
-	Descriptors []*Descriptor `json:"descriptors"`
+	Name        string          `json:"registry"`
+	Version     string          `json:"registry_version"`
+	Record      *RecordContract `json:"record"`
+	Descriptors []*Descriptor   `json:"descriptors"`
 	digest      string
 }
 
@@ -101,10 +115,20 @@ func loadRegistry(path, digest string) (*Registry, error) {
 	}
 	r.digest = digest
 	dir := filepath.Dir(path)
+	if r.Record == nil || r.Record.PayloadContract != RecordPayloadContract ||
+		!reDigest.MatchString(r.Record.Schema.Digest) || r.Record.Schema.Path == "" {
+		return nil, fmt.Errorf("registry: the record contract must be %s with a pinned schema", RecordPayloadContract)
+	}
+	if r.Record.schemaRaw, err = readPinned(filepath.Join(dir, filepath.FromSlash(r.Record.Schema.Path)), r.Record.Schema.Digest); err != nil {
+		return nil, fmt.Errorf("untrusted registry: record schema: %w", err)
+	}
+	if r.Record.Schema.Digest != recordSchemaDigest {
+		return nil, fmt.Errorf("registry: this build's record wrapper does not implement schema %s", r.Record.Schema.Digest)
+	}
 	seen := map[string]bool{}
 	for i, d := range r.Descriptors {
 		if d == nil || !reKind.MatchString(d.Kind) || !reOwner.MatchString(d.Owner) || d.Revision < 1 ||
-			!reContract.MatchString(d.PayloadContract) || d.Carrier != "payload" ||
+			!reContract.MatchString(d.EntryContract) || d.Carrier != "payload" ||
 			(d.RevisionPolicy != "revisioned" && d.RevisionPolicy != "single") ||
 			!knownClass(d.WriterClass) ||
 			!reDigest.MatchString(d.Schema.Digest) || d.Schema.Path == "" || d.Example == "" {

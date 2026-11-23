@@ -251,10 +251,7 @@ func readRequest(arg string, stdin io.Reader) (pw.Request, error) {
 func readFailure(stdout io.Writer, err error) (int, error) {
 	switch {
 	case errors.Is(err, pw.ErrNotServed):
-		emit(stdout, map[string]string{"outcome": "not_served", "next": "the revision is held or its record is retired"})
-		return 3, nil
-	case errors.Is(err, pw.ErrNotFound):
-		emit(stdout, map[string]string{"outcome": "not_found"})
+		emit(stdout, map[string]string{"outcome": "not_served"})
 		return 3, nil
 	}
 	return 1, err

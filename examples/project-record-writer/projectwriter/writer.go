@@ -198,6 +198,7 @@ type KindInfo struct {
 	DescriptorRevision int             `json:"descriptor_revision"`
 	DescriptorDigest   string          `json:"descriptor_digest"`
 	PayloadContract    string          `json:"payload_contract"`
+	EntryContract      string          `json:"entry_contract"`
 	WriterClass        string          `json:"writer_class"`
 	RevisionPolicy     string          `json:"revision_policy"`
 	Floor              Classification  `json:"classification_floor"`
@@ -235,7 +236,7 @@ func (w *Writer) kindInfo(kind string, example bool) (KindInfo, bool) {
 	}
 	info := KindInfo{
 		Kind: kind, Authority: k.Authority, Stream: k.Stream, Owner: d.Owner,
-		DescriptorRevision: d.Revision, DescriptorDigest: d.Digest(), PayloadContract: d.PayloadContract,
+		DescriptorRevision: d.Revision, DescriptorDigest: d.Digest(), PayloadContract: RecordPayloadContract, EntryContract: d.EntryContract,
 		WriterClass: d.WriterClass, RevisionPolicy: d.RevisionPolicy, Floor: d.Classification, Trusted: d.Trusted(),
 	}
 	if example {
@@ -339,14 +340,15 @@ func (w *Writer) prepare(req Request) (prepared, Result, bool) {
 		"descriptor": map[string]any{
 			"kind": d.Kind, "owner": d.Owner, "revision": d.Revision, "digest": d.Digest(),
 		},
-		"entry": json.RawMessage(entry),
+		"entry_contract": d.EntryContract,
+		"entry":          json.RawMessage(entry),
 	}
 	rec := map[string]any{
 		"v":                1,
 		"stream":           k.Stream,
 		"record_id":        req.RecordID,
 		"revision":         revision,
-		"payload_contract": d.PayloadContract,
+		"payload_contract": RecordPayloadContract,
 		"payload":          payload,
 		"provenance":       map[string]any{"actor_kind": w.caller.ActorKind, "actor": w.caller.Name},
 		"classification":   map[string]any{"sensitivity": sens, "retention": ret},

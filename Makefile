@@ -186,7 +186,7 @@ test-go: ## Go tests (cgo-free)
 EXAMPLE_DIR := examples/project-record-writer
 
 example-schemas: ## The example's payload schemas admit their valid examples and refuse the others
-	CGO_ENABLED=0 go run ./internal/tools/schemacheck $(EXAMPLE_DIR)/registry/decision $(EXAMPLE_DIR)/registry/project-update $(EXAMPLE_DIR)/registry/risk
+	CGO_ENABLED=0 go run ./internal/tools/schemacheck $(EXAMPLE_DIR)/registry/record $(EXAMPLE_DIR)/registry/decision $(EXAMPLE_DIR)/registry/project-update $(EXAMPLE_DIR)/registry/risk
 
 example-check: example-schemas ## Build, vet and test the example module (its own go.mod)
 	cd $(EXAMPLE_DIR) && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test -count=1 ./...

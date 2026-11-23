@@ -25,23 +25,38 @@ type implementation struct {
 // refused, so a changed schema cannot diverge silently from the checks. A
 // make target validates the registry's examples against the same schemas.
 var validators = map[string]implementation{
-	"contract: project-decision/v1": {validateDecision, map[string]bool{
-		"sha256:f0fc10f8e515cbe5eaef2dfb3016eb23feb5b1a2fe8a07830c5129c1c8a26d7e": true}},
-	"contract: project-update/v1": {validateUpdate, map[string]bool{
-		"sha256:0799f73ba7a5d99ab5a563258bb64ee4824d210cc3969ed2ed73e32a32886a4e": true}},
-	"contract: harbor-demo-risk/v1": {validateRisk, map[string]bool{
-		"sha256:5d4aa17cd5d5a89c3aa82fd12fc521c842bf3e24161de4a7fe084179fd1a49f1": true}},
+	ContractDecision: {validateDecision, map[string]bool{
+		"sha256:0498b8084d15d62d09fce513b0175071c40daffd634fdc966e90d481e121b92e": true}},
+	ContractUpdate: {validateUpdate, map[string]bool{
+		"sha256:80a0b5c291f9d5055bbaaaba019af9801b903654a487711079add04981d47e8e": true}},
+	ContractRisk: {validateRisk, map[string]bool{
+		"sha256:c8f7b339ae0651435cbf56095f2bb7451db4786a500de2707b1fd76adc27a71e": true}},
 }
+
+// The contracts this example defines. They are illustrative, not a published
+// vocabulary. A record's payload_contract is always RecordPayloadContract:
+// the wrapper {project, descriptor, entry_contract, entry}. The entry inside
+// it follows the entry contract its descriptor names.
+const (
+	RecordPayloadContract = "contract: example-project-record/v1"
+	ContractDecision      = "contract: example-project-decision/v1"
+	ContractUpdate        = "contract: example-project-update/v1"
+	ContractRisk          = "contract: example-harbor-demo-risk/v1"
+)
+
+// recordSchemaDigest is the wrapper schema the writer's payload construction
+// implements.
+const recordSchemaDigest = "sha256:b69966ea220c35c1beb271f7c2434cd3a0a7d207f0dba9bea7549cc4fd88628f"
 
 // checksFor returns the typed checks for a descriptor, or an error naming
 // why this build cannot check it.
 func checksFor(d *Descriptor) (validator, string, error) {
-	impl, ok := validators[d.PayloadContract]
+	impl, ok := validators[d.EntryContract]
 	if !ok {
-		return nil, ReasonUnknownContract, fmt.Errorf("this build has no checks for %s", d.PayloadContract)
+		return nil, ReasonUnknownContract, fmt.Errorf("this build has no checks for %s", d.EntryContract)
 	}
 	if !impl.schemas[d.Schema.Digest] {
-		return nil, ReasonUnsupportedSchema, fmt.Errorf("this build's checks for %s do not implement schema %s", d.PayloadContract, d.Schema.Digest)
+		return nil, ReasonUnsupportedSchema, fmt.Errorf("this build's checks for %s do not implement schema %s", d.EntryContract, d.Schema.Digest)
 	}
 	return impl.check, "", nil
 }
@@ -64,7 +79,7 @@ type EvidenceAbsent struct {
 	Reason string `json:"reason"`
 }
 
-// Decision is the contract: project-decision/v1 entry.
+// Decision is the contract: example-project-decision/v1 entry.
 type Decision struct {
 	Title          string            `json:"title"`
 	Decision       string            `json:"decision"`
@@ -76,7 +91,7 @@ type Decision struct {
 	Reverses       *recordprims.Pin  `json:"reverses,omitempty"`
 }
 
-// Update is the contract: project-update/v1 entry.
+// Update is the contract: example-project-update/v1 entry.
 type Update struct {
 	Summary    string      `json:"summary"`
 	Status     string      `json:"status"`
@@ -84,7 +99,7 @@ type Update struct {
 	References []Reference `json:"references,omitempty"`
 }
 
-// Risk is the project-defined contract: harbor-demo-risk/v1 entry.
+// Risk is the project-defined contract: example-harbor-demo-risk/v1 entry.
 type Risk struct {
 	Title      string `json:"title"`
 	Likelihood string `json:"likelihood"`

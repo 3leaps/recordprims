@@ -1,13 +1,17 @@
 {
   "registry": "harbor-demo-kinds",
   "registry_version": "1.0.0",
+  "record": {
+    "payload_contract": "contract: example-project-record/v1",
+    "schema": {"path": "record/schema.json", "digest": "sha256:b69966ea220c35c1beb271f7c2434cd3a0a7d207f0dba9bea7549cc4fd88628f"}
+  },
   "descriptors": [
     {
       "kind": "decision",
       "owner": "example.org/project-records",
       "descriptor_revision": 1,
-      "payload_contract": "contract: project-decision/v1",
-      "schema": {"path": "decision/schema.json", "digest": "sha256:f0fc10f8e515cbe5eaef2dfb3016eb23feb5b1a2fe8a07830c5129c1c8a26d7e"},
+      "entry_contract": "contract: example-project-decision/v1",
+      "schema": {"path": "decision/schema.json", "digest": "sha256:0498b8084d15d62d09fce513b0175071c40daffd634fdc966e90d481e121b92e"},
       "carrier": "payload",
       "revision_policy": "revisioned",
       "writer_class": "maintainer",
@@ -19,8 +23,8 @@
       "kind": "project-update",
       "owner": "example.org/project-records",
       "descriptor_revision": 1,
-      "payload_contract": "contract: project-update/v1",
-      "schema": {"path": "project-update/schema.json", "digest": "sha256:0799f73ba7a5d99ab5a563258bb64ee4824d210cc3969ed2ed73e32a32886a4e"},
+      "entry_contract": "contract: example-project-update/v1",
+      "schema": {"path": "project-update/schema.json", "digest": "sha256:80a0b5c291f9d5055bbaaaba019af9801b903654a487711079add04981d47e8e"},
       "carrier": "payload",
       "revision_policy": "revisioned",
       "writer_class": "agent",
@@ -32,8 +36,8 @@
       "kind": "risk",
       "owner": "example.org/harbor-demo",
       "descriptor_revision": 1,
-      "payload_contract": "contract: harbor-demo-risk/v1",
-      "schema": {"path": "risk/schema.json", "digest": "sha256:5d4aa17cd5d5a89c3aa82fd12fc521c842bf3e24161de4a7fe084179fd1a49f1"},
+      "entry_contract": "contract: example-harbor-demo-risk/v1",
+      "schema": {"path": "risk/schema.json", "digest": "sha256:c8f7b339ae0651435cbf56095f2bb7451db4786a500de2707b1fd76adc27a71e"},
       "carrier": "payload",
       "revision_policy": "revisioned",
       "writer_class": "maintainer",

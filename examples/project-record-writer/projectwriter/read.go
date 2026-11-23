@@ -15,11 +15,10 @@ import (
 	"github.com/3leaps/recordprims"
 )
 
-// ErrNotFound means no accepted revision has the pin.
-var ErrNotFound = errors.New("not_found")
-
-// ErrNotServed means the revision exists but the store does not serve it
-// (it is held, or its record is retired).
+// ErrNotServed is the one outcome Lookup gives for any pin it does not
+// serve: a held revision, a retired record, a pin no accepted revision has,
+// a wrong digest, or a stream that is not one of the project's store kinds.
+// An ordinary caller is not told which.
 var ErrNotServed = errors.New("not_served")
 
 // DescriptorRef is the descriptor revision a record was written under.
@@ -36,6 +35,7 @@ type Entry struct {
 	Project         string               `json:"project"`
 	Kind            string               `json:"kind"`
 	PayloadContract string               `json:"payload_contract"`
+	EntryContract   string               `json:"entry_contract"`
 	Descriptor      DescriptorRef        `json:"descriptor"`
 	DescriptorFound bool                 `json:"descriptor_found"`
 	Entry           json.RawMessage      `json:"entry"`
@@ -60,9 +60,10 @@ type servedRecord struct {
 		Digest   string `json:"digest"`
 	} `json:"supersedes"`
 	Payload struct {
-		Project    string          `json:"project"`
-		Descriptor DescriptorRef   `json:"descriptor"`
-		Entry      json.RawMessage `json:"entry"`
+		Project       string          `json:"project"`
+		Descriptor    DescriptorRef   `json:"descriptor"`
+		EntryContract string          `json:"entry_contract"`
+		Entry         json.RawMessage `json:"entry"`
 	} `json:"payload"`
 }
 
@@ -116,29 +117,41 @@ func (w *Writer) serve(ctx context.Context, s *recordprims.Stream) (*collect, er
 	return c, nil
 }
 
-// Lookup resolves a pin through the store's serving path, so holds and
-// retirement apply. It returns ErrNotServed for a held or retired revision.
+// memberRefusals are the release refusals that concern the selected pin
+// itself. Lookup folds them into ErrNotServed; any other refusal is about
+// the stream and is returned as an error.
+var memberRefusals = map[string]bool{"protected_use": true, "target_not_found": true}
+
+// Lookup reads exactly one revision through the store's serving path: a
+// serve release whose selection is the one pin, so holds and retirement
+// apply and no other revision is delivered. Every pin it does not serve
+// gives the same ErrNotServed.
 func (w *Writer) Lookup(ctx context.Context, pin recordprims.Pin) (Entry, error) {
 	kind, s, ok := w.kindForStream(pin.Stream)
 	if !ok {
-		return Entry{}, ErrNotFound
+		return Entry{}, ErrNotServed
 	}
-	c, err := w.serve(ctx, s)
+	c := &collect{records: map[recordprims.Pin][]byte{}}
+	res, err := s.Release(ctx, recordprims.UseRequest{
+		Purpose:   recordprims.PurposeServe,
+		Closure:   recordprims.ClosureMetadataOnly,
+		Selection: []recordprims.Pin{pin},
+	}, c)
 	if err != nil {
+		if errors.Is(err, recordprims.ErrSchema) {
+			return Entry{}, ErrNotServed
+		}
 		return Entry{}, err
 	}
+	switch {
+	case res.Outcome == recordprims.ReleaseRefused && memberRefusals[res.RefusalReason]:
+		return Entry{}, ErrNotServed
+	case res.Outcome != recordprims.ReleaseReleased:
+		return Entry{}, fmt.Errorf("release %s %s", res.Outcome, res.RefusalReason)
+	}
 	raw, ok := c.records[pin]
-	if !ok {
-		revs, err := s.Revisions(pin.RecordID)
-		if err != nil {
-			return Entry{}, err
-		}
-		for _, rv := range revs {
-			if rv.Pin == pin {
-				return Entry{}, ErrNotServed
-			}
-		}
-		return Entry{}, ErrNotFound
+	if !ok || len(c.order) != 1 {
+		return Entry{}, ErrNotServed
 	}
 	return w.entryOf(kind, pin, raw)
 }
@@ -148,12 +161,20 @@ func (w *Writer) entryOf(kind string, pin recordprims.Pin, raw []byte) (Entry, e
 	if err := json.Unmarshal(raw, &rec); err != nil {
 		return Entry{}, err
 	}
+	if rec.PayloadContract != RecordPayloadContract {
+		return Entry{}, fmt.Errorf("%s: %s is not %s", ReasonUnknownContract, rec.PayloadContract, RecordPayloadContract)
+	}
 	e := Entry{
 		Pin: pin, Project: rec.Payload.Project, Kind: kind, PayloadContract: rec.PayloadContract,
-		Descriptor: rec.Payload.Descriptor, Entry: rec.Payload.Entry, Provenance: rec.Provenance,
+		EntryContract: rec.Payload.EntryContract,
+		Descriptor:    rec.Payload.Descriptor, Entry: rec.Payload.Entry, Provenance: rec.Provenance,
 		Classification: rec.Classification,
 	}
-	_, e.DescriptorFound = w.registry.Lookup(rec.Payload.Descriptor.Kind, rec.Payload.Descriptor.Revision, rec.Payload.Descriptor.Digest)
+	d, found := w.registry.Lookup(rec.Payload.Descriptor.Kind, rec.Payload.Descriptor.Revision, rec.Payload.Descriptor.Digest)
+	if found && d.EntryContract != e.EntryContract {
+		return Entry{}, fmt.Errorf("%s: entry contract %s differs from its descriptor's %s", ReasonUnknownContract, e.EntryContract, d.EntryContract)
+	}
+	e.DescriptorFound = found
 	if rec.ProducedAt != nil {
 		e.ProducedAt = rec.ProducedAt.Instant
 	}
@@ -186,8 +207,8 @@ func (w *Writer) Render(ctx context.Context, pin recordprims.Pin) (string, error
 // RenderEntry renders an entry as Markdown.
 func RenderEntry(e Entry) (string, error) {
 	var b strings.Builder
-	switch e.PayloadContract {
-	case "contract: project-decision/v1":
+	switch e.EntryContract {
+	case ContractDecision:
 		var d Decision
 		if err := json.Unmarshal(e.Entry, &d); err != nil {
 			return "", err
@@ -208,7 +229,7 @@ func RenderEntry(e Entry) (string, error) {
 		if p := d.Reverses; p != nil {
 			fmt.Fprintf(&b, "**Reverses.** %s\n\n", pinText(*p))
 		}
-	case "contract: project-update/v1":
+	case ContractUpdate:
 		var u Update
 		if err := json.Unmarshal(e.Entry, &u); err != nil {
 			return "", err
@@ -222,7 +243,7 @@ func RenderEntry(e Entry) (string, error) {
 			}
 			b.WriteString("\n")
 		}
-	case "contract: harbor-demo-risk/v1":
+	case ContractRisk:
 		var r Risk
 		if err := json.Unmarshal(e.Entry, &r); err != nil {
 			return "", err
@@ -231,7 +252,7 @@ func RenderEntry(e Entry) (string, error) {
 		fmt.Fprintf(&b, "**Likelihood.** %s · **Impact.** %s · **Owner.** %s\n\n", r.Likelihood, r.Impact, r.Owner)
 		fmt.Fprintf(&b, "**Mitigation.** %s\n\n", r.Mitigation)
 	default:
-		return "", fmt.Errorf("%s: no renderer for %s", ReasonUnknownContract, e.PayloadContract)
+		return "", fmt.Errorf("%s: no renderer for %s", ReasonUnknownContract, e.EntryContract)
 	}
 	if e.Supersedes != nil {
 		fmt.Fprintf(&b, "**Supersedes.** %s\n\n", pinText(*e.Supersedes))

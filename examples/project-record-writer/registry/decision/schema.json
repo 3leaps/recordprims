@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "project-records/decision/v1",
+  "$id": "example-project-records/decision/v1",
   "title": "Project decision",
   "description": "A decision, its rationale, the authority that made it, and its evidence or an explicit statement that there is none. A reversal names the decision it reverses by exact pin.",
   "type": "object",

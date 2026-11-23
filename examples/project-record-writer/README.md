@@ -92,40 +92,50 @@ writers and their classes. The `runbook-decision` kind uses the decision
 descriptor but is accepted by a reviewed Git merge instead of the store, so
 `record` refuses it with `git_authority`; see `gitreview` below.
 
-`registry/registry.json` lists descriptors. Each names its owner, revision,
-payload contract, pinned schema (path and sha256), revision policy, writer
-class, classification floor and an example. `risk` is a project-defined kind
-(owner `example.org/harbor-demo`); it is written through the same store and
-envelope as the shared kinds.
+`registry/registry.json` names the record contract and lists descriptors. Each
+descriptor names its owner, revision, entry contract, pinned schema (path and
+sha256), revision policy, writer class, classification floor and an example.
+`risk` is a project-defined kind (owner `example.org/harbor-demo`); it is
+written through the same store and envelope as the shared kinds. The decision,
+project-update and risk kinds and their schemas are illustrative for this
+example and are not a published vocabulary.
 
-A record's payload is `{project, descriptor: {kind, owner, revision, digest},
-entry}`. The descriptor digest is the RFC 8785 sha256 of the descriptor as
-listed in the registry. To check a historical record, find the descriptor with
-that kind, revision and digest (the registry keeps earlier revisions), then the
-schema by its pinned digest. A schema file that no longer matches its pin marks
+Every record has the same `payload_contract`, `contract:
+example-project-record/v1`, whose schema (`registry/record/schema.json`,
+pinned in the registry) describes the whole stored payload: `{project,
+descriptor: {kind, owner, revision, digest}, entry_contract, entry}`. The
+entry inside it follows its own contract, named by `entry_contract` and by the
+descriptor: `contract: example-project-decision/v1`, `contract:
+example-project-update/v1` or `contract: example-harbor-demo-risk/v1`. A reader
+checks a record from the outside in: the payload against the record schema,
+then the entry against the schema its descriptor pins. The descriptor digest
+is the RFC 8785 sha256 of the descriptor as listed in the registry. To check a
+historical record, find the descriptor with that kind, revision and digest (the
+registry keeps earlier revisions), then the schema by its pinned digest. A schema file that no longer matches its pin marks
 its descriptor untrusted; a registry that no longer matches the project's pin
-is refused. The typed checks in `projectwriter` name the schema revisions they
+is refused, and so is a registry whose record schema does not match its pin.
+The typed checks in `projectwriter` name the schema revisions they
 implement; a descriptor that pins any other schema is refused with
 `unsupported_schema`, so a changed schema cannot drift from the checks.
 
 Writers: a `maintainer` may write any kind and place holds; an `agent` or
 `external` writer may write only kinds whose descriptor names its class.
 
-### Fields shared with an agent content kind registry
+### Descriptor fields
 
-The descriptor reuses field names from an existing agent content kind registry
-where the meaning is the same, rather than adding a new vocabulary:
-
-| This example | Kind registry | Note |
-| --- | --- | --- |
-| `kind` | `kind` | Same pattern. |
-| `payload_contract` | `payload_contract` | Same host-less token form. |
-| `writer_class` | `writer_class` | Same values (`agent`, `maintainer`, `external`). |
-| `revision_policy` | `revision_policy` | `revisioned` and `single`; `append` is not used here. |
-| `carrier` | `carrier` | Only `payload`. |
-| `classification.sensitivity`, `classification.retention-lifecycle` | `classification` | The floor; `access-tier` has no field in a durable-record/v1 record, so it is omitted. |
-| `stream_volatility` | `stream_volatility` | Same values. |
-| `owner`, `descriptor_revision`, `schema {path, digest}`, `example` | none | Project-specific: who owns the kind, which revision a record used, and where its pinned schema and example are. |
+| Field | Meaning |
+| --- | --- |
+| `kind` | The kind's name, as a project enables it. |
+| `owner` | Who owns the kind's definition. |
+| `descriptor_revision` | This revision of the descriptor; a record names the revision it was checked under. |
+| `entry_contract` | The contract of the entry, as a `contract: <name>/v<N>` token. |
+| `schema {path, digest}` | The entry schema and its pinned sha256. |
+| `carrier` | Where the entry travels in the record; only `payload`. |
+| `revision_policy` | `revisioned` (corrections allowed) or `single`. |
+| `writer_class` | The writer class that may write the kind (`agent`, `maintainer` or `external`); a maintainer may write any kind. |
+| `classification.sensitivity`, `classification.retention-lifecycle` | The classification floor a record of this kind must meet. |
+| `stream_volatility` | How often entries of the kind are expected. |
+| `example` | A conforming entry, shown by `inspect`. |
 
 ## Revisions, corrections and reversals
 
@@ -138,8 +148,12 @@ it with `ReversalsOf`.
 ## Reads and holds
 
 `Lookup`, `Render` and the search view read through the store's serving path
-(`Release` with purpose `serve`). A held revision, or a retired record, is not
-served, so it does not appear in any of them. `Hold` places an operator hold on
+(`Release` with purpose `serve`). `Lookup` and `Render` select the one
+requested pin, so nothing else is delivered. A held revision, or a retired
+record, is not served, so it does not appear in any of them. Every pin that is
+not served gives the same outcome, `not_served`, whether it is held, retired,
+never written, has the wrong digest or names another stream; the caller is not
+told which. `Hold` places an operator hold on
 a revision; its request carries the operator's `observed_at`, so a retry with
 the same fields and key returns the original receipt. The search view is
 derived only from served records: `reindex` rebuilds it, and deleting it loses

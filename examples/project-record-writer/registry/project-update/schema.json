@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "project-records/project-update/v1",
+  "$id": "example-project-records/project-update/v1",
   "title": "Project update",
   "description": "A dated observation about a project: a summary, a status, and optional exact references to runs or evidence.",
   "type": "object",

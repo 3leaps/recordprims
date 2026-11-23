@@ -1,6 +1,6 @@
 {
   "project": "harbor-demo",
-  "registry": {"path": "../registry/registry.json", "digest": "sha256:22f3b7d3520c6b6eb649a3293ca31facdd388a10388d5c52fe427d2729b8bf9a"},
+  "registry": {"path": "../registry/registry.json", "digest": "sha256:f9bdc5d164e0ba7a2cff6637ce31bd02e49bf217cfff795633a174c972a92b00"},
   "store": "../.local/harbor-demo-store",
   "search_view": "../.local/harbor-demo-search.json",
   "idempotency_window": "168h",

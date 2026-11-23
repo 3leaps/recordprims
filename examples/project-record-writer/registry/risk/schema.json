@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "harbor-demo/risk/v1",
+  "$id": "example-harbor-demo/risk/v1",
   "title": "Project risk",
   "description": "A risk owned by this project: likelihood, impact, owner and mitigation. Defined by the project, not by the shared kinds.",
   "type": "object",
