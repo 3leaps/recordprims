@@ -1,6 +1,8 @@
 package gitreview
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -13,8 +15,26 @@ import (
 )
 
 func decisionValidator(raw json.RawMessage) (json.RawMessage, error) {
-	return pw.NormalizeEntry("contract: project-decision/v1", raw)
+	return pw.NormalizeEntry(decisionDescriptor, raw)
 }
+
+var decisionDescriptor = func() *pw.Descriptor {
+	path := filepath.Join("..", "registry", "registry.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		panic(err)
+	}
+	sum := sha256.Sum256(raw)
+	reg, err := pw.LoadRegistry(path, "sha256:"+hex.EncodeToString(sum[:]))
+	if err != nil {
+		panic(err)
+	}
+	d, ok := reg.Current("decision")
+	if !ok {
+		panic("no decision descriptor")
+	}
+	return d
+}()
 
 func decision(t *testing.T, title string) json.RawMessage {
 	t.Helper()
@@ -70,9 +90,18 @@ func TestReviewedDecisionFixture(t *testing.T) {
 	if err != nil || !rv2.OK || !rv2.Stale || rv2.ValidatedParent != acc.MergeCommit {
 		t.Fatalf("revalidate stale pilot = %+v, %v", rv2, err)
 	}
-	// Accepting against an outdated revalidation is refused.
-	if _, err := r.Accept(pilot, rv); !errors.Is(err, ErrStale) {
+	// A revalidation of another proposal is refused, and so is an
+	// outdated revalidation of this one.
+	if _, err := r.Accept(pilot, rv); err == nil || errors.Is(err, ErrStale) {
+		t.Fatalf("accept with another proposal's revalidation = %v", err)
+	}
+	outdated := rv2
+	outdated.ValidatedParent = night.Base
+	if _, err := r.Accept(pilot, outdated); !errors.Is(err, ErrStale) {
 		t.Fatalf("accept with an outdated revalidation = %v", err)
+	}
+	if h, _ := r.Head("main"); h != acc.MergeCommit {
+		t.Fatalf("a refused accept moved main to %s", h)
 	}
 	acc2, err := r.Accept(pilot, rv2)
 	if err != nil || acc2.Parent != acc.MergeCommit {

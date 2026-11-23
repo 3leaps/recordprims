@@ -44,12 +44,16 @@ type ProposalRef struct {
 	File     string `json:"file"`
 }
 
-// Revalidation is the result of checking a proposal against the current head
-// of the designated branch, which becomes the merge parent.
+// Revalidation is the result of checking one proposal against the current
+// head of the designated branch, which becomes the merge parent. It is bound
+// to the proposal commit, its file and the digest of the validated entry.
 type Revalidation struct {
 	OK              bool   `json:"ok"`
 	Stale           bool   `json:"stale"`
 	ValidatedParent string `json:"validated_parent"`
+	ProposalCommit  string `json:"proposal_commit"`
+	File            string `json:"file"`
+	EntryDigest     string `json:"entry_digest,omitempty"`
 	Reason          string `json:"reason,omitempty"`
 }
 
@@ -180,7 +184,7 @@ func (r *Repo) Revalidate(p ProposalRef, validate Validate) (Revalidation, error
 	if err != nil {
 		return Revalidation{}, err
 	}
-	rv := Revalidation{Stale: head != p.Base, ValidatedParent: head}
+	rv := Revalidation{Stale: head != p.Base, ValidatedParent: head, ProposalCommit: p.Commit, File: p.File}
 	if rv.Stale {
 		changed, err := r.git("diff", "--name-only", p.Base, head, "--", p.File)
 		if err != nil {
@@ -195,20 +199,42 @@ func (r *Repo) Revalidate(p ProposalRef, validate Validate) (Revalidation, error
 	if err != nil {
 		return Revalidation{}, err
 	}
-	if _, err := validate(json.RawMessage(content)); err != nil {
+	norm, err := validate(json.RawMessage(content))
+	if err != nil {
 		rv.Reason = "invalid_entry: " + err.Error()
 		return rv, nil
+	}
+	// The committed file must already be the canonical form of the
+	// validated entry, so the digest names exactly what was checked.
+	want, err := canon.Canonicalize(canon.JCS, norm, canon.DefaultLimits())
+	if err != nil {
+		return Revalidation{}, err
+	}
+	if string(want) != content {
+		rv.Reason = "invalid_entry: the committed file is not the canonical validated entry"
+		return rv, nil
+	}
+	if rv.EntryDigest, err = digestOf(content); err != nil {
+		return Revalidation{}, err
 	}
 	rv.OK = true
 	return rv, nil
 }
 
-// Accept merges a revalidated proposal into the designated branch. It
-// refuses if the branch moved after revalidation, so the merge's first parent
-// is always the parent the proposal was validated against.
+func digestOf(content string) (string, error) {
+	return canon.Digest(canon.JCS, []byte(content), canon.DefaultLimits(), "sha256")
+}
+
+// Accept merges a revalidated proposal into the designated branch. The
+// revalidation must be for this proposal. The merge commit is built and
+// checked (parents, accepted file digest) before the branch moves, and the
+// branch is then advanced only if it still points at the validated parent.
 func (r *Repo) Accept(p ProposalRef, rv Revalidation) (AcceptanceRef, error) {
 	if !rv.OK {
 		return AcceptanceRef{}, fmt.Errorf("proposal not revalidated: %s", rv.Reason)
+	}
+	if rv.ProposalCommit != p.Commit || rv.File != p.File {
+		return AcceptanceRef{}, fmt.Errorf("the revalidation is for another proposal")
 	}
 	head, err := r.Head(r.Branch)
 	if err != nil {
@@ -217,31 +243,41 @@ func (r *Repo) Accept(p ProposalRef, rv Revalidation) (AcceptanceRef, error) {
 	if head != rv.ValidatedParent {
 		return AcceptanceRef{}, ErrStale
 	}
-	if _, err := r.git("checkout", "-q", r.Branch); err != nil {
+	// Build the candidate on a detached head at the validated parent.
+	if _, err := r.git("checkout", "-q", "--detach", rv.ValidatedParent); err != nil {
 		return AcceptanceRef{}, err
 	}
+	defer r.git("checkout", "-q", "-f", r.Branch)
 	if _, err := r.git("merge", "-q", "--no-ff", "-m", "Accept "+p.RecordID, p.Commit); err != nil {
+		r.git("merge", "--abort")
 		return AcceptanceRef{}, err
 	}
-	merge, err := r.Head(r.Branch)
+	candidate, err := r.git("rev-parse", "HEAD")
 	if err != nil {
 		return AcceptanceRef{}, err
 	}
-	parents, err := r.git("rev-list", "--parents", "-n", "1", merge)
+	parents, err := r.git("rev-list", "--parents", "-n", "1", candidate)
 	if err != nil {
 		return AcceptanceRef{}, err
 	}
 	f := strings.Fields(parents)
 	if len(f) != 3 || f[1] != rv.ValidatedParent || f[2] != p.Commit {
-		return AcceptanceRef{}, fmt.Errorf("merge parents %v do not match the validated parent and proposal", f[1:])
+		return AcceptanceRef{}, fmt.Errorf("candidate parents %v do not match the validated parent and proposal", f[1:])
 	}
-	content, err := r.git("show", merge+":"+p.File)
+	content, err := r.git("show", candidate+":"+p.File)
 	if err != nil {
 		return AcceptanceRef{}, err
 	}
-	digest, err := canon.Digest(canon.JCS, []byte(content), canon.DefaultLimits(), "sha256")
+	digest, err := digestOf(content)
 	if err != nil {
 		return AcceptanceRef{}, err
 	}
-	return AcceptanceRef{Branch: r.Branch, MergeCommit: merge, Parent: f[1], ProposalCommit: f[2], File: p.File, Digest: digest}, nil
+	if digest != rv.EntryDigest {
+		return AcceptanceRef{}, fmt.Errorf("the merged file differs from the validated entry")
+	}
+	// Advance the designated branch only from the validated parent.
+	if _, err := r.git("update-ref", "refs/heads/"+r.Branch, candidate, rv.ValidatedParent); err != nil {
+		return AcceptanceRef{}, ErrStale
+	}
+	return AcceptanceRef{Branch: r.Branch, MergeCommit: candidate, Parent: f[1], ProposalCommit: f[2], File: p.File, Digest: digest}, nil
 }

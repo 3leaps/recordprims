@@ -342,6 +342,31 @@ func TestRefusalsRegistryChangeAndHolds(t *testing.T) {
 		t.Fatalf("tampered registry opened: %v", err)
 	}
 
+	// A changed schema that is correctly pinned is still refused: this
+	// build's checks implement only the schema revisions they name.
+	changed := append(orig[:len(orig):len(orig)], '\n')
+	os.WriteFile(schema, changed, 0o600)
+	var regDoc map[string]any
+	json.Unmarshal(regRaw, &regDoc)
+	for _, d := range regDoc["descriptors"].([]any) {
+		if dm := d.(map[string]any); dm["kind"] == "risk" {
+			dm["schema"].(map[string]any)["digest"] = fileDigest(changed)
+		}
+	}
+	repinned, _ := json.MarshalIndent(regDoc, "", "  ")
+	os.WriteFile(regPath, repinned, 0o600)
+	var pinCfg map[string]any
+	pinRaw, _ := os.ReadFile(f.project)
+	json.Unmarshal(pinRaw, &pinCfg)
+	pinCfg["registry"].(map[string]any)["digest"] = fileDigest(repinned)
+	f.writeConfig(t, pinCfg)
+	t4 := f.open(t, "rowan")
+	if res, _ := t4.Record(ctx, risk); res.Reason != ReasonUnsupportedSchema {
+		t.Fatalf("changed, pinned schema = %+v", res)
+	}
+	t4.Close()
+	os.WriteFile(schema, orig, 0o600)
+
 	// Change the registry: decision gains descriptor revision 2 with a higher
 	// floor. The project re-pins the registry. The original revision still
 	// resolves under descriptor revision 1.
@@ -389,8 +414,16 @@ func TestRefusalsRegistryChangeAndHolds(t *testing.T) {
 	// A held revision is not served: lookup, render and the search view
 	// all go through the store's serving path.
 	f.clk.advance(time.Second)
-	if hr, err := w3.Hold(ctx, *first.Pin, "op-hold-1", "case-7", "sha256:"+strings.Repeat("e", 64)); err != nil || hr.Outcome != "tombstoned" {
+	hold := HoldRequest{Pin: *first.Pin, OperationKey: "op-hold-1", EvidenceRef: "case-7",
+		EvidenceDigest: "sha256:" + strings.Repeat("e", 64), ObservedAt: "2026-11-23T12:00:00Z"}
+	hr, err := w3.Hold(ctx, hold)
+	if err != nil || hr.Outcome != "tombstoned" {
 		t.Fatalf("hold = %+v (%s), %v", hr, hr.Raw, err)
+	}
+	// A retry of the same hold later returns the original receipt.
+	f.clk.advance(time.Second)
+	if again, err := w3.Hold(ctx, hold); err != nil || again.Outcome != "tombstoned" || again.Seq != hr.Seq {
+		t.Fatalf("hold retry = %+v, %v; want the original %+v", again, err, hr)
 	}
 	if _, err := w3.Lookup(ctx, *first.Pin); !errors.Is(err, ErrNotServed) {
 		t.Fatalf("lookup of a held revision = %v", err)
@@ -407,7 +440,8 @@ func TestRefusalsRegistryChangeAndHolds(t *testing.T) {
 			t.Fatal("the search view lists a held revision")
 		}
 	}
-	if _, err := bot.Hold(ctx, *first.Pin, "op-hold-2", "case-7", "sha256:"+strings.Repeat("e", 64)); err == nil {
+	hold.OperationKey = "op-hold-2"
+	if _, err := bot.Hold(ctx, hold); err == nil {
 		t.Fatal("an agent placed a hold")
 	}
 }

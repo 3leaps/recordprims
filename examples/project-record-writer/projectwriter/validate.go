@@ -13,13 +13,37 @@ import (
 // JSON: instants in the canonical spelling, unknown members refused.
 type validator func(raw json.RawMessage) (json.RawMessage, error)
 
+// implementation is the typed checks for one payload contract and the
+// schema revisions (by sha256 of the pinned schema file) they implement.
+type implementation struct {
+	check   validator
+	schemas map[string]bool
+}
+
 // validators maps each payload contract this build understands to its typed
-// checks. The schemas in the registry describe the same rules; a make target
-// validates the registry's examples against those schemas.
-var validators = map[string]validator{
-	"contract: project-decision/v1": validateDecision,
-	"contract: project-update/v1":   validateUpdate,
-	"contract: harbor-demo-risk/v1": validateRisk,
+// checks. A descriptor whose pinned schema is not one the checks implement is
+// refused, so a changed schema cannot diverge silently from the checks. A
+// make target validates the registry's examples against the same schemas.
+var validators = map[string]implementation{
+	"contract: project-decision/v1": {validateDecision, map[string]bool{
+		"sha256:f0fc10f8e515cbe5eaef2dfb3016eb23feb5b1a2fe8a07830c5129c1c8a26d7e": true}},
+	"contract: project-update/v1": {validateUpdate, map[string]bool{
+		"sha256:0799f73ba7a5d99ab5a563258bb64ee4824d210cc3969ed2ed73e32a32886a4e": true}},
+	"contract: harbor-demo-risk/v1": {validateRisk, map[string]bool{
+		"sha256:5d4aa17cd5d5a89c3aa82fd12fc521c842bf3e24161de4a7fe084179fd1a49f1": true}},
+}
+
+// checksFor returns the typed checks for a descriptor, or an error naming
+// why this build cannot check it.
+func checksFor(d *Descriptor) (validator, string, error) {
+	impl, ok := validators[d.PayloadContract]
+	if !ok {
+		return nil, ReasonUnknownContract, fmt.Errorf("this build has no checks for %s", d.PayloadContract)
+	}
+	if !impl.schemas[d.Schema.Digest] {
+		return nil, ReasonUnsupportedSchema, fmt.Errorf("this build's checks for %s do not implement schema %s", d.PayloadContract, d.Schema.Digest)
+	}
+	return impl.check, "", nil
 }
 
 // Reference is an exact reference to a document, run, evidence or record.
@@ -209,10 +233,10 @@ func validateRisk(raw json.RawMessage) (json.RawMessage, error) {
 // NormalizeEntry runs the typed checks for payloadContract on raw and returns
 // the normalized entry. Callers with another authority (such as a reviewed
 // Git merge) use it to apply the same checks as Record.
-func NormalizeEntry(payloadContract string, raw json.RawMessage) (json.RawMessage, error) {
-	check, ok := validators[payloadContract]
-	if !ok {
-		return nil, fmt.Errorf("%s: %s", ReasonUnknownContract, payloadContract)
+func NormalizeEntry(d *Descriptor, raw json.RawMessage) (json.RawMessage, error) {
+	check, reason, err := checksFor(d)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", reason, err)
 	}
 	return check(raw)
 }

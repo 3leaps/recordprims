@@ -104,7 +104,9 @@ listed in the registry. To check a historical record, find the descriptor with
 that kind, revision and digest (the registry keeps earlier revisions), then the
 schema by its pinned digest. A schema file that no longer matches its pin marks
 its descriptor untrusted; a registry that no longer matches the project's pin
-is refused.
+is refused. The typed checks in `projectwriter` name the schema revisions they
+implement; a descriptor that pins any other schema is refused with
+`unsupported_schema`, so a changed schema cannot drift from the checks.
 
 Writers: a `maintainer` may write any kind and place holds; an `agent` or
 `external` writer may write only kinds whose descriptor names its class.
@@ -138,8 +140,11 @@ it with `ReversalsOf`.
 `Lookup`, `Render` and the search view read through the store's serving path
 (`Release` with purpose `serve`). A held revision, or a retired record, is not
 served, so it does not appear in any of them. `Hold` places an operator hold on
-a revision. The search view is derived only from served records: `reindex`
-rebuilds it, and deleting it loses nothing.
+a revision; its request carries the operator's `observed_at`, so a retry with
+the same fields and key returns the original receipt. The search view is
+derived only from served records: `reindex` rebuilds it, and deleting it loses
+nothing. `search` also drops any hit the store no longer serves, so a hold
+placed after the last `reindex` takes effect at once.
 
 ## Producer time
 
@@ -160,10 +165,13 @@ the `git` binary:
 - `Revalidate` checks the proposal against the current head of the designated
   branch, which a merge would use as its first parent. A proposal whose base
   has moved is stale; it is still accepted if the new head did not change its
-  file, and refused as a competing edit if it did.
-- `Accept` merges it, refuses if the branch moved after revalidation, and
-  returns the acceptance reference: the merge commit, its validated parent,
-  the proposal commit and the digest of the accepted file.
+  file, and refused as a competing edit if it did. The result is bound to the
+  proposal commit, its file and the digest of the validated entry.
+- `Accept` takes a revalidation of that proposal only. It builds the merge
+  commit, checks its parents and the accepted file's digest, and only then
+  advances the designated branch, and only if the branch still points at the
+  validated parent. It returns the acceptance reference: the merge commit, its
+  validated parent, the proposal commit and the digest of the accepted file.
 
 This is a fixture. It makes no durability claim for Git, uses no forge, and its
 references carry no signature.

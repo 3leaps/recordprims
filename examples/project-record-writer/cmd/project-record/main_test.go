@@ -134,6 +134,21 @@ func TestCLIWalkThroughAcrossProcesses(t *testing.T) {
 	if len(hits) != 1 || hits[0].Pin != *res.Pin {
 		t.Fatalf("search = %+v", hits)
 	}
+	// A hold placed after the view was built: search no longer returns the
+	// revision, although the persisted view still lists it.
+	var hold recordprims.ProtectionReceipt
+	json.Unmarshal(cli(0, nil, "--as", "rowan", "hold", string(pinArg), "op-hold-cli", "case-9",
+		"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "2026-11-01T00:00:00Z"), &hold)
+	if hold.Outcome != "tombstoned" {
+		t.Fatalf("hold = %+v", hold)
+	}
+	hits = nil
+	json.Unmarshal(cli(0, nil, "search", "intake queue"), &hits)
+	if len(hits) != 0 {
+		t.Fatalf("search after a hold = %+v", hits)
+	}
+	cli(3, nil, "resolve", string(pinArg))
+
 	var unknown pw.Result
 	json.Unmarshal(cli(3, nil, "inspect", "incident"), &unknown)
 	if unknown.Reason != pw.ReasonUnknownKind {

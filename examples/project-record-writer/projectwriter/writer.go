@@ -28,6 +28,7 @@ const (
 	ReasonGitAuthority        = "git_authority"
 	ReasonUntrustedDescriptor = "untrusted_descriptor"
 	ReasonUnknownContract     = "unknown_contract"
+	ReasonUnsupportedSchema   = "unsupported_schema"
 	ReasonUnauthorizedWriter  = "unauthorized_writer"
 	ReasonBelowFloor          = "classification_below_floor"
 	ReasonInvalidPayload      = "invalid_payload"
@@ -98,7 +99,6 @@ type Writer struct {
 	streams  map[string]*recordprims.Stream // by project kind
 	caller   WriterConfig
 	hasUser  bool
-	clock    recordprims.Clock
 }
 
 // Init creates the project's store and its streams. The store directory must
@@ -147,10 +147,7 @@ func Open(projectPath string, opts Options) (*Writer, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &Writer{project: p, registry: reg, store: st, streams: map[string]*recordprims.Stream{}, clock: opts.Clock}
-	if w.clock == nil {
-		w.clock = systemClock{}
-	}
+	w := &Writer{project: p, registry: reg, store: st, streams: map[string]*recordprims.Stream{}}
 	if opts.Caller != "" {
 		w.caller, w.hasUser = p.writer(opts.Caller)
 	}
@@ -311,9 +308,9 @@ func (w *Writer) prepare(req Request) (prepared, Result, bool) {
 		return prepared{}, w.refuse(req, ReasonBelowFloor, fmt.Sprintf("the floor for %s is %s / %s",
 			req.Kind, d.Classification.Sensitivity, d.Classification.Retention)), false
 	}
-	check, ok := validators[d.PayloadContract]
-	if !ok {
-		return prepared{}, w.refuse(req, ReasonUnknownContract, "this build has no checks for "+d.PayloadContract), false
+	check, reason, err := checksFor(d)
+	if err != nil {
+		return prepared{}, w.refuse(req, reason, err.Error()), false
 	}
 	entry, err := check(req.Entry)
 	if err != nil {
@@ -453,13 +450,23 @@ func (w *Writer) Reconcile(kind, operationKey string, attemptedAt time.Time) (Re
 	return presentReceipt(base, receipt), nil
 }
 
-type systemClock struct{}
-
-func (systemClock) Now() time.Time { return time.Now() }
+// HoldRequest asks for an operator hold on one revision. ObservedAt is when
+// the operator observed the reason for the hold (seconds, milliseconds or
+// microseconds); it is part of the request, so a retry with the same fields
+// and key returns the original receipt.
+type HoldRequest struct {
+	Pin            recordprims.Pin `json:"pin"`
+	OperationKey   string          `json:"operation_key"`
+	EvidenceRef    string          `json:"evidence_ref"`
+	EvidenceDigest string          `json:"evidence_digest"`
+	ObservedAt     string          `json:"observed_at"`
+}
 
 // Hold places an operator hold on one revision. Held revisions are not served.
-// Only a maintainer may place a hold.
-func (w *Writer) Hold(ctx context.Context, pin recordprims.Pin, operationKey, evidenceRef, evidenceDigest string) (recordprims.ProtectionReceipt, error) {
+// Only a maintainer may place a hold. ObservedAt must not be later than the
+// store's decision time; a refused hold returns outcome "rejected".
+func (w *Writer) Hold(ctx context.Context, h HoldRequest) (recordprims.ProtectionReceipt, error) {
+	pin, operationKey, evidenceRef, evidenceDigest := h.Pin, h.OperationKey, h.EvidenceRef, h.EvidenceDigest
 	if !w.hasUser || w.caller.Class != "maintainer" {
 		return recordprims.ProtectionReceipt{}, fmt.Errorf("%s: only a maintainer may place a hold", ReasonUnauthorizedWriter)
 	}
@@ -472,9 +479,9 @@ func (w *Writer) Hold(ctx context.Context, pin recordprims.Pin, operationKey, ev
 	if s == nil {
 		return recordprims.ProtectionReceipt{}, fmt.Errorf("%s: no kind of this project uses stream %s", ReasonUnknownKind, pin.Stream)
 	}
-	observed, err := recordprims.ProducerInstant(w.clock.Now().UTC().Truncate(time.Microsecond))
+	observed, err := recordprims.NormalizeProducerInstant(h.ObservedAt)
 	if err != nil {
-		return recordprims.ProtectionReceipt{}, err
+		return recordprims.ProtectionReceipt{}, fmt.Errorf("%s: observed_at: %w", ReasonInvalidRequest, err)
 	}
 	req, err := json.Marshal(map[string]any{
 		"v": 1, "stream": pin.Stream, "idempotency_key": operationKey, "action": "tombstone",

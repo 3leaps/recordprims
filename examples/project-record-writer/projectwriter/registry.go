@@ -83,6 +83,9 @@ var (
 	classRank = map[string]int{"external": 0, "agent": 1, "maintainer": 2}
 )
 
+// LoadRegistry reads a registry file pinned by digest (see loadRegistry).
+func LoadRegistry(path, digest string) (*Registry, error) { return loadRegistry(path, digest) }
+
 // loadRegistry reads the registry pinned by ref and each descriptor's schema.
 // A registry whose digest differs from the pin is refused as a whole. A
 // descriptor whose schema file differs from its own pin is loaded but marked

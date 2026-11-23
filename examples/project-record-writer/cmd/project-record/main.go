@@ -14,9 +14,10 @@
 //	resolve <pin>                        the served revision at a pin (JSON, or a file with a pin or result)
 //	history <kind> <record_id>           every revision of a record
 //	render <pin>                         the Markdown page for a pin
-//	hold <pin> <key> <ref> <digest>      place an operator hold on a revision
+//	hold <pin> <key> <ref> <digest> <observed_at>
+//	                                     place an operator hold on a revision
 //	reindex                              rebuild the search view
-//	search <text>                        search the view
+//	search <text>                        search the view (only revisions served now)
 //
 // Output is JSON on stdout (Markdown for render). Exit status: 0 success,
 // 3 a refused, conflicting or indeterminate outcome, 2 usage, 1 error.
@@ -166,14 +167,14 @@ func dispatch(ctx context.Context, w *pw.Writer, cmd string, args []string, stdi
 		}
 		return emit(stdout, map[string]any{"revisions": h}), nil
 	case "hold":
-		if err := need(args, 4, "hold <pin-json> <operation_key> <evidence_ref> <evidence_digest>"); err != nil {
+		if err := need(args, 5, "hold <pin> <operation_key> <evidence_ref> <evidence_digest> <observed_at>"); err != nil {
 			return 2, err
 		}
 		pin, err := readPin(args[0])
 		if err != nil {
 			return 2, err
 		}
-		rc, err := w.Hold(ctx, pin, args[1], args[2], args[3])
+		rc, err := w.Hold(ctx, pw.HoldRequest{Pin: pin, OperationKey: args[1], EvidenceRef: args[2], EvidenceDigest: args[3], ObservedAt: args[4]})
 		if err != nil {
 			return 1, err
 		}
@@ -192,11 +193,11 @@ func dispatch(ctx context.Context, w *pw.Writer, cmd string, args []string, stdi
 		if err := need(args, 1, "search <text>"); err != nil {
 			return 2, err
 		}
-		v, err := w.LoadSearchView()
+		hits, err := w.Search(ctx, args[0])
 		if err != nil {
-			return 1, fmt.Errorf("search view: %w (run reindex)", err)
+			return 1, fmt.Errorf("search: %w (run reindex if the view is missing)", err)
 		}
-		return emit(stdout, v.Search(args[0])), nil
+		return emit(stdout, hits), nil
 	}
 	return 2, fmt.Errorf("unknown command %q", cmd)
 }

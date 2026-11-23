@@ -375,3 +375,41 @@ func (w *Writer) LoadSearchView() (SearchView, error) {
 	err = json.Unmarshal(raw, &v)
 	return v, err
 }
+
+// servedPins is the set of revisions the store serves now, across the
+// project's store kinds.
+func (w *Writer) servedPins(ctx context.Context) (map[recordprims.Pin]bool, error) {
+	out := map[recordprims.Pin]bool{}
+	for _, s := range w.streams {
+		c, err := w.serve(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		for pin := range c.records {
+			out[pin] = true
+		}
+	}
+	return out, nil
+}
+
+// Search searches the persisted view, then drops any hit the store no longer
+// serves (held since the view was built, or retired), so a stale view never
+// returns content the serving path would refuse. Rebuild the view to pick up
+// new revisions.
+func (w *Writer) Search(ctx context.Context, query string) ([]SearchItem, error) {
+	view, err := w.LoadSearchView()
+	if err != nil {
+		return nil, err
+	}
+	served, err := w.servedPins(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []SearchItem{}
+	for _, it := range view.Search(query) {
+		if served[it.Pin] {
+			out = append(out, it)
+		}
+	}
+	return out, nil
+}
