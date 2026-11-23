@@ -1,0 +1,6 @@
+{
+  "project": "harbor-demo",
+  "descriptor": {"kind": "decision", "owner": "example.org/project-records", "revision": 1, "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+  "entry_contract": "project-decision",
+  "entry": {"title": "Adopt the queue"}
+}

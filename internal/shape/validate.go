@@ -384,3 +384,24 @@ func equal(a, b *wire.Node) bool {
 	}
 	return false
 }
+
+// ValidateDocument compiles schemaRaw (named name in diagnostics) under the
+// same keyword subset as the pinned schemas and checks instance against it.
+// A schema outside the subset is a compile error, never a loose validation.
+// It serves repository tooling that validates example schemas; it is not
+// part of the store's validation path.
+func ValidateDocument(name string, schemaRaw []byte, instance *wire.Node) error {
+	d, err := compileDoc(name, schemaRaw)
+	if err != nil {
+		return err
+	}
+	st := &state{d: d}
+	f := st.check(d.root, instance)
+	if st.limit {
+		return &wire.Reject{Reason: wire.ReasonLocalLimit, Detail: "shape: validation work exceeds the local bound"}
+	}
+	if f != nil {
+		return &wire.Reject{Reason: ReasonShape, Detail: name + " " + f.path + " " + f.keyword}
+	}
+	return nil
+}

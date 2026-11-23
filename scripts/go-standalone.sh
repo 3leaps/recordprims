@@ -11,11 +11,12 @@ trap 'rm -rf "$dest"' EXIT
 cd "$root"
 # Copy the Go module's own files only (tracked .go sources, go.mod/go.sum and
 # the schemas and test data internal/shape uses, and the shared testdata),
-# preserving directories.
+# preserving directories. The example modules under examples/ have their own
+# go.mod and gate (make example-check).
 while IFS= read -r f; do
   mkdir -p "$dest/mod/$(dirname "$f")"
   cp "$f" "$dest/mod/$f"
-done < <(git ls-files 'go.mod' 'go.sum' '*.go' 'internal/shape/schemas/*.json' 'internal/shape/testdata/*.json' 'testdata/*.json' | grep -v '^crates/' | grep -v '^contract/')
+done < <(git ls-files 'go.mod' 'go.sum' '*.go' 'internal/shape/schemas/*.json' 'internal/shape/testdata/*.json' 'testdata/*.json' | grep -v '^crates/' | grep -v '^contract/' | grep -v '^examples/')
 
 cd "$dest/mod"
 log="$dest/go-test.log"

@@ -1,0 +1,257 @@
+package projectwriter
+
+import (
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"unicode/utf8"
+
+	"github.com/3leaps/recordprims"
+)
+
+// validator checks one payload contract's entry and returns its normalized
+// JSON: instants in the canonical spelling, unknown members refused.
+type validator func(raw json.RawMessage) (json.RawMessage, error)
+
+// implementation is the typed checks for one payload contract and the
+// schema revisions (by sha256 of the pinned schema file) they implement.
+type implementation struct {
+	check   validator
+	schemas map[string]bool
+}
+
+// validators maps each payload contract this build understands to its typed
+// checks. A descriptor whose pinned schema is not one the checks implement is
+// refused, so a changed schema cannot diverge silently from the checks. A
+// make target validates the registry's examples against the same schemas.
+var validators = map[string]implementation{
+	ContractDecision: {validateDecision, map[string]bool{
+		"sha256:0498b8084d15d62d09fce513b0175071c40daffd634fdc966e90d481e121b92e": true}},
+	ContractUpdate: {validateUpdate, map[string]bool{
+		"sha256:80a0b5c291f9d5055bbaaaba019af9801b903654a487711079add04981d47e8e": true}},
+	ContractRisk: {validateRisk, map[string]bool{
+		"sha256:c8f7b339ae0651435cbf56095f2bb7451db4786a500de2707b1fd76adc27a71e": true}},
+}
+
+// The contracts this example defines. They are illustrative, not a published
+// vocabulary. A record's payload_contract is always RecordPayloadContract:
+// the wrapper {project, descriptor, entry_contract, entry}. The entry inside
+// it follows the entry contract its descriptor names.
+const (
+	RecordPayloadContract = "contract: example-project-record/v1"
+	ContractDecision      = "contract: example-project-decision/v1"
+	ContractUpdate        = "contract: example-project-update/v1"
+	ContractRisk          = "contract: example-harbor-demo-risk/v1"
+)
+
+// recordSchemaDigest is the wrapper schema the writer's payload construction
+// implements.
+const recordSchemaDigest = "sha256:b69966ea220c35c1beb271f7c2434cd3a0a7d207f0dba9bea7549cc4fd88628f"
+
+// checksFor returns the typed checks for a descriptor, or an error naming
+// why this build cannot check it.
+func checksFor(d *Descriptor) (validator, string, error) {
+	impl, ok := validators[d.EntryContract]
+	if !ok {
+		return nil, ReasonUnknownContract, fmt.Errorf("this build has no checks for %s", d.EntryContract)
+	}
+	if !impl.schemas[d.Schema.Digest] {
+		return nil, ReasonUnsupportedSchema, fmt.Errorf("this build's checks for %s do not implement schema %s", d.EntryContract, d.Schema.Digest)
+	}
+	return impl.check, "", nil
+}
+
+// Reference is an exact reference to a document, run, evidence or record.
+type Reference struct {
+	Kind   string `json:"kind"`
+	Ref    string `json:"ref"`
+	Digest string `json:"digest,omitempty"`
+}
+
+// Authority is who made a decision.
+type DecisionAuthority struct {
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
+// EvidenceAbsent states why a decision has no evidence.
+type EvidenceAbsent struct {
+	Reason string `json:"reason"`
+}
+
+// Decision is the contract: example-project-decision/v1 entry.
+type Decision struct {
+	Title          string            `json:"title"`
+	Decision       string            `json:"decision"`
+	Rationale      string            `json:"rationale"`
+	Authority      DecisionAuthority `json:"authority"`
+	Evidence       []Reference       `json:"evidence,omitempty"`
+	EvidenceAbsent *EvidenceAbsent   `json:"evidence_absent,omitempty"`
+	DecidedAt      string            `json:"decided_at"`
+	Reverses       *recordprims.Pin  `json:"reverses,omitempty"`
+}
+
+// Update is the contract: example-project-update/v1 entry.
+type Update struct {
+	Summary    string      `json:"summary"`
+	Status     string      `json:"status"`
+	ObservedAt string      `json:"observed_at"`
+	References []Reference `json:"references,omitempty"`
+}
+
+// Risk is the project-defined contract: example-harbor-demo-risk/v1 entry.
+type Risk struct {
+	Title      string `json:"title"`
+	Likelihood string `json:"likelihood"`
+	Impact     string `json:"impact"`
+	Owner      string `json:"owner"`
+	Mitigation string `json:"mitigation"`
+}
+
+var (
+	reRecordID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	reStreamID = reStream
+)
+
+// invalid is a payload refusal with a field path, never field content.
+type invalid struct{ field, rule string }
+
+func (e *invalid) Error() string { return e.field + ": " + e.rule }
+
+func text(field, v string, max int) error {
+	if v == "" || !utf8.ValidString(v) || utf8.RuneCountInString(v) > max {
+		return &invalid{field, fmt.Sprintf("must be 1 to %d characters", max)}
+	}
+	return nil
+}
+
+func instant(field string, v *string) error {
+	c, err := recordprims.NormalizeProducerInstant(*v)
+	if err != nil {
+		return &invalid{field, "must be a UTC instant at seconds, milliseconds or microseconds"}
+	}
+	*v = c
+	return nil
+}
+
+func references(field string, refs []Reference, present bool) error {
+	if present && (len(refs) < 1 || len(refs) > 32) {
+		return &invalid{field, "must list 1 to 32 references"}
+	}
+	for i, r := range refs {
+		f := fmt.Sprintf("%s[%d]", field, i)
+		switch r.Kind {
+		case "document", "run", "evidence", "record":
+		default:
+			return &invalid{f + ".kind", "must be document, run, evidence or record"}
+		}
+		if err := text(f+".ref", r.Ref, 256); err != nil {
+			return err
+		}
+		if r.Digest != "" && !reDigest.MatchString(r.Digest) {
+			return &invalid{f + ".digest", "must be sha256:<64 hex>"}
+		}
+	}
+	return nil
+}
+
+func hasMember(raw json.RawMessage, name string) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return false
+	}
+	_, ok := m[name]
+	return ok
+}
+
+func validateDecision(raw json.RawMessage) (json.RawMessage, error) {
+	var d Decision
+	if err := decodeStrict(raw, &d); err != nil {
+		return nil, &invalid{"entry", "is not a decision: " + err.Error()}
+	}
+	for _, c := range []struct {
+		f, v string
+		n    int
+	}{{"title", d.Title, 200}, {"decision", d.Decision, 4000}, {"rationale", d.Rationale, 8000},
+		{"authority.name", d.Authority.Name, 128}, {"authority.role", d.Authority.Role, 128}} {
+		if err := text(c.f, c.v, c.n); err != nil {
+			return nil, err
+		}
+	}
+	hasEvidence := hasMember(raw, "evidence")
+	if hasEvidence == (d.EvidenceAbsent != nil) {
+		return nil, &invalid{"evidence", "give evidence or evidence_absent, not both or neither"}
+	}
+	if err := references("evidence", d.Evidence, hasEvidence); err != nil {
+		return nil, err
+	}
+	if d.EvidenceAbsent != nil {
+		if err := text("evidence_absent.reason", d.EvidenceAbsent.Reason, 500); err != nil {
+			return nil, err
+		}
+	}
+	if err := instant("decided_at", &d.DecidedAt); err != nil {
+		return nil, err
+	}
+	if p := d.Reverses; p != nil {
+		if !reStreamID.MatchString(p.Stream) || !reRecordID.MatchString(p.RecordID) || p.Revision < 1 ||
+			!reDigest.MatchString(p.Digest) {
+			return nil, &invalid{"reverses", "must be an exact record pin"}
+		}
+	}
+	return json.Marshal(d)
+}
+
+func validateUpdate(raw json.RawMessage) (json.RawMessage, error) {
+	var u Update
+	if err := decodeStrict(raw, &u); err != nil {
+		return nil, &invalid{"entry", "is not a project update: " + err.Error()}
+	}
+	if err := text("summary", u.Summary, 4000); err != nil {
+		return nil, err
+	}
+	switch u.Status {
+	case "on_track", "at_risk", "blocked", "done":
+	default:
+		return nil, &invalid{"status", "must be on_track, at_risk, blocked or done"}
+	}
+	if err := instant("observed_at", &u.ObservedAt); err != nil {
+		return nil, err
+	}
+	if err := references("references", u.References, hasMember(raw, "references")); err != nil {
+		return nil, err
+	}
+	return json.Marshal(u)
+}
+
+func validateRisk(raw json.RawMessage) (json.RawMessage, error) {
+	var r Risk
+	if err := decodeStrict(raw, &r); err != nil {
+		return nil, &invalid{"entry", "is not a risk: " + err.Error()}
+	}
+	for _, c := range []struct{ f, v string }{{"likelihood", r.Likelihood}, {"impact", r.Impact}} {
+		if c.v != "low" && c.v != "medium" && c.v != "high" {
+			return nil, &invalid{c.f, "must be low, medium or high"}
+		}
+	}
+	for _, c := range []struct {
+		f, v string
+		n    int
+	}{{"title", r.Title, 200}, {"owner", r.Owner, 128}, {"mitigation", r.Mitigation, 4000}} {
+		if err := text(c.f, c.v, c.n); err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(r)
+}
+
+// NormalizeEntry runs the typed checks for payloadContract on raw and returns
+// the normalized entry. Callers with another authority (such as a reviewed
+// Git merge) use it to apply the same checks as Record.
+func NormalizeEntry(d *Descriptor, raw json.RawMessage) (json.RawMessage, error) {
+	check, reason, err := checksFor(d)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", reason, err)
+	}
+	return check(raw)
+}

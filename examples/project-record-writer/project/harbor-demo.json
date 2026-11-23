@@ -1,0 +1,18 @@
+{
+  "project": "harbor-demo",
+  "registry": {"path": "../registry/registry.json", "digest": "sha256:f9bdc5d164e0ba7a2cff6637ce31bd02e49bf217cfff795633a174c972a92b00"},
+  "store": "../.local/harbor-demo-store",
+  "search_view": "../.local/harbor-demo-search.json",
+  "idempotency_window": "168h",
+  "kinds": {
+    "decision": {"stream": "harbor-demo.decision", "authority": "recordprims"},
+    "project-update": {"stream": "harbor-demo.update", "authority": "recordprims"},
+    "risk": {"stream": "harbor-demo.risk", "authority": "recordprims"},
+    "runbook-decision": {"descriptor": "decision", "authority": "git", "git": {"branch": "main", "path": "decisions"}}
+  },
+  "writers": [
+    {"name": "rowan", "class": "maintainer", "actor_kind": "human"},
+    {"name": "status-bot", "class": "agent", "actor_kind": "agent"},
+    {"name": "vendor-liaison", "class": "external", "actor_kind": "human"}
+  ]
+}
