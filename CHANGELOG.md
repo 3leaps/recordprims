@@ -7,6 +7,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-23
+
+- `UseRequest.Selection` documented as it behaves: an explicit selection
+  applies to serve, export and reuse; a selected held revision is refused for
+  every purpose and a selected retired record is refused for serve. Go and Rust
+  tests cover each purpose
+- Example: `examples/project-record-writer`, a separate module with no
+  compatibility promise, records project decisions and updates through the
+  public Go API
 - Producer instants: `NormalizeProducerInstant` / `normalize_producer_instant`
   turn a UTC instant observed at whole seconds, milliseconds or microseconds
   into the canonical six-digit spelling, refusing every other spelling;
@@ -109,6 +118,7 @@ The first tag. Pre-release; the API will change before 0.1.0.
   oracle, sibling-prim allow-list, exported-API scan, workflow digest pins, a
   vocabulary-free content check, and a maintainer public-surface scan
 
-[Unreleased]: https://github.com/3leaps/recordprims/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/3leaps/recordprims/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/3leaps/recordprims/compare/v0.0.2...v0.1.0
 [0.0.2]: https://github.com/3leaps/recordprims/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/3leaps/recordprims/tree/v0.0.1

@@ -13,7 +13,7 @@ Two strata exist today:
 | `journal-files` | `recordprims-fs/v2` | The local filesystem store behind the public Go API. |
 | `ndjson-cas` | bucket CAS | Internal. A conditional-write object store layout; not yet reachable through the public API. |
 
-The stratum seam is internal and may change before 0.1.0. This document
+The stratum seam is internal and may change in any release. This document
 records the guarantees a backend must give, so that backend implementations and
 test harnesses can be built against them.
 
