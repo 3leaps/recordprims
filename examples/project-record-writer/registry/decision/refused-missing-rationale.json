@@ -1,0 +1,7 @@
+{
+  "title": "Use one intake queue for berth requests",
+  "decision": "All berth requests enter through the shared intake queue.",
+  "authority": {"name": "Rowan Example", "role": "operations lead"},
+  "evidence_absent": {"reason": "None recorded."},
+  "decided_at": "2026-11-20T15:00:00.000000Z"
+}

@@ -1,0 +1,9 @@
+{
+  "title": "Use one intake queue for berth requests",
+  "decision": "All berth requests enter through the shared intake queue.",
+  "rationale": "Two intake paths caused double bookings.",
+  "authority": {"name": "Rowan Example", "role": "operations lead"},
+  "evidence": [{"kind": "document", "ref": "trial-report-2026-10"}],
+  "evidence_absent": {"reason": "None recorded."},
+  "decided_at": "2026-11-20T15:00:00.000000Z"
+}

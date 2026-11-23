@@ -1,0 +1,8 @@
+{
+  "summary": "Intake queue live for all berths; two email requests redirected this week.",
+  "status": "on_track",
+  "observed_at": "2026-11-23T12:00:00.000000Z",
+  "references": [
+    {"kind": "run", "ref": "intake-sync-2026-11-23", "digest": "sha256:8d1e4b8e4f1d2c0f3a6b5c7d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b"}
+  ]
+}

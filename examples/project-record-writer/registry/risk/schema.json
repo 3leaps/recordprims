@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "harbor-demo/risk/v1",
+  "title": "Project risk",
+  "description": "A risk owned by this project: likelihood, impact, owner and mitigation. Defined by the project, not by the shared kinds.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "likelihood", "impact", "owner", "mitigation"],
+  "properties": {
+    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+    "likelihood": {"enum": ["low", "medium", "high"]},
+    "impact": {"enum": ["low", "medium", "high"]},
+    "owner": {"type": "string", "minLength": 1, "maxLength": 128},
+    "mitigation": {"type": "string", "minLength": 1, "maxLength": 4000}
+  }
+}

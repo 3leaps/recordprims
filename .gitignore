@@ -8,6 +8,9 @@
 /AGENTS.local.md
 /.limensafe/
 
+# Example stores and views created by the quick start
+/examples/project-record-writer/.local/
+
 # Secrets
 /.env
 /.env.*

@@ -9,6 +9,7 @@ export PYTHON
 
 .DEFAULT_GOAL := help
 .PHONY: all help check check-platform precommit fmt fmt-check lint test test-go test-rust \
+        example-check example-schemas \
         test-faultpoints faultpoint-exclusion contract-check contract-oracle conformance crosscheck unsafe-check unsafe-check-test deps-check api-scan api-scan-test deny go-standalone surface-scan content-check \
         surface-tests prepush pr-final workflow-pin release-tooling-test checklist-targets doctor doctor-test \
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
@@ -22,7 +23,7 @@ all: check
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*## "} /^[a-z][a-z0-9-]*:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-check-platform: fmt-check lint test test-faultpoints faultpoint-exclusion contract-check conformance crosscheck unsafe-check unsafe-check-test deps-check api-scan api-scan-test content-check surface-tests checklist-targets version-check license-check license-check-test ## Platform-native subset of check (no goneat, cargo-deny, or PyYAML required)
+check-platform: fmt-check lint test example-check test-faultpoints faultpoint-exclusion contract-check conformance crosscheck unsafe-check unsafe-check-test deps-check api-scan api-scan-test content-check surface-tests checklist-targets version-check license-check license-check-test ## Platform-native subset of check (no goneat, cargo-deny, or PyYAML required)
 
 check: check-platform contract-oracle workflow-pin release-tooling-test deny ## Everything CI runs on one host
 
@@ -181,6 +182,15 @@ test: test-go test-rust ## Go and Rust tests
 
 test-go: ## Go tests (cgo-free)
 	CGO_ENABLED=0 go test -count=1 ./...
+
+EXAMPLE_DIR := examples/project-record-writer
+
+example-schemas: ## The example's payload schemas admit their valid examples and refuse the others
+	CGO_ENABLED=0 go run ./internal/tools/schemacheck $(EXAMPLE_DIR)/registry/decision $(EXAMPLE_DIR)/registry/project-update $(EXAMPLE_DIR)/registry/risk
+
+example-check: example-schemas ## Build, vet and test the example module (its own go.mod)
+	cd $(EXAMPLE_DIR) && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test -count=1 ./...
+	@echo "[ok] example-check"
 
 test-rust: ## Rust tests
 	cargo test --locked

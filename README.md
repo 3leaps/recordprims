@@ -50,6 +50,13 @@ bindings land before 0.1.0.
 Storage backends sit behind an internal seam; the guarantees a backend must
 provide are described in [docs/storage-strata.md](docs/storage-strata.md).
 
+## Example: record a project decision or update
+
+[`examples/project-record-writer`](examples/project-record-writer/) records
+project decisions and updates through the public Go API and reads them back as
+structured data or Markdown. It is a separate module with no compatibility
+promise, and is not part of a release.
+
 ## Releases
 
 Each release is one signed tag, `vX.Y.Z`, covering the Go module and the Rust

@@ -1,0 +1,8 @@
+{
+  "title": "Pause night arrivals during the dredging window",
+  "decision": "No arrivals between 22:00 and 05:00 until dredging ends.",
+  "rationale": "The contractor needs the channel clear overnight.",
+  "authority": {"name": "Rowan Example", "role": "operations lead"},
+  "evidence_absent": {"reason": "Agreed verbally with the contractor; the written schedule follows."},
+  "decided_at": "2026-11-21T09:30:00.000000Z"
+}

@@ -1,0 +1,45 @@
+{
+  "registry": "harbor-demo-kinds",
+  "registry_version": "1.0.0",
+  "descriptors": [
+    {
+      "kind": "decision",
+      "owner": "example.org/project-records",
+      "descriptor_revision": 1,
+      "payload_contract": "contract: project-decision/v1",
+      "schema": {"path": "decision/schema.json", "digest": "sha256:f0fc10f8e515cbe5eaef2dfb3016eb23feb5b1a2fe8a07830c5129c1c8a26d7e"},
+      "carrier": "payload",
+      "revision_policy": "revisioned",
+      "writer_class": "maintainer",
+      "classification": {"sensitivity": "1-confidential", "retention-lifecycle": "long"},
+      "stream_volatility": "weekly",
+      "example": "decision/valid-adopt-queue.json"
+    },
+    {
+      "kind": "project-update",
+      "owner": "example.org/project-records",
+      "descriptor_revision": 1,
+      "payload_contract": "contract: project-update/v1",
+      "schema": {"path": "project-update/schema.json", "digest": "sha256:0799f73ba7a5d99ab5a563258bb64ee4824d210cc3969ed2ed73e32a32886a4e"},
+      "carrier": "payload",
+      "revision_policy": "revisioned",
+      "writer_class": "agent",
+      "classification": {"sensitivity": "1-confidential", "retention-lifecycle": "standard"},
+      "stream_volatility": "daily",
+      "example": "project-update/valid-weekly.json"
+    },
+    {
+      "kind": "risk",
+      "owner": "example.org/harbor-demo",
+      "descriptor_revision": 1,
+      "payload_contract": "contract: harbor-demo-risk/v1",
+      "schema": {"path": "risk/schema.json", "digest": "sha256:5d4aa17cd5d5a89c3aa82fd12fc521c842bf3e24161de4a7fe084179fd1a49f1"},
+      "carrier": "payload",
+      "revision_policy": "revisioned",
+      "writer_class": "maintainer",
+      "classification": {"sensitivity": "1-confidential", "retention-lifecycle": "standard"},
+      "stream_volatility": "weekly",
+      "example": "risk/valid-supplier.json"
+    }
+  ]
+}
