@@ -1,0 +1,22 @@
+# YAML formatting and linting share the root two-space policy (.yamlfmt,
+# .yamllint); `make lint-yaml` runs the same checks without goneat.
+version: 1
+lint:
+  yamllint:
+    enabled: true
+    strict: true
+    paths:
+      - ".yamlfmt"
+      - ".yamllint"
+      - ".fulmen/**/*.yaml"
+      - ".github/**/*.yml"
+      - ".github/**/*.yaml"
+      - ".goneat/**/*.yaml"
+    ignore: []
+  github_actions:
+    actionlint:
+      enabled: true
+      paths:
+        - ".github/workflows/**/*.yml"
+        - ".github/workflows/**/*.yaml"
+      ignore: []
