@@ -16,7 +16,7 @@ export PYTHON
         release-github-preflight release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
         release-verify-remote-tag release-record-anchor release-download release-notes release-checksums \
         release-sign release-verify release-create-draft release-publish release-verify-published \
-        license-check license-check-test release-check version version-check version-sync version-set version-patch \
+        license-check license-check-test version version-check version-sync version-set version-patch \
         version-minor version-major build clean
 
 all: check
@@ -87,7 +87,7 @@ release-ceremony-test: ## Synthetic release-ceremony controls (throwaway keys; m
 # -----------------------------------------------------------------------------
 #
 # A release is one signed annotated tag, vX.Y.Z, at a commit of main; it
-# releases the Rust crate and the root Go module together. The tag is an
+# releases the root Go module (and the Rust crate once that is published). The tag is an
 # explicit input (RECORDPRIMS_RELEASE_TAG); it is never derived from VERSION,
 # git describe or the branch, and a bare RELEASE_TAG from any origin is refused
 # so it cannot stand in for it.
@@ -294,9 +294,6 @@ deny: ## cargo-deny: licences, bans, sources, advisories
 go-standalone: ## The Go module stands alone: copied outside the repo, no skipped tests
 	@scripts/go-standalone.sh
 
-release-check: ## Release readiness (pre-release: no release machinery yet)
-	@echo "release-check: recordprims is pre-release; release machinery (signing, provenance, publish) lands before the first tag" >&2
-	@exit 1
 
 version: ## Print the version
 	@cat VERSION
