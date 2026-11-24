@@ -253,10 +253,12 @@ type ReleaseResult struct {
 	ReleasedThroughPin *Pin           `json:"released_through_pin,omitempty"`
 	OmittedCount       int            `json:"omitted_count"`
 	Omitted            []Pin          `json:"omitted,omitempty"`
+}
 
-	// frames is the number of frames the decision covers; noCut marks a
-	// refusal reached before a cut could be established. Both serve
-	// ReadServed and are not part of the Release result.
+// releaseMeta carries the facts ReadServed needs that are not part of the
+// Release result: the frames the decision covers, and whether a refusal came
+// before a cut could be established.
+type releaseMeta struct {
 	frames int
 	noCut  bool
 }
@@ -1313,18 +1315,24 @@ func (fr *frameReader) revoke() (readBytes int64, digest string) {
 // Release evaluates a use request at the current consistent cut while holding
 // the store lock and streams eligible frames to sink (Freeze 4.3, G17).
 func (st *Stream) Release(ctx context.Context, req UseRequest, sink ReleaseSink) (ReleaseResult, error) {
+	res, _, err := st.release(ctx, req, sink)
+	return res, err
+}
+
+func (st *Stream) release(ctx context.Context, req UseRequest, sink ReleaseSink) (ReleaseResult, releaseMeta, error) {
+	var meta releaseMeta
 	if err := ctx.Err(); err != nil {
-		return ReleaseResult{}, err
+		return ReleaseResult{}, meta, err
 	}
 	if req.Purpose != PurposeServe && req.Purpose != PurposeExport && req.Purpose != PurposeReuse {
-		return ReleaseResult{}, fmt.Errorf("%w: invalid release purpose", ErrSchema)
+		return ReleaseResult{}, meta, fmt.Errorf("%w: invalid release purpose", ErrSchema)
 	}
 	closure := req.Closure
 	if closure == "" {
 		closure = ClosureFullContent
 	}
 	if closure != ClosureFullContent && closure != ClosureMetadataOnly {
-		return ReleaseResult{}, fmt.Errorf("%w: invalid release closure", ErrSchema)
+		return ReleaseResult{}, meta, fmt.Errorf("%w: invalid release closure", ErrSchema)
 	}
 
 	var res ReleaseResult
@@ -1347,8 +1355,8 @@ func (st *Stream) Release(ctx context.Context, req UseRequest, sink ReleaseSink)
 				res = ReleaseResult{
 					Outcome:       ReleaseRefused,
 					RefusalReason: journal.ReasonProtectionUnavailable,
-					noCut:         true,
 				}
+				meta.noCut = true
 				return nil
 			}
 			varji := new(ErrJournalInvalid)
@@ -1356,8 +1364,8 @@ func (st *Stream) Release(ctx context.Context, req UseRequest, sink ReleaseSink)
 				res = ReleaseResult{
 					Outcome:       ReleaseRefused,
 					RefusalReason: journal.ReasonProtectionUnavailable,
-					noCut:         true,
 				}
+				meta.noCut = true
 				return nil
 			}
 			return err
@@ -1584,8 +1592,8 @@ func (st *Stream) Release(ctx context.Context, req UseRequest, sink ReleaseSink)
 			Selection:    outSelection,
 			OmittedCount: len(omittedPins),
 			Omitted:      omittedPins,
-			frames:       len(frames),
 		}
+		meta.frames = len(frames)
 		if sink == nil {
 			return nil
 		}
@@ -1627,9 +1635,9 @@ func (st *Stream) Release(ctx context.Context, req UseRequest, sink ReleaseSink)
 		return nil
 	})
 	if err != nil {
-		return ReleaseResult{}, err
+		return ReleaseResult{}, meta, err
 	}
-	return res, sinkErr
+	return res, meta, sinkErr
 }
 
 func pinToWire(p journal.Pin) *wire.Node {

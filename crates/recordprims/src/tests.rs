@@ -1445,6 +1445,37 @@ mod streams {
         }
     }
 
+    /// Under full content a revision whose body cannot be delivered reads
+    /// the same as an absent pin; under metadata only it is served.
+    #[test]
+    fn read_served_undeliverable_body_is_not_served() {
+        use crate::stream::ServedReadOutcome;
+        let f = read_served_fixture();
+        let st = f.s.open_stream("rs", Mode::Revisioned, None).unwrap();
+        let dig = digest_of(&f.body);
+        let h = dig.strip_prefix("sha256:").unwrap();
+        fs::remove_file(f._td.path().join(crate::body::body_file(h))).unwrap();
+        let mut absent = f.pins["body"].clone();
+        absent.record_id = "never-written".into();
+        let mut results = Vec::new();
+        for pin in [f.pins["body"].clone(), absent] {
+            let mut sink = Kinds::default();
+            let got = st
+                .read_served(&pin, UseClosure::FullContent, Some(&mut sink))
+                .unwrap();
+            assert_eq!(got.outcome, ServedReadOutcome::NotServed, "{pin:?}");
+            assert!(sink.kinds.is_empty());
+            results.push(got);
+        }
+        assert_eq!(results[0], results[1]);
+        let mut sink = Kinds::default();
+        let got = st
+            .read_served(&f.pins["body"], UseClosure::MetadataOnly, Some(&mut sink))
+            .unwrap();
+        assert_eq!((got.outcome, got.frames), (ServedReadOutcome::Served, 1));
+        assert_eq!(sink.kinds.len(), 1);
+    }
+
     #[test]
     fn read_served_rejects_malformed_pins() {
         let f = read_served_fixture();

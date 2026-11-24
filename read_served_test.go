@@ -14,6 +14,7 @@ import (
 )
 
 type readServedFixture struct {
+	dir  string
 	s    *Store
 	st   *Stream
 	clk  *stepClock
@@ -25,12 +26,12 @@ type readServedFixture struct {
 // record with a body, a retired record and a record whose revision is held.
 func newReadServedFixture(t *testing.T) readServedFixture {
 	t.Helper()
-	s, _, clk := openBodyStore(t)
+	s, dir, clk := openBodyStore(t)
 	st, err := s.OpenStream("rs", ModeRevisioned)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := readServedFixture{s: s, st: st, clk: clk, pins: map[string]Pin{}, body: []byte("served-body-bytes")}
+	f := readServedFixture{dir: dir, s: s, st: st, clk: clk, pins: map[string]Pin{}, body: []byte("served-body-bytes")}
 	appendRec := func(name, id string, rev int, sup *Pin, body *BodyRef, lease *PublicationLease) {
 		t.Helper()
 		clk.t = clk.t.Add(time.Second)
@@ -154,6 +155,35 @@ func TestReadServedDenialsAreIndistinguishable(t *testing.T) {
 				t.Fatalf("%s/%s: %+v differs from %+v", name, closure, got, *first)
 			}
 		}
+	}
+}
+
+// Under full_content a revision whose body cannot be delivered reads the same
+// as an absent pin; under metadata_only it is served.
+func TestReadServedUndeliverableBodyIsNotServed(t *testing.T) {
+	f := newReadServedFixture(t)
+	if err := os.Remove(filepath.Join(f.dir, bodyFile(digestHex(digestOf(f.body))))); err != nil {
+		t.Fatal(err)
+	}
+	absent := f.pins["body"]
+	absent.RecordID = "never-written"
+	var results []ServedRead
+	for _, pin := range []Pin{f.pins["body"], absent} {
+		calls := 0
+		sink := &collectSink{fn: func(context.Context, FrameHeader, io.Reader) error { calls++; return nil }}
+		got, err := f.st.ReadServed(ctx, pin, ClosureFullContent, sink)
+		if err != nil || got.Outcome != ServedReadNotServed || calls != 0 {
+			t.Fatalf("%s: %+v, %v, %d calls", pin.RecordID, got, err, calls)
+		}
+		results = append(results, got)
+	}
+	if !reflect.DeepEqual(results[0], results[1]) {
+		t.Fatalf("undeliverable body distinguishable: %+v vs %+v", results[0], results[1])
+	}
+	sink := &collectSink{}
+	got, err := f.st.ReadServed(ctx, f.pins["body"], ClosureMetadataOnly, sink)
+	if err != nil || got.Outcome != ServedReadServed || got.Frames != 1 || len(sink.headers) != 1 {
+		t.Fatalf("metadata_only: %+v, %v", got, err)
 	}
 }
 

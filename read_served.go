@@ -72,18 +72,18 @@ func (st *Stream) ReadServed(ctx context.Context, pin Pin, closure UseClosure, s
 	if closure != ClosureFullContent && closure != ClosureMetadataOnly {
 		return ServedRead{}, fmt.Errorf("%w: invalid release closure", ErrSchema)
 	}
-	res, err := st.Release(ctx, UseRequest{Purpose: PurposeServe, Selection: []Pin{pin}, Closure: closure}, sink)
+	res, meta, err := st.release(ctx, UseRequest{Purpose: PurposeServe, Selection: []Pin{pin}, Closure: closure}, sink)
 	if err != nil && res.Outcome == "" {
 		return ServedRead{}, err
 	}
-	out, merr := servedReadFrom(res, sink != nil)
+	out, merr := servedReadFrom(res, meta, sink != nil)
 	if merr != nil {
 		return ServedRead{}, merr
 	}
 	return out, err
 }
 
-func servedReadFrom(res ReleaseResult, delivered bool) (ServedRead, error) {
+func servedReadFrom(res ReleaseResult, meta releaseMeta, delivered bool) (ServedRead, error) {
 	cut := res.Cut
 	out := ServedRead{Cut: &cut}
 	switch res.Outcome {
@@ -92,7 +92,7 @@ func servedReadFrom(res ReleaseResult, delivered bool) (ServedRead, error) {
 		case journal.ReasonProtectionUnavailable, journal.ReasonRestrictionsPending:
 			out.Outcome = ServedReadRefused
 			out.Reason = res.RefusalReason
-			if res.noCut {
+			if meta.noCut {
 				out.Cut = nil
 			}
 		case journal.ReasonProtectedUse, journal.ReasonTargetNotFound, journal.ReasonBodyClosure:
@@ -105,7 +105,7 @@ func servedReadFrom(res ReleaseResult, delivered bool) (ServedRead, error) {
 		return out, nil
 	}
 	out.Outcome = ServedReadServed
-	out.Frames = res.frames
+	out.Frames = meta.frames
 	if delivered {
 		out.Delivery = res.Outcome
 		out.FramesCompleted = res.FramesCompleted
