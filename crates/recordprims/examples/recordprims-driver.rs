@@ -17,8 +17,8 @@ use recordprims::{
     format_instant, init, is_indeterminate, normalize_producer_instant, open, parse_instant,
     Authorization, Clock, Error, FileLock, FrameHeader, FrameKind, FrameReader, InitOptions,
     Instant, Mode, OpenOptions, Pin, ProtectionRequest, Provenance, Receipt, ReleaseOutcome,
-    ReleaseSink, RemoveBodyReason, RemoveBodyRequest, RetireReason, Store, UseClosure, UsePurpose,
-    UseRequest, Write as RecordWrite,
+    ReleaseSink, RemoveBodyReason, RemoveBodyRequest, RetireReason, ServedReadOutcome, Store,
+    UseClosure, UsePurpose, UseRequest, Write as RecordWrite,
 };
 
 struct StepClock {
@@ -607,7 +607,7 @@ fn run_scenario(sc: &Node) -> Result<Node, String> {
                 }
 
                 "open_stream" | "append" | "retire" | "protect" | "head" | "revisions"
-                | "reconcile" | "release" => {
+                | "reconcile" | "release" | "read_served" => {
                     let he = handles
                         .get_mut(&hname)
                         .ok_or_else(|| format!("unknown handle {hname:?}"))?;
@@ -982,6 +982,65 @@ fn run_stream_op(he: &mut HandleEntry, op: &str, st: &Node) -> Result<Node, Erro
             ];
             if let Some(r) = &res.refusal_reason {
                 f.push(("refusal_reason", Node::string(r)));
+            }
+            Ok(obj(f))
+        }
+        "read_served" => {
+            let closure = match opt_str(st, "closure").as_deref() {
+                None | Some("") | Some("full_content") => UseClosure::FullContent,
+                Some("metadata_only") => UseClosure::MetadataOnly,
+                _ => return Err(Error::Schema("invalid release closure".to_owned())),
+            };
+            let pin = st.get("pin").map(pin_of).unwrap_or(Pin {
+                stream: String::new(),
+                record_id: String::new(),
+                revision: 0,
+                digest: String::new(),
+            });
+            let no_sink = st
+                .get("no_sink")
+                .is_some_and(|b| b.kind == Kind::Bool && b.bool_val);
+            let mut sink = CollectSink { frames: Vec::new() };
+            let res = if no_sink {
+                s.read_served(&pin, closure, None)?
+            } else {
+                s.read_served(&pin, closure, Some(&mut sink))?
+            };
+            if let Some(e) = res.sink_error {
+                return Err(e);
+            }
+            let mut f = vec![
+                (
+                    "outcome",
+                    Node::string(match res.outcome {
+                        ServedReadOutcome::Served => "served",
+                        ServedReadOutcome::NotServed => "not_served",
+                        ServedReadOutcome::Refused => "refused",
+                    }),
+                ),
+                ("frame_count", Node::uint(res.frames as u64)),
+                ("frames_completed", Node::uint(res.frames_completed as u64)),
+                ("frames", Node::array(sink.frames)),
+            ];
+            if let Some(r) = &res.reason {
+                f.push(("reason", Node::string(r)));
+            }
+            if let Some(c) = res.cut {
+                f.push(("cut", Node::uint(c)));
+            }
+            if let Some(d) = res.delivery {
+                f.push((
+                    "delivery",
+                    Node::string(match d {
+                        ReleaseOutcome::Released => "released",
+                        ReleaseOutcome::Partial => "released_partial",
+                        ReleaseOutcome::Uncertain => "released_uncertain",
+                        ReleaseOutcome::Refused => "refused",
+                    }),
+                ));
+            }
+            if let Some(i) = res.frame_in_flight {
+                f.push(("frame_in_flight", Node::uint(i as u64)));
             }
             Ok(obj(f))
         }

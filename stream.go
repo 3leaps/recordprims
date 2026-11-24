@@ -253,6 +253,12 @@ type ReleaseResult struct {
 	ReleasedThroughPin *Pin           `json:"released_through_pin,omitempty"`
 	OmittedCount       int            `json:"omitted_count"`
 	Omitted            []Pin          `json:"omitted,omitempty"`
+
+	// frames is the number of frames the decision covers; noCut marks a
+	// refusal reached before a cut could be established. Both serve
+	// ReadServed and are not part of the Release result.
+	frames int
+	noCut  bool
 }
 
 // FrameKind distinguishes record frames from external body frames in ReleaseSink.
@@ -1341,6 +1347,7 @@ func (st *Stream) Release(ctx context.Context, req UseRequest, sink ReleaseSink)
 				res = ReleaseResult{
 					Outcome:       ReleaseRefused,
 					RefusalReason: journal.ReasonProtectionUnavailable,
+					noCut:         true,
 				}
 				return nil
 			}
@@ -1349,6 +1356,7 @@ func (st *Stream) Release(ctx context.Context, req UseRequest, sink ReleaseSink)
 				res = ReleaseResult{
 					Outcome:       ReleaseRefused,
 					RefusalReason: journal.ReasonProtectionUnavailable,
+					noCut:         true,
 				}
 				return nil
 			}
@@ -1576,6 +1584,7 @@ func (st *Stream) Release(ctx context.Context, req UseRequest, sink ReleaseSink)
 			Selection:    outSelection,
 			OmittedCount: len(omittedPins),
 			Omitted:      omittedPins,
+			frames:       len(frames),
 		}
 		if sink == nil {
 			return nil

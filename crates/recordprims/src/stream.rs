@@ -22,7 +22,7 @@ use crate::journal::{self, pin_node, State};
 use crate::shape;
 use crate::store::{
     create_stream_journal, hex_encode, map_jfile_err, read_file_verified, stream_dir,
-    stream_journal_file, valid_stream_id, Pin, Store,
+    stream_journal_file, valid_digest, valid_stream_id, Pin, Store,
 };
 use crate::wire::{self, Kind, Member, Node, MAX_SAFE_INTEGER};
 
@@ -1276,6 +1276,17 @@ impl Stream<'_> {
         req: &UseRequest,
         sink: Option<&mut dyn ReleaseSink>,
     ) -> Result<ReleaseResult, Error> {
+        self.release_with_meta(req, sink).map(|(res, _)| res)
+    }
+
+    /// [`Stream::release`], also returning the facts
+    /// [`Stream::read_served`] needs that are not part of the release result.
+    fn release_with_meta(
+        &self,
+        req: &UseRequest,
+        sink: Option<&mut dyn ReleaseSink>,
+    ) -> Result<(ReleaseResult, ReleaseMeta), Error> {
+        let meta = std::cell::Cell::new(ReleaseMeta::default());
         let store = self.store;
         let refused = |reason: &str, cut: u64| ReleaseResult {
             outcome: ReleaseOutcome::Refused,
@@ -1296,6 +1307,10 @@ impl Stream<'_> {
             let rep = match store.replay_stream(&self.id) {
                 Ok(r) => r,
                 Err(Error::StreamSealed | Error::JournalInvalid { .. }) => {
+                    meta.set(ReleaseMeta {
+                        no_cut: true,
+                        frames: 0,
+                    });
                     return Ok(refused(journal::REASON_PROTECTION_UNAVAILABLE, 0));
                 }
                 Err(e) => return Err(e),
@@ -1432,6 +1447,10 @@ impl Stream<'_> {
                 omitted: omitted.iter().map(|p| to_pin(p)).collect(),
                 sink_error: None,
             };
+            meta.set(ReleaseMeta {
+                no_cut: false,
+                frames: frames.len(),
+            });
             let Some(sink) = sink else {
                 return Ok(res);
             };
@@ -1459,8 +1478,135 @@ impl Stream<'_> {
             }
             Ok(res)
         })?;
-        Ok(res)
+        Ok((res, meta.get()))
     }
+
+    /// Reads one revision through the serving path: [`Stream::release`] with
+    /// [`UsePurpose::Serve`] and a selection of exactly `pin`, evaluated at the
+    /// current cut under the store lock with the same hold and retirement
+    /// checks. It delivers at most that revision's frames to `sink` and never
+    /// falls back to another revision of the record.
+    ///
+    /// Unlike `release` it reports no omitted revisions, and every
+    /// member-level denial, including a pin that names no revision, is the
+    /// single outcome [`ServedReadOutcome::NotServed`]. Stream-wide refusals
+    /// that do not depend on the pin are [`ServedReadOutcome::Refused`] with
+    /// their reason. A malformed pin is [`Error::Schema`] before the store is
+    /// read. With no sink, it only evaluates the decision.
+    pub fn read_served(
+        &self,
+        pin: &Pin,
+        closure: UseClosure,
+        sink: Option<&mut dyn ReleaseSink>,
+    ) -> Result<ServedRead, Error> {
+        if !valid_stream_id(&pin.stream)
+            || !valid_record_id(&pin.record_id)
+            || pin.revision < 1
+            || pin.revision > MAX_SAFE_INTEGER as u64
+            || !valid_digest(&pin.digest)
+        {
+            return Err(Error::schema("invalid pin"));
+        }
+        let delivered = sink.is_some();
+        let req = UseRequest {
+            purpose: UsePurpose::Serve,
+            selection: vec![pin.clone()],
+            closure,
+        };
+        let (res, meta) = self.release_with_meta(&req, sink)?;
+        let mut out = ServedRead {
+            outcome: ServedReadOutcome::Served,
+            reason: None,
+            cut: Some(res.cut),
+            frames: 0,
+            delivery: None,
+            frames_completed: 0,
+            frame_in_flight: None,
+            sink_error: None,
+        };
+        if res.outcome == ReleaseOutcome::Refused {
+            let reason = res.refusal_reason.unwrap_or_default();
+            match reason.as_str() {
+                journal::REASON_PROTECTION_UNAVAILABLE | journal::REASON_RESTRICTIONS_PENDING => {
+                    out.outcome = ServedReadOutcome::Refused;
+                    out.reason = Some(reason);
+                    if meta.no_cut {
+                        out.cut = None;
+                    }
+                }
+                // Each describes the selected revision; they share one
+                // outward outcome.
+                journal::REASON_PROTECTED_USE
+                | journal::REASON_TARGET_NOT_FOUND
+                | journal::REASON_BODY_CLOSURE => {
+                    out.outcome = ServedReadOutcome::NotServed;
+                }
+                other => {
+                    return Err(Error::schema(format!("unexpected serve refusal {other}")));
+                }
+            }
+            return Ok(out);
+        }
+        out.frames = meta.frames;
+        if delivered {
+            out.delivery = Some(res.outcome);
+            out.frames_completed = res.frames_completed;
+            out.frame_in_flight = res.frame_in_flight;
+            out.sink_error = res.sink_error;
+        }
+        Ok(out)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ReleaseMeta {
+    /// The refusal came before a cut could be established.
+    no_cut: bool,
+    /// Frames the decision covers.
+    frames: usize,
+}
+
+/// Outcome of [`Stream::read_served`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServedReadOutcome {
+    /// The revision is served at the cut; delivery progress is in
+    /// [`ServedRead::delivery`] and the frame counters.
+    Served,
+    /// The revision is not served at the cut. The same outcome covers a held
+    /// or retired revision, a revision whose body cannot be delivered under
+    /// full-content closure, a pin that names no revision on the stream and
+    /// a pin whose digest does not match. No frame is delivered.
+    NotServed,
+    /// The stream cannot be evaluated, independent of the pin.
+    /// [`ServedRead::reason`] names why. No frame is delivered.
+    Refused,
+}
+
+/// Result of [`Stream::read_served`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServedRead {
+    /// Outcome.
+    pub outcome: ServedReadOutcome,
+    /// `protection_unavailable` or `restrictions_pending`, only when refused.
+    pub reason: Option<String>,
+    /// The decision cut; `None` when no trustworthy cut could be established
+    /// because the stream could not be replayed.
+    pub cut: Option<u64>,
+    /// Frames the served decision covers: the record frame, plus the body
+    /// frame under full-content closure when the revision has a body. Zero
+    /// unless served.
+    pub frames: usize,
+    /// `None` when nothing was attempted (not served, or no sink). Otherwise
+    /// `Released` when every frame was delivered or `Uncertain` when a
+    /// frame's delivery is uncertain.
+    pub delivery: Option<ReleaseOutcome>,
+    /// Frames delivered.
+    pub frames_completed: usize,
+    /// Index of the frame whose delivery is uncertain.
+    pub frame_in_flight: Option<usize>,
+    /// [`Error::SinkError`] when a sink callback returned an error; the
+    /// callback error's text is not disclosed.
+    pub sink_error: Option<Error>,
 }
 
 /// Marks the current thread as inside a release sink callback, so a

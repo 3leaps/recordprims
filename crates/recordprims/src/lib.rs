@@ -46,6 +46,6 @@ pub use store::{
 pub use stream::{
     Continues, FrameHeader, FrameKind, FrameReader, HeadInfo, Mode, ProtectionReceipt,
     ProtectionRequest, Receipt, Reconciliation, ReleaseOutcome, ReleaseResult, ReleaseSink,
-    RetireOutcome, RetireReason, RetireResult, RevisionView, SourcePin, Stream, UseClosure,
-    UsePurpose, UseRequest, Write, WriteOutcome,
+    RetireOutcome, RetireReason, RetireResult, RevisionView, ServedRead, ServedReadOutcome,
+    SourcePin, Stream, UseClosure, UsePurpose, UseRequest, Write, WriteOutcome,
 };

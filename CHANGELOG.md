@@ -7,6 +7,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- `Stream.ReadServed` / `Stream::read_served`: read one exact pin through the
+  serving path. It is a serve release whose selection is that pin, with the
+  same hold, retirement and continuation checks at one cut, and it delivers at
+  most that revision's frames. A held, retired or restricted revision, a body
+  that cannot be delivered under full content, an absent pin and a wrong digest
+  all give the one outcome `not_served`; stream-wide refusals keep their
+  reason. The result reports the decision cut (absent when none could be
+  established), the frames the decision covers and the delivery progress. A
+  nil sink evaluates only. A malformed pin is a schema error. Go and Rust tests
+  and the differential check cover it
+- Example: `Lookup` and `Render` use `ReadServed`
+
 ## [0.1.0] - 2026-11-23
 
 - `UseRequest.Selection` documented as it behaves: an explicit selection

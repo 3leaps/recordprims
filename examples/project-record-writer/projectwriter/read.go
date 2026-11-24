@@ -117,26 +117,17 @@ func (w *Writer) serve(ctx context.Context, s *recordprims.Stream) (*collect, er
 	return c, nil
 }
 
-// memberRefusals are the release refusals that concern the selected pin
-// itself. Lookup folds them into ErrNotServed; any other refusal is about
-// the stream and is returned as an error.
-var memberRefusals = map[string]bool{"protected_use": true, "target_not_found": true}
-
-// Lookup reads exactly one revision through the store's serving path: a
-// serve release whose selection is the one pin, so holds and retirement
-// apply and no other revision is delivered. Every pin it does not serve
-// gives the same ErrNotServed.
+// Lookup reads exactly one revision through the store's serving path, so
+// holds and retirement apply and no other revision is delivered. Every pin
+// it does not serve gives the same ErrNotServed; a refusal about the whole
+// stream is returned as an error.
 func (w *Writer) Lookup(ctx context.Context, pin recordprims.Pin) (Entry, error) {
 	kind, s, ok := w.kindForStream(pin.Stream)
 	if !ok {
 		return Entry{}, ErrNotServed
 	}
 	c := &collect{records: map[recordprims.Pin][]byte{}}
-	res, err := s.Release(ctx, recordprims.UseRequest{
-		Purpose:   recordprims.PurposeServe,
-		Closure:   recordprims.ClosureMetadataOnly,
-		Selection: []recordprims.Pin{pin},
-	}, c)
+	res, err := s.ReadServed(ctx, pin, recordprims.ClosureMetadataOnly, c)
 	if err != nil {
 		if errors.Is(err, recordprims.ErrSchema) {
 			return Entry{}, ErrNotServed
@@ -144,10 +135,12 @@ func (w *Writer) Lookup(ctx context.Context, pin recordprims.Pin) (Entry, error)
 		return Entry{}, err
 	}
 	switch {
-	case res.Outcome == recordprims.ReleaseRefused && memberRefusals[res.RefusalReason]:
+	case res.Outcome == recordprims.ServedReadNotServed:
 		return Entry{}, ErrNotServed
-	case res.Outcome != recordprims.ReleaseReleased:
-		return Entry{}, fmt.Errorf("release %s %s", res.Outcome, res.RefusalReason)
+	case res.Outcome == recordprims.ServedReadRefused:
+		return Entry{}, fmt.Errorf("read refused: %s", res.Reason)
+	case res.Delivery != recordprims.ReleaseReleased:
+		return Entry{}, fmt.Errorf("read delivery %s", res.Delivery)
 	}
 	raw, ok := c.records[pin]
 	if !ok || len(c.order) != 1 {

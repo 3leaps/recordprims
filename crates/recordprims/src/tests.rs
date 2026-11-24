@@ -1246,6 +1246,295 @@ mod streams {
         assert_eq!(res.frames_completed, 0);
     }
 
+    /// Records each frame's kind after reading it fully; fails on frame
+    /// `fail_at` when set.
+    #[derive(Default)]
+    struct Kinds {
+        kinds: Vec<crate::stream::FrameKind>,
+        bodies: Vec<Vec<u8>>,
+        fail_at: Option<usize>,
+    }
+
+    impl ReleaseSink for Kinds {
+        fn frame(&mut self, h: &FrameHeader, r: &mut FrameReader<'_>) -> Result<(), Error> {
+            self.kinds.push(h.kind);
+            if self.fail_at == Some(h.index) {
+                return Err(Error::Schema("caller detail".into()));
+            }
+            let mut b = Vec::new();
+            r.read_to_end(&mut b).unwrap();
+            self.bodies.push(b);
+            Ok(())
+        }
+    }
+
+    struct ReadServedFixture {
+        s: Store,
+        _td: TempStoreDir,
+        pins: std::collections::HashMap<&'static str, Pin>,
+        body: Vec<u8>,
+    }
+
+    /// A stream with a plain record (two revisions), a record with a body, a
+    /// retired record and a record whose revision is held.
+    fn read_served_fixture() -> ReadServedFixture {
+        let (s, td, clk) = open_body_store();
+        let body = b"served-body-bytes".to_vec();
+        let mut pins = std::collections::HashMap::new();
+        {
+            let st = s.open_stream("rs", Mode::Revisioned, None).unwrap();
+            let mut add = |name: &'static str, w: Write| {
+                clk.advance(Duration::from_secs(1));
+                pins.insert(name, st.append(&w).unwrap().pin.unwrap());
+            };
+            add("plain1", write("rs", "plain", "k-plain1"));
+            let p1 = record("rs", "plain", 2);
+            let sup = format!(
+                r#","supersedes":{{"revision":1,"digest":"{}"}}"#,
+                st.head("plain").unwrap().unwrap().pin.digest
+            );
+            let mut rec2 = String::from_utf8(p1).unwrap();
+            rec2 = rec2.replacen(
+                r#","payload_contract""#,
+                &format!(r#"{sup},"payload_contract""#),
+                1,
+            );
+            add(
+                "plain2",
+                Write {
+                    record: rec2.into_bytes(),
+                    idempotency_key: "k-plain2".into(),
+                    ..Write::default()
+                },
+            );
+            let (bref, lease) = put(&s, &body);
+            let rec = String::from_utf8(record("rs", "body", 1))
+                .unwrap()
+                .replacen(
+                    r#""payload":{"n":1}"#,
+                    &format!(
+                        r#""body":{{"digest":"{}","length":{},"media_type":"{}"}}"#,
+                        bref.digest, bref.length, bref.media_type
+                    ),
+                    1,
+                );
+            add(
+                "body",
+                Write {
+                    record: rec.into_bytes(),
+                    idempotency_key: "k-body".into(),
+                    lease: Some(lease),
+                    ..Write::default()
+                },
+            );
+            add("retired", write("rs", "retired", "k-retired"));
+            add("held", write("rs", "held", "k-held"));
+            clk.advance(Duration::from_secs(1));
+            st.retire("retired", RetireReason::Withdrawn, None).unwrap();
+            clk.advance(Duration::from_secs(1));
+            let hex = pins["held"]
+                .digest
+                .strip_prefix("sha256:")
+                .unwrap()
+                .to_owned();
+            let rc = st
+                .protect(&protection("rs", "k-hold", "tombstone", "held", &hex, ""))
+                .unwrap();
+            assert_eq!(rc.outcome, "tombstoned");
+        }
+        ReadServedFixture {
+            s,
+            _td: td,
+            pins,
+            body,
+        }
+    }
+
+    #[test]
+    fn read_served_delivers_exactly_the_pin() {
+        use crate::stream::{FrameKind, ServedReadOutcome};
+        let f = read_served_fixture();
+        let st = f.s.open_stream("rs", Mode::Revisioned, None).unwrap();
+        let rec = [FrameKind::Record];
+        let both = [FrameKind::Record, FrameKind::Body];
+        for (name, closure, want) in [
+            ("plain1", UseClosure::MetadataOnly, &rec[..]),
+            ("plain1", UseClosure::FullContent, &rec[..]),
+            ("plain2", UseClosure::FullContent, &rec[..]),
+            ("body", UseClosure::MetadataOnly, &rec[..]),
+            ("body", UseClosure::FullContent, &both[..]),
+        ] {
+            let mut sink = Kinds::default();
+            let got = st
+                .read_served(&f.pins[name], closure, Some(&mut sink))
+                .unwrap();
+            assert_eq!(got.outcome, ServedReadOutcome::Served, "{name}/{closure:?}");
+            assert_eq!(got.reason, None);
+            assert!(got.cut.is_some());
+            assert_eq!(got.frames, want.len(), "{name}/{closure:?}");
+            assert_eq!(got.delivery, Some(ReleaseOutcome::Released));
+            assert_eq!(got.frames_completed, want.len());
+            assert_eq!(got.frame_in_flight, None);
+            assert_eq!(got.sink_error, None);
+            assert_eq!(sink.kinds, want, "{name}/{closure:?}");
+            if want.len() == 2 {
+                assert_eq!(sink.bodies[1], f.body);
+            }
+        }
+    }
+
+    #[test]
+    fn read_served_without_sink_evaluates_only() {
+        use crate::stream::ServedReadOutcome;
+        let f = read_served_fixture();
+        let st = f.s.open_stream("rs", Mode::Revisioned, None).unwrap();
+        let got = st
+            .read_served(&f.pins["body"], UseClosure::FullContent, None)
+            .unwrap();
+        assert_eq!(got.outcome, ServedReadOutcome::Served);
+        assert_eq!(
+            (got.frames, got.delivery, got.frames_completed),
+            (2, None, 0)
+        );
+        let got = st
+            .read_served(&f.pins["held"], UseClosure::FullContent, None)
+            .unwrap();
+        assert_eq!(got.outcome, ServedReadOutcome::NotServed);
+        assert_eq!((got.frames, got.delivery), (0, None));
+    }
+
+    /// Held, retired, absent and digest-mismatched pins give one public
+    /// result at the same cut and never call the sink.
+    #[test]
+    fn read_served_denials_are_indistinguishable() {
+        use crate::stream::ServedReadOutcome;
+        let f = read_served_fixture();
+        let st = f.s.open_stream("rs", Mode::Revisioned, None).unwrap();
+        let mut wrong_digest = f.pins["plain2"].clone();
+        wrong_digest.digest = f.pins["plain1"].digest.clone();
+        let mut other_digest = f.pins["plain1"].clone();
+        other_digest.digest = digest_of(b"nothing");
+        let mut absent_rev = f.pins["plain2"].clone();
+        absent_rev.revision = 3;
+        let mut absent_rec = f.pins["plain1"].clone();
+        absent_rec.record_id = "never-written".into();
+        let mut other_stream = f.pins["plain1"].clone();
+        other_stream.stream = "elsewhere".into();
+        let cases = [
+            f.pins["held"].clone(),
+            f.pins["retired"].clone(),
+            wrong_digest,
+            other_digest,
+            absent_rev,
+            absent_rec,
+            other_stream,
+        ];
+        for closure in [UseClosure::MetadataOnly, UseClosure::FullContent] {
+            let mut first = None;
+            for pin in &cases {
+                let mut sink = Kinds::default();
+                let got = st.read_served(pin, closure, Some(&mut sink)).unwrap();
+                assert_eq!(got.outcome, ServedReadOutcome::NotServed, "{pin:?}");
+                assert!(got.cut.is_some());
+                assert!(sink.kinds.is_empty(), "{pin:?} called the sink");
+                match &first {
+                    None => first = Some(got),
+                    Some(want) => assert_eq!(&got, want, "{pin:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn read_served_rejects_malformed_pins() {
+        let f = read_served_fixture();
+        let st = f.s.open_stream("rs", Mode::Revisioned, None).unwrap();
+        let good = f.pins["plain1"].clone();
+        let mutate = |m: &dyn Fn(&mut Pin)| {
+            let mut p = good.clone();
+            m(&mut p);
+            p
+        };
+        for pin in [
+            mutate(&|p| p.stream = String::new()),
+            mutate(&|p| p.stream = "Upper".into()),
+            mutate(&|p| p.record_id = String::new()),
+            mutate(&|p| p.revision = 0),
+            mutate(&|p| p.revision = 1u64 << 53),
+            mutate(&|p| p.revision = u64::MAX),
+            mutate(&|p| p.digest = "sha256:abc".into()),
+            mutate(&|p| p.digest = p.digest.to_uppercase()),
+        ] {
+            let mut sink = Kinds::default();
+            assert!(
+                matches!(
+                    st.read_served(&pin, UseClosure::MetadataOnly, Some(&mut sink)),
+                    Err(Error::Schema(_))
+                ),
+                "{pin:?}"
+            );
+            assert!(sink.kinds.is_empty());
+        }
+    }
+
+    #[test]
+    fn read_served_sink_failure_reports_progress() {
+        use crate::stream::ServedReadOutcome;
+        let f = read_served_fixture();
+        let st = f.s.open_stream("rs", Mode::Revisioned, None).unwrap();
+        for fail_at in [0usize, 1] {
+            let mut sink = Kinds {
+                fail_at: Some(fail_at),
+                ..Kinds::default()
+            };
+            let got = st
+                .read_served(&f.pins["body"], UseClosure::FullContent, Some(&mut sink))
+                .unwrap();
+            assert_eq!(got.outcome, ServedReadOutcome::Served);
+            assert_eq!(got.sink_error, Some(Error::SinkError));
+            assert_eq!(got.frames, 2);
+            assert_eq!(got.delivery, Some(ReleaseOutcome::Uncertain));
+            assert_eq!(got.frames_completed, fail_at);
+            assert_eq!(got.frame_in_flight, Some(fail_at));
+            assert_eq!(sink.kinds.len(), fail_at + 1);
+        }
+    }
+
+    /// A stream whose journal cannot be replayed is refused for every pin
+    /// with protection_unavailable and no cut.
+    #[test]
+    fn read_served_invalid_journal_has_no_cut() {
+        use crate::stream::ServedReadOutcome;
+        let (s, td, clk) = open_body_store();
+        let st = s.open_stream("rs-bad", Mode::SingleRevision, None).unwrap();
+        clk.advance(Duration::from_secs(1));
+        let pin = st
+            .append(&write("rs-bad", "doc-1", "k-1"))
+            .unwrap()
+            .pin
+            .unwrap();
+        let jpath = td.path().join(stream_dir("rs-bad")).join("journal.ndjson");
+        let mut raw = fs::read(&jpath).unwrap();
+        raw.extend_from_slice(b"{\"not\":\"an entry\"}\n");
+        fs::write(&jpath, &raw).unwrap();
+        let absent = Pin {
+            stream: "rs-bad".into(),
+            record_id: "never-written".into(),
+            revision: 1,
+            digest: digest_of(b""),
+        };
+        for pin in [pin, absent] {
+            let mut sink = Kinds::default();
+            let got = st
+                .read_served(&pin, UseClosure::MetadataOnly, Some(&mut sink))
+                .unwrap();
+            assert_eq!(got.outcome, ServedReadOutcome::Refused, "{pin:?}");
+            assert_eq!(got.reason.as_deref(), Some("protection_unavailable"));
+            assert_eq!((got.cut, got.frames), (None, 0));
+            assert!(sink.kinds.is_empty());
+        }
+    }
+
     #[test]
     fn torn_tail_is_reported_not_repaired() {
         let (s, td, _clk) = store_with_record();
