@@ -25,8 +25,11 @@ done
 cat >"$repo/scripts/release-verify-published-tag.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$(git rev-parse "refs/tags/$RECORDPRIMS_RELEASE_TAG")" == "$RECORDPRIMS_EXPECTED_TAG_OBJECT" ]]
-[[ "$(git rev-parse "refs/tags/$RECORDPRIMS_RELEASE_TAG^{commit}")" == "$RECORDPRIMS_EXPECTED_COMMIT" ]]
+[[ "$(git rev-parse "refs/tags/$RECORDPRIMS_RELEASE_TAG")" == "$RECORDPRIMS_EXPECTED_TAG_OBJECT" &&
+	"$(git rev-parse "refs/tags/$RECORDPRIMS_RELEASE_TAG^{commit}")" == "$RECORDPRIMS_EXPECTED_COMMIT" ]] || {
+	echo 'error: published tag differs from the anchor (stub)' >&2
+	exit 1
+}
 SH
 chmod +x "$repo/scripts/release-verify-published-tag.sh"
 gpg --homedir "$fixture_dir/gpg" --batch --armor --export-options export-minimal --export "$subkey!" \
@@ -92,11 +95,32 @@ expect_fail_with 'already exists' stage v0.1.0 checksums "$dist"
 grep -q '  recordprims-0.1.0-src.tar.gz$' "$dist/SHA256SUMS"
 [[ "$(wc -l <"$dist/SHA512SUMS")" -eq 7 ]]
 
-# Signing needs the committed subkey; the result verifies, and is never overwritten.
+# Signing needs the committed subkey and a set that passes every unsigned
+# check first; a stale manifest is refused before any signature is written.
+no_signatures() {
+	! find "$dist" -name '*.minisig' -o -name '*.asc' | grep -v -q release-signing-keys &&
+		[[ -z "$(find "$(dirname "$dist")" -maxdepth 1 -name '.release-sign.*')" ]]
+}
 expect_fail_with 'committed signing subkey followed by !' sign v0.1.0 "$dist" "$other_subkey"
+cp "$dist/SHA256SUMS" "$fixture_dir/saved"
+sed 's/^[0-9a-f]/0/' "$fixture_dir/saved" >"$dist/SHA256SUMS"
+expect_fail_with 'SHA256SUMS does not match' sign v0.1.0 "$dist"
+no_signatures
+cp "$fixture_dir/saved" "$dist/SHA256SUMS"
+# An interrupted signer (OpenPGP fails after minisign signed) leaves nothing
+# behind, and a retry succeeds.
+real_gpg="$(command -v gpg)"
+mkdir -p "$fixture_dir/failbin"
+# shellcheck disable=SC2016 # The single-quoted text is the stub's own script.
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --detach-sign ] && exit 1; done\nexec "%s" "$@"\n' "$real_gpg" \
+	>"$fixture_dir/failbin/gpg"
+chmod +x "$fixture_dir/failbin/gpg"
+sign_interrupted() { PATH="$fixture_dir/failbin:$PATH" sign v0.1.0 "$dist"; }
+expect_fail sign_interrupted
+no_signatures
 sign v0.1.0 "$dist" >/dev/null 2>&1
 verify v0.1.0 "$dist" >/dev/null
-expect_fail_with 'already signed' sign v0.1.0 "$dist"
+expect_fail_with 'does not hold exactly the release assets' sign v0.1.0 "$dist"
 run v0.1.0 env RECORDPRIMS_GPG_SIGNING_FINGERPRINT="$primary" ./scripts/release-verify-assets.sh "$dist" >/dev/null
 expect_fail_with 'not the approved primary' run v0.1.0 env RECORDPRIMS_GPG_SIGNING_FINGERPRINT="${primary//?/A}" \
 	./scripts/release-verify-assets.sh "$dist"
@@ -133,10 +157,24 @@ mv "$fixture_dir/saved" "$dist/SHA512SUMS.minisig"
 verify v0.1.0 "$dist" >/dev/null
 
 # Draft once with every asset; publish only the verified bytes; require immutable.
-page v0.1.0 ./scripts/release-page.sh draft "$dist" >/dev/null
+# An upload that stops partway leaves a partial draft: draft is then blocked,
+# publish refuses it, and recover-draft (exact id) completes it.
+expect_fail_with 'creating the draft failed' page v0.1.0 env GH_STUB_FAIL_AFTER=5 ./scripts/release-page.sh draft "$dist"
 expect_fail_with 'already exists' page v0.1.0 ./scripts/release-page.sh draft "$dist"
+expect_fail_with 'assets differ from the staged set' page v0.1.0 ./scripts/release-page.sh publish "$dist"
+recover() { page v0.1.0 env RECORDPRIMS_RELEASE_DRAFT_ID="$1" RECORDPRIMS_RELEASE_DRAFT_ACTION="$2" ./scripts/release-page.sh recover-draft "$dist"; }
+expect_fail_with 'not the only release' recover 999 upload
+expect_fail_with 'must be delete or upload' recover 1000 keep
+recover 1000 upload >/dev/null
 [[ "$(grep -c '^release create' "$store/calls.log")" -eq 1 ]]
 expect_fail_with 'no published release' page v0.1.0 ./scripts/release-page.sh verify-published
+# With immutable releases disabled, publish refuses and the draft stays a draft.
+expect_fail_with 'immutable releases must be enabled' page v0.1.0 env GH_STUB_IMMUTABLE_OFF=1 ./scripts/release-page.sh publish "$dist"
+grep -q '"draft": true' "$store/releases/1000/meta.json"
+if grep -q 'PATCH' "$store/calls.log"; then
+	echo 'error: publish was attempted with immutable releases disabled' >&2
+	exit 1
+fi
 remote_asset="$store/releases/1000/assets/NOTICE"
 cp "$remote_asset" "$fixture_dir/saved"
 printf 'swap' >"$remote_asset"
@@ -186,11 +224,20 @@ stage v0.2.0 checksums "$dist2" >/dev/null
 sign v0.2.0 "$dist2" >/dev/null 2>&1
 
 # A release that GitHub does not report immutable after publishing is refused.
+# A partial draft can instead be deleted, after which draft runs cleanly.
+expect_fail_with 'creating the draft failed' page v0.2.0 env GH_STUB_FAIL_AFTER=3 ./scripts/release-page.sh draft "$dist2"
+partial="$(basename "$(dirname "$(grep -l '"v0.2.0"' "$store"/releases/*/meta.json)")")"
+page v0.2.0 env RECORDPRIMS_RELEASE_DRAFT_ID="$partial" RECORDPRIMS_RELEASE_DRAFT_ACTION=delete \
+	./scripts/release-page.sh recover-draft "$dist2" >/dev/null
+[[ ! -e "$store/releases/$partial" ]]
 page v0.2.0 ./scripts/release-page.sh draft "$dist2" >/dev/null
 expect_fail_with 'not reported immutable' page v0.2.0 env GH_STUB_MUTABLE=1 ./scripts/release-page.sh publish "$dist2"
 expect_fail_with 'not published and immutable' page v0.2.0 ./scripts/release-page.sh verify-published
 
 # A local tag that moved away from the anchor stops every step.
 GIT_COMMITTER_NAME=fixture git -C "$repo" tag -f -a -m 'moved' v0.1.0 HEAD >/dev/null
-expect_fail_with 'local v0.1.0 is not the anchored tag' sign v0.1.0 "$dist"
+# Signing re-verifies the published tag against the anchor, and the local tag
+# check refuses a moved tag.
+expect_fail_with 'published tag differs from the anchor' sign v0.1.0 "$dist"
+expect_fail_with 'local v0.1.0 is not the anchored tag' run v0.1.0 bash -c 'source scripts/release-assets.sh; release_anchor; release_anchor_local'
 echo '[ok] release page: anchor binding, CI archive or one-time backfill, tagged public files and notes, committed-key signatures, tamper refusals, one draft with every asset, publish of verified bytes only, immutable required'

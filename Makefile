@@ -15,7 +15,7 @@ export PYTHON
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
         release-github-preflight release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
         release-verify-remote-tag release-record-anchor release-download release-notes release-checksums \
-        release-sign release-verify release-create-draft release-publish release-verify-published \
+        release-sign release-verify release-create-draft release-publish release-recover-draft release-verify-published \
         license-check license-check-test version version-check version-sync version-set version-patch \
         version-minor version-major build clean
 
@@ -189,6 +189,10 @@ release-create-draft: ## Create the one draft release with every verified asset
 release-publish: ## Publish the draft if it still holds the verified bytes; require immutable
 	$(REQUIRE_RELEASE_TAG)
 	scripts/release-page.sh publish "$(RELEASE_DIR)"
+
+release-recover-draft: ## Complete or delete a partial draft (RECORDPRIMS_RELEASE_DRAFT_ID, RECORDPRIMS_RELEASE_DRAFT_ACTION=upload|delete)
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-page.sh recover-draft "$(RELEASE_DIR)"
 
 release-verify-published: ## Download the published release and verify it
 	$(REQUIRE_RELEASE_TAG)

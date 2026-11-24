@@ -7,8 +7,16 @@
 #                       page body from the tagged release notes, and check the
 #                       draft's assets byte for byte.
 #   publish DIR         verify DIR and the published tag, check the one draft
-#                       still holds exactly DIR's bytes and body, publish it,
-#                       and require GitHub to report it immutable.
+#                       still holds exactly DIR's bytes and body, check that
+#                       immutable releases are enabled, publish it, and require
+#                       GitHub to report it immutable.
+#   recover-draft DIR   for a draft a failed create left partial: with
+#                       RECORDPRIMS_RELEASE_DRAFT_ID naming it and
+#                       RECORDPRIMS_RELEASE_DRAFT_ACTION=delete or upload,
+#                       confirm it is the only release for the tag, a draft at
+#                       the anchored commit whose assets are a byte-identical
+#                       subset of DIR, then delete it (so draft can run again)
+#                       or upload the missing assets and check it is complete.
 #   verify-published    download the published release into a new directory
 #                       and verify it like a staged one; it must be immutable.
 #
@@ -20,9 +28,9 @@ source "$(dirname "$0")/release-assets.sh"
 source "$assets_root/scripts/release-gh.sh"
 mode="${1:-}"
 case "$mode" in
-draft | publish) [[ $# -eq 2 ]] || assets_die "usage: release-page.sh $mode DIR" ;;
+draft | publish | recover-draft) [[ $# -eq 2 ]] || assets_die "usage: release-page.sh $mode DIR" ;;
 verify-published) [[ $# -eq 1 ]] || assets_die 'usage: release-page.sh verify-published' ;;
-*) assets_die 'usage: release-page.sh draft DIR | publish DIR | verify-published' ;;
+*) assets_die 'usage: release-page.sh draft DIR | publish DIR | recover-draft DIR | verify-published' ;;
 esac
 dir="${2:-}"
 release_anchor
@@ -42,21 +50,35 @@ releases_for_tag() {
 # GitHub makes to a release body.
 normalized() { awk '{sub(/\r$/, "")} 1' "$1"; }
 
-# remote_matches ID DIR: the release holds exactly DIR's assets, byte for byte.
-remote_matches() {
-	local id="$1" local_dir="$2" json
+# remote_subset ID DIR: every asset on the release is one of DIR's assets with
+# the same bytes. Leaves the sorted local and remote names and the release JSON
+# in scratch.
+remote_subset() {
+	local id="$1" local_dir="$2" json name
 	json="$(release_gh api "repos/$assets_repo/releases/$id")" || assets_die "release $id is unavailable"
-	jq -r '.assets[].name' <<<"$json" | LC_ALL=C sort >"$scratch/remote-names"
+	printf '%s\n' "$json" >"$scratch/release.json"
 	release_uploaded | LC_ALL=C sort >"$scratch/local-names"
-	cmp -s "$scratch/remote-names" "$scratch/local-names" || assets_die 'the release assets differ from the staged set'
+	jq -r '.assets[].name' <<<"$json" | LC_ALL=C sort >"$scratch/remote-names"
+	[[ -z "$(LC_ALL=C comm -13 "$scratch/local-names" "$scratch/remote-names")" ]] ||
+		assets_die 'the release holds assets outside the staged set'
 	rm -rf "$scratch/remote"
-	release_gh release download "$anchor_tag" --repo "$assets_repo" --dir "$scratch/remote" >/dev/null ||
-		assets_die 'could not download the release assets'
+	mkdir "$scratch/remote"
+	if [[ -s "$scratch/remote-names" ]]; then
+		release_gh release download "$anchor_tag" --repo "$assets_repo" --dir "$scratch/remote" >/dev/null ||
+			assets_die 'could not download the release assets'
+	fi
 	while read -r name; do
 		cmp -s "$scratch/remote/$name" "$local_dir/$name" || assets_die "remote $name differs from the staged bytes"
-	done < <(release_uploaded)
-	jq -j '.body // ""' <<<"$json" >"$scratch/body"
-	cmp -s <(normalized "$scratch/body") <(normalized "$local_dir/$(release_notes_name)") ||
+	done <"$scratch/remote-names"
+}
+
+# remote_matches ID DIR: the release holds exactly DIR's assets, byte for byte,
+# and the tagged notes as its body.
+remote_matches() {
+	remote_subset "$1" "$2"
+	cmp -s "$scratch/remote-names" "$scratch/local-names" || assets_die 'the release assets differ from the staged set'
+	jq -j '.body // ""' "$scratch/release.json" >"$scratch/body"
+	cmp -s <(normalized "$scratch/body") <(normalized "$2/$(release_notes_name)") ||
 		assets_die 'the release body differs from the tagged release notes'
 }
 
@@ -67,7 +89,8 @@ draft)
 	assets=()
 	while read -r name; do assets+=("$dir/$name"); done < <(release_uploaded)
 	release_gh release create "$anchor_tag" --repo "$assets_repo" --verify-tag --draft --target "$anchor_commit" \
-		--title "recordprims $anchor_version" --notes-file "$dir/$(release_notes_name)" "${assets[@]}" >/dev/null
+		--title "recordprims $anchor_version" --notes-file "$dir/$(release_notes_name)" "${assets[@]}" >/dev/null ||
+		assets_die 'creating the draft failed; if a partial draft exists, run make release-recover-draft'
 	drafts="$(releases_for_tag)"
 	[[ "$(jq '[.[] | select(.draft == true)] | length' <<<"$drafts")" == 1 && "$(jq length <<<"$drafts")" == 1 ]] ||
 		assets_die "expected exactly one draft for $anchor_tag"
@@ -81,11 +104,45 @@ publish)
 		assets_die "expected exactly one draft release for $anchor_tag"
 	id="$(jq -r '.[0].id' <<<"$drafts")"
 	remote_matches "$id" "$dir"
+	# Publish only where GitHub will make the release immutable.
+	status=0
+	release_immutable_releases "$assets_repo" || status=$?
+	[[ "$status" == 0 ]] ||
+		assets_die "immutable releases must be enabled for $assets_repo before publishing; the draft stays unpublished"
 	release_gh api -X PATCH "repos/$assets_repo/releases/$id" -F draft=false >/dev/null || assets_die 'publishing failed'
 	published="$(release_gh api "repos/$assets_repo/releases/tags/$anchor_tag")" || assets_die 'the published release is unavailable'
 	jq -e --arg tag "$anchor_tag" '.tag_name == $tag and .draft == false and .immutable == true' <<<"$published" >/dev/null ||
 		assets_die "the published release for $anchor_tag is not reported immutable"
 	echo "[ok] $anchor_tag published and immutable; run make release-verify-published"
+	;;
+recover-draft)
+	"$assets_root/scripts/release-verify-assets.sh" "$dir" >/dev/null
+	id="${RECORDPRIMS_RELEASE_DRAFT_ID:-}"
+	action="${RECORDPRIMS_RELEASE_DRAFT_ACTION:-}"
+	[[ "$id" =~ ^[0-9]+$ ]] || assets_die 'RECORDPRIMS_RELEASE_DRAFT_ID must name the draft release id'
+	[[ "$action" == delete || "$action" == upload ]] || assets_die 'RECORDPRIMS_RELEASE_DRAFT_ACTION must be delete or upload'
+	drafts="$(releases_for_tag)"
+	jq -e --arg id "$id" --arg commit "$anchor_commit" \
+		'length == 1 and (.[0].id | tostring) == $id and .[0].draft == true and .[0].target_commitish == $commit' \
+		<<<"$drafts" >/dev/null ||
+		assets_die "release $id is not the only release for $anchor_tag as a draft at $anchor_commit"
+	remote_subset "$id" "$dir"
+	if [[ "$action" == delete ]]; then
+		release_gh api -X DELETE "repos/$assets_repo/releases/$id" >/dev/null || assets_die "deleting draft $id failed"
+		[[ "$(releases_for_tag | jq length)" == 0 ]] || assets_die "a release for $anchor_tag still exists"
+		echo "[ok] partial draft $id deleted; run make release-create-draft again"
+	else
+		missing=()
+		while read -r name; do
+			missing+=("$dir/$name")
+		done < <(LC_ALL=C comm -23 "$scratch/local-names" "$scratch/remote-names")
+		if [[ "${#missing[@]}" -gt 0 ]]; then
+			release_gh release upload "$anchor_tag" --repo "$assets_repo" "${missing[@]}" >/dev/null ||
+				assets_die 'uploading the missing assets failed; run recover-draft again'
+		fi
+		remote_matches "$id" "$dir"
+		echo "[ok] draft $id now holds every verified asset; inspect it, then make release-publish"
+	fi
 	;;
 verify-published)
 	published="$(release_gh api "repos/$assets_repo/releases/tags/$anchor_tag")" || assets_die "no published release for $anchor_tag"

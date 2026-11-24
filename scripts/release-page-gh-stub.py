@@ -67,8 +67,22 @@ elif args[:2] == ["release", "create"]:
     rel = {"id": rid, "tag_name": tag, "draft": "--draft" in args, "immutable": False,
            "target_commitish": opt("--target"), "body": pathlib.Path(opt("--notes-file")).read_text().rstrip("\n")}
     save(rel)
-    for f in files:
+    # GH_STUB_FAIL_AFTER=N: the draft exists, then the upload stops after N assets.
+    limit = int(os.environ.get("GH_STUB_FAIL_AFTER", len(files)))
+    for f in files[:limit]:
         shutil.copy(f, store / "releases" / str(rid) / "assets" / pathlib.Path(f).name)
+    if limit < len(files):
+        fail("upload interrupted")
+elif args[:2] == ["release", "upload"]:
+    tag = args[2]
+    rel = [r for r in releases() if r["tag_name"] == tag]
+    if len(rel) != 1:
+        fail("release not found")
+    dest = store / "releases" / str(rel[0]["id"]) / "assets"
+    for f in [a for a in args[3:] if a.startswith("/")]:
+        if (dest / pathlib.Path(f).name).exists():
+            fail("asset exists")
+        shutil.copy(f, dest / pathlib.Path(f).name)
 elif args[:2] == ["release", "download"]:
     tag, dest = args[2], pathlib.Path(opt("--dir"))
     rel = [r for r in releases() if r["tag_name"] == tag]
@@ -80,7 +94,9 @@ elif args[:2] == ["release", "download"]:
 elif args and args[0] == "api":
     path = next(a for a in args[1:] if a.startswith("repos/"))
     rest = path.split("/", 3)[3]
-    if rest.startswith("releases?"):
+    if rest == "immutable-releases":
+        print(json.dumps({"enabled": not os.environ.get("GH_STUB_IMMUTABLE_OFF")}))
+    elif rest.startswith("releases?"):
         print(json.dumps(releases()))
     elif rest.startswith("releases/tags/"):
         tag = rest.split("/", 2)[2]
@@ -94,6 +110,9 @@ elif args and args[0] == "api":
         if not rel:
             fail("HTTP 404", 1)
         rel = rel[0]
+        if "DELETE" in args:
+            shutil.rmtree(store / "releases" / rid)
+            sys.exit(0)
         if "PATCH" in args:
             rel["draft"] = False
             rel["immutable"] = not os.environ.get("GH_STUB_MUTABLE")

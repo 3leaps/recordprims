@@ -154,9 +154,13 @@ pin in the tagged commit. To change one:
 After the anchor is recorded, in the same ceremony shell
 (`RECORDPRIMS_RELEASE_TAG`, `RECORDPRIMS_RELEASE_ANCHOR_FILE`,
 `RECORDPRIMS_GPG_SIGNING_FINGERPRINT`, `RECORDPRIMS_DECERNOR_BIN`). Every step
-re-verifies the published tag against the anchor and reads the tag object and
-commit from it. Assets stage in `RECORDPRIMS_RELEASE_DIR` (default
-`dist/release/vX.Y.Z` in this checkout).
+reads the tag object and commit from the anchor. `release-download`,
+`release-sign`, `release-create-draft`, `release-publish`,
+`release-recover-draft` and `release-verify-published` also re-verify the
+published tag against it, so they need network access. `release-notes`,
+`release-checksums` and `release-verify` are local: they read the anchored
+commit's blobs and the staged files, and can run offline. Assets stage in
+`RECORDPRIMS_RELEASE_DIR` (default `dist/release/vX.Y.Z` in this checkout).
 
 - [ ] The `Release` workflow run for the tag is green.
 - [ ] `make release-download`: the source archive from that one run, whose
@@ -169,11 +173,21 @@ commit from it. Assets stage in `RECORDPRIMS_RELEASE_DIR` (default
   tagged commit.
 - [ ] `make release-checksums`, then inspect `SHA256SUMS` and `SHA512SUMS`.
 - [ ] `make release-sign` with `RECORDPRIMS_MINISIGN_KEY`,
-  `RECORDPRIMS_PGP_KEY_ID` and `RECORDPRIMS_GPG_HOMEDIR`; it ends with
-  `make release-verify`.
+  `RECORDPRIMS_PGP_KEY_ID` and `RECORDPRIMS_GPG_HOMEDIR`. It checks the
+  unsigned set first (a stale manifest is refused before any signature),
+  signs a private copy, and moves the four signatures into place only after
+  they all verify; an interrupted run leaves the set unsigned, so run it
+  again. It ends with `make release-verify`.
 - [ ] `make release-create-draft`: one draft with every asset, checked byte for
-  byte. Inspect the draft page.
+  byte. Inspect the draft page. If creation fails partway and leaves a
+  partial draft, `make release-recover-draft` with
+  `RECORDPRIMS_RELEASE_DRAFT_ID` (the draft's release id) and
+  `RECORDPRIMS_RELEASE_DRAFT_ACTION=upload` completes it from the verified
+  set, or `=delete` removes it so `make release-create-draft` can run again.
+  It refuses a release that is not the only one for the tag, not a draft at
+  the anchored commit, or holds any asset that differs from the set.
 - [ ] `make release-publish`: publishes only if the draft still holds the
-  verified bytes and body, then requires GitHub to report it immutable.
+  verified bytes and body and immutable releases are enabled, then requires
+  GitHub to report the release immutable. A partial draft is refused.
 - [ ] `make release-verify-published`, and the same from a second checkout by
   someone other than the publisher.

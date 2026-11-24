@@ -7,11 +7,20 @@
 # manifest carries a minisign signature by the committed public key and an
 # OpenPGP signature by the committed signing subkey of the committed primary
 # (and of RECORDPRIMS_GPG_SIGNING_FINGERPRINT, when set). Reads no keyring.
+#
+# With --unsigned, DIR must hold the summed files, both manifests and the page
+# body and no signature yet; every check except the signatures runs. Signing
+# runs this first, so it never signs a stale manifest.
 set -euo pipefail
 # shellcheck source=scripts/release-assets.sh
 source "$(dirname "$0")/release-assets.sh"
+unsigned=0
+if [[ "${1:-}" == --unsigned ]]; then
+	unsigned=1
+	shift
+fi
 dir="${1:-}"
-[[ $# -eq 1 ]] || assets_die 'usage: release-verify-assets.sh DIR'
+[[ $# -eq 1 ]] || assets_die 'usage: release-verify-assets.sh [--unsigned] DIR'
 release_anchor
 release_dir "$dir"
 scratch="$(mktemp -d)"
@@ -19,7 +28,12 @@ trap 'gpgconf --homedir "$scratch/gpg" --kill all >/dev/null 2>&1 || true; rm -r
 
 # Exactly the expected files, all regular.
 {
-	release_uploaded
+	if [[ "$unsigned" == 1 ]]; then
+		release_summed
+		printf 'SHA256SUMS\nSHA512SUMS\n'
+	else
+		release_uploaded
+	fi
 	release_notes_name
 } | LC_ALL=C sort >"$scratch/want"
 (cd "$dir" && find . -mindepth 1 -maxdepth 1 | sed 's#^\./##' | LC_ALL=C sort) >"$scratch/have"
@@ -51,6 +65,11 @@ for algo in sha256 sha512; do
 	done < <(release_summed)
 	cmp -s "$scratch/manifest" "$dir/$sums" || assets_die "$sums does not match the staged files"
 done
+
+if [[ "$unsigned" == 1 ]]; then
+	echo "[ok] unsigned release assets in $dir verified against $anchor_tag at $anchor_commit"
+	exit 0
+fi
 
 # Signatures, against keys read from the tagged commit only.
 release_blob docs/security/release-signing-keys.asc "$scratch/keys.asc"
