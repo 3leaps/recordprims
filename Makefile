@@ -14,7 +14,8 @@ export PYTHON
         surface-tests prepush pr-final workflow-pin release-tooling-test checklist-targets doctor doctor-test \
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
         release-github-preflight release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
-        release-verify-remote-tag release-record-anchor \
+        release-verify-remote-tag release-record-anchor release-download release-notes release-checksums \
+        release-sign release-verify release-create-draft release-publish release-verify-published \
         license-check license-check-test release-check version version-check version-sync version-set version-patch \
         version-minor version-major build clean
 
@@ -61,6 +62,7 @@ checklist-targets: ## Every make target named in RELEASE_CHECKLIST.md exists
 
 release-tooling-test: ## Controls for the release tooling (synthetic; no keys or credentials)
 	@PYTHON=$(PYTHON) scripts/release-workflow-pin.test.sh
+	@scripts/release-restore-tag-ref.test.sh
 
 # The doctor reports maintainer host tools; its controls stub them on PATH with
 # symlinks, so they run on maintainer hosts (prepush), not on Windows CI.
@@ -79,6 +81,7 @@ release-ceremony-test: ## Synthetic release-ceremony controls (throwaway keys; m
 	@scripts/release-verify-tag.test.sh
 	@scripts/verify-pinned-tag.test.sh
 	@scripts/release-verify-published-tag.test.sh
+	@scripts/release-page.test.sh
 
 # Release
 # -----------------------------------------------------------------------------
@@ -153,6 +156,43 @@ release-verify-remote-tag: ## Verify the pushed release tag against the committe
 release-record-anchor: ## Record the approved tag object and commit (no overwrite)
 	$(REQUIRE_RELEASE_TAG)
 	scripts/release-record-anchor.sh
+
+# Release page (after release-record-anchor). Every step reads the tag object
+# and commit from RECORDPRIMS_RELEASE_ANCHOR_FILE. Assets stage in
+# RECORDPRIMS_RELEASE_DIR (default dist/release/<tag> in this checkout).
+RELEASE_DIR = $(abspath $(or $(RECORDPRIMS_RELEASE_DIR),dist/release/$(RECORDPRIMS_RELEASE_TAG)))
+
+release-download: ## Fetch and check the CI source archive for the anchored tag (RECORDPRIMS_RELEASE_BACKFILL=1 for a tag without release.yml)
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-stage.sh download "$(RELEASE_DIR)"
+
+release-notes: ## Stage the public files and the page body from the tagged commit
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-stage.sh public "$(RELEASE_DIR)"
+
+release-checksums: ## Write SHA256SUMS and SHA512SUMS over the staged files
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-stage.sh checksums "$(RELEASE_DIR)"
+
+release-sign: ## Sign both manifests (minisign and the OpenPGP subkey), then verify
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-sign.sh "$(RELEASE_DIR)"
+
+release-verify: ## Verify the staged release page against the anchored commit
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-verify-assets.sh "$(RELEASE_DIR)"
+
+release-create-draft: ## Create the one draft release with every verified asset
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-page.sh draft "$(RELEASE_DIR)"
+
+release-publish: ## Publish the draft if it still holds the verified bytes; require immutable
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-page.sh publish "$(RELEASE_DIR)"
+
+release-verify-published: ## Download the published release and verify it
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-page.sh verify-published
 
 release-export-pin: ## One time: write the public signing pins for review (refuses overwrite)
 	scripts/release-export-pin.sh

@@ -1,0 +1,130 @@
+# recordprims read-only release artifacts
+#
+# On a v* tag: restore the annotated tag, verify it against the public pin and
+# anchors committed in the tagged commit with the digest-pinned checker, then
+# build the source archive of that exact commit. Both are kept as workflow
+# artifacts (release-identity, source).
+#
+# This workflow holds no signing, release or registry authority. It is defined
+# by the tagged commit, so a green run is a consistency signal, not release
+# authorization. The maintainer verifies the tag independently, rebuilds and
+# compares the source archive, signs the manifests and creates the release
+# page locally (RELEASE_CHECKLIST.md, section 4).
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: Verify tag and anchors
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.5.15@sha256:8c6324556e0e8c951b0ad2225f1cb87fad13445b6dcbc83717ace41c6959608e
+      options: --user 1001:1001
+    env:
+      HOME: /github/home
+      PYTHONUTF8: "1"
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      object: ${{ steps.identity.outputs.object }}
+      commit: ${{ steps.identity.outputs.commit }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install the pinned checker
+        run: |
+          set -euo pipefail
+          tool_dir="$(mktemp -d "$RUNNER_TEMP/decernor.XXXXXX")"
+          name="$(awk '{print $2}' config/release/decernor-ci-sha256.txt)"
+          version="${name#decernor_}"
+          version="${version%%_*}"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+            "https://github.com/3leaps/decernor/releases/download/v${version}/${name}" \
+            --output "$tool_dir/$name"
+          (cd "$tool_dir" && sha256sum --check "$GITHUB_WORKSPACE/config/release/decernor-ci-sha256.txt")
+          tar -xzf "$tool_dir/$name" -C "$tool_dir" decernor
+          echo "RECORDPRIMS_DECERNOR_BIN=$tool_dir/decernor" >> "$GITHUB_ENV"
+      - name: Restore the annotated tag and verify it against the committed pin
+        id: identity
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RECORDPRIMS_RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ./scripts/release-restore-tag-ref.sh
+          source scripts/release-decernor.sh
+          resolve_release_decernor
+          export RELEASE_DECERNOR_BIN
+          ./scripts/release-validate-pin.sh
+          ./scripts/verify-pinned-tag.sh
+          version="$(tr -d '\r\n' < VERSION)"
+          object="$(git rev-parse "refs/tags/$RECORDPRIMS_RELEASE_TAG")"
+          commit="$(git rev-parse "refs/tags/$RECORDPRIMS_RELEASE_TAG^{}")"
+          {
+            echo "version=$version"
+            echo "object=$object"
+            echo "commit=$commit"
+          } >> "$GITHUB_OUTPUT"
+          printf '{"tag":"%s","object":"%s","commit":"%s"}\n' \
+            "$RECORDPRIMS_RELEASE_TAG" "$object" "$commit" > release-identity.json
+      - name: Upload release identity
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: release-identity
+          if-no-files-found: error
+          retention-days: 30
+          path: release-identity.json
+  source:
+    name: Source archive
+    needs: verify
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.5.15@sha256:8c6324556e0e8c951b0ad2225f1cb87fad13445b6dcbc83717ace41c6959608e
+      options: --user 1001:1001
+    env:
+      HOME: /github/home
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.verify.outputs.commit }}
+      - name: Confirm the annotated tag identity
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RECORDPRIMS_RELEASE_TAG: ${{ github.ref_name }}
+          RECORDPRIMS_EXPECTED_TAG_OBJECT: ${{ needs.verify.outputs.object }}
+          EXPECTED_COMMIT: ${{ needs.verify.outputs.commit }}
+        run: |
+          set -euo pipefail
+          ./scripts/release-restore-tag-ref.sh
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+      - name: Build the source archive
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          COMMIT: ${{ needs.verify.outputs.commit }}
+        run: |
+          set -euo pipefail
+          git --version
+          archive="recordprims-${VERSION}-src.tar.gz"
+          git archive --format=tar.gz --prefix="recordprims-${VERSION}/" -o "$archive" "$COMMIT"
+      - name: Upload the source archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: source
+          if-no-files-found: error
+          retention-days: 30
+          path: recordprims-${{ needs.verify.outputs.version }}-src.tar.gz

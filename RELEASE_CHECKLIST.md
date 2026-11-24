@@ -148,3 +148,32 @@ pin in the tagged commit. To change one:
   recorded ceremony values) from a clean checkout to confirm the published tag
   object, commit, OpenPGP subkey signature, committed anchors and GitHub
   verification status match.
+
+## 4. Release page
+
+After the anchor is recorded, in the same ceremony shell
+(`RECORDPRIMS_RELEASE_TAG`, `RECORDPRIMS_RELEASE_ANCHOR_FILE`,
+`RECORDPRIMS_GPG_SIGNING_FINGERPRINT`, `RECORDPRIMS_DECERNOR_BIN`). Every step
+re-verifies the published tag against the anchor and reads the tag object and
+commit from it. Assets stage in `RECORDPRIMS_RELEASE_DIR` (default
+`dist/release/vX.Y.Z` in this checkout).
+
+- [ ] The `Release` workflow run for the tag is green.
+- [ ] `make release-download`: the source archive from that one run, whose
+  release identity must be the anchor and whose archive must hold exactly the
+  anchored commit. Pin a run with `RECORDPRIMS_RELEASE_RUN_ID` if needed. A tag
+  whose commit has no `release.yml` (v0.1.0) is built locally instead with
+  `RECORDPRIMS_RELEASE_BACKFILL=1`, which is refused for any other tag.
+- [ ] `make release-notes`: LICENSE files, NOTICE, the public keys and
+  fingerprints, and the page body (`docs/releases/vX.Y.Z.md`), from the
+  tagged commit.
+- [ ] `make release-checksums`, then inspect `SHA256SUMS` and `SHA512SUMS`.
+- [ ] `make release-sign` with `RECORDPRIMS_MINISIGN_KEY`,
+  `RECORDPRIMS_PGP_KEY_ID` and `RECORDPRIMS_GPG_HOMEDIR`; it ends with
+  `make release-verify`.
+- [ ] `make release-create-draft`: one draft with every asset, checked byte for
+  byte. Inspect the draft page.
+- [ ] `make release-publish`: publishes only if the draft still holds the
+  verified bytes and body, then requires GitHub to report it immutable.
+- [ ] `make release-verify-published`, and the same from a second checkout by
+  someone other than the publisher.
