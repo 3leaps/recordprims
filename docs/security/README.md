@@ -9,10 +9,14 @@ the first release, and landed through review.
 A release is one signed annotated tag, `vX.Y.Z`, at a commit of `main`. The
 tag releases the root Go module (`github.com/3leaps/recordprims`). The Rust
 crate is a preview in the repository and is not published; when it is, the
-same tag will cover it. A release that publishes artifacts will also carry
-`SHA256SUMS` and `SHA512SUMS` manifests, each with a minisign signature and an
-OpenPGP signature by the committed signing subkey; these are separate
-signatures, and all will be required.
+same tag will cover it.
+
+Each release page carries the source archive of the tagged commit, the
+license files and NOTICE, the committed public keys and fingerprints, and
+`SHA256SUMS` and `SHA512SUMS` over those files. Each manifest has a minisign
+signature (`.minisig`) by the committed minisign key and an OpenPGP signature
+(`.asc`) by the committed signing subkey; these are separate signatures, and
+both are required. The page is published as an immutable release.
 
 Establish the expected GPG primary key, the exact signing subkey, and the
 minisign public-blob fingerprint through an independently trusted maintainer
@@ -94,3 +98,10 @@ tag and are not independent. A plain `git verify-tag` in your own keyring
 reports `No public key` until the key is imported. Maintainers run the full
 check with `make release-validate-pin` and `make release-verify-remote-tag`
 (see [RELEASE_CHECKLIST.md](../../RELEASE_CHECKLIST.md), section 3).
+
+To check downloaded release assets, verify `SHA256SUMS.minisig` with
+`minisign -V -p recordprims-minisign.pub -m SHA256SUMS` and `SHA256SUMS.asc`
+with the imported key (its `VALIDSIG` line must name the trusted subkey and
+primary), then `sha256sum --check SHA256SUMS`. Maintainers verify the whole
+published page with `make release-verify-published` (section 4 of the
+checklist).

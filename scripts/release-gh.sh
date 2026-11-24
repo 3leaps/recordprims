@@ -17,3 +17,11 @@ release_gh() {
 		GH_HOST=github.com gh "$@"
 	fi
 }
+
+# release_immutable_releases REPO: 0 when GitHub reports immutable releases
+# enabled for REPO, 1 when the setting cannot be read, 2 when it is disabled.
+release_immutable_releases() {
+	local setting
+	setting="$(release_gh api "repos/$1/immutable-releases")" || return 1
+	jq -e '.enabled == true' >/dev/null <<<"$setting" || return 2
+}

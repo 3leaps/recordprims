@@ -56,10 +56,10 @@ jq -e --arg repo "$repository" --arg name "$ruleset_name" '
 ' >/dev/null <<<"$ruleset" ||
 	die "$repository ruleset '$ruleset_name' does not match the v* tag protection contract"
 
-immutable="$(release_gh api "repos/$repository/immutable-releases")" ||
-	die "could not read immutable-releases setting for $repository"
-jq -e '.enabled == true' >/dev/null <<<"$immutable" ||
-	die "$repository must have immutable releases enabled"
+status=0
+release_immutable_releases "$repository" || status=$?
+[[ "$status" != 1 ]] || die "could not read immutable-releases setting for $repository"
+[[ "$status" == 0 ]] || die "$repository must have immutable releases enabled"
 
 printf '[ok] %s GitHub release settings verified (read-only GITHUB_TOKEN, active %s on refs/tags/v*, immutable releases)\n' \
 	"$repository" "$ruleset_name"

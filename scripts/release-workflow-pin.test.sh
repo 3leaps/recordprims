@@ -40,7 +40,7 @@ refused() {
 	grep -q "$1" "$scratch/out" || { cat "$scratch/out" >&2; exit 1; }
 }
 pin_with() {
-	(cd "$repo" && for f in .github/actions/make-check/action.yml .github/workflows/ci.yml; do
+	(cd "$repo" && for f in .github/actions/make-check/action.yml .github/workflows/*.yml; do
 		printf '%s  %s\n' "$("$py" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$f")" "$f"
 	done) >"$repo/config/release/release-workflow.sha256"
 }

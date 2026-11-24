@@ -148,3 +148,59 @@ pin in the tagged commit. To change one:
   recorded ceremony values) from a clean checkout to confirm the published tag
   object, commit, OpenPGP subkey signature, committed anchors and GitHub
   verification status match.
+
+## 4. Release page
+
+After the anchor is recorded, in the same ceremony shell
+(`RECORDPRIMS_RELEASE_TAG`, `RECORDPRIMS_RELEASE_ANCHOR_FILE`,
+`RECORDPRIMS_GPG_SIGNING_FINGERPRINT`, `RECORDPRIMS_DECERNOR_BIN`). Every step
+reads the tag object and commit from the anchor. `release-download`,
+`release-sign`, `release-create-draft`, `release-publish`,
+`release-recover-draft` and `release-verify-published` also re-verify the
+published tag against it, so they need network access. `release-notes`,
+`release-checksums` and `release-verify` are local: they read the anchored
+commit's blobs and the staged files, and can run offline. Assets stage in
+`RECORDPRIMS_RELEASE_DIR` (default `dist/release/vX.Y.Z` in this checkout).
+
+- [ ] The `Release` workflow run for the tag is green.
+- [ ] `make release-download`: the source archive from that one run, whose
+  release identity must be the anchor and whose archive must hold exactly the
+  anchored commit. Pin a run with `RECORDPRIMS_RELEASE_RUN_ID` if needed. A tag
+  whose commit has no `release.yml` (v0.1.0) is built locally instead with
+  `RECORDPRIMS_RELEASE_BACKFILL=1`, which is refused for any other tag.
+- [ ] `make release-notes`: LICENSE files, NOTICE, the public keys and
+  fingerprints, and the page body (`docs/releases/vX.Y.Z.md`), from the
+  tagged commit.
+- [ ] `make release-checksums`, then inspect `SHA256SUMS` and `SHA512SUMS`.
+- [ ] `make release-sign` with `RECORDPRIMS_MINISIGN_KEY`,
+  `RECORDPRIMS_PGP_KEY_ID` and `RECORDPRIMS_GPG_HOMEDIR`. It copies the set
+  to a sibling (`<dir>.signing.*`), runs every unsigned check on that copy (a
+  stale manifest is refused before any signature), signs and verifies the
+  copy, then swaps it in as a set: `<dir>` is renamed to `<dir>.unsigned`, the
+  signed copy to `<dir>`, and `<dir>.unsigned` is removed. The release
+  directory is therefore either unsigned or completely signed; a failure
+  before the swap leaves it unsigned, so run the step again. It ends with
+  `make release-verify`. If a run stops between the two renames, the next run
+  refuses and says which state it found:
+  - `<dir>` missing and `<dir>.unsigned` present: rename `<dir>.unsigned` back
+    to `<dir>` and run `make release-sign` again.
+  - both present: the swap completed. Run `make release-verify`; if it passes,
+    remove `<dir>.unsigned`. If it fails, remove `<dir>`, rename
+    `<dir>.unsigned` to `<dir>` and sign again.
+- [ ] `make release-create-draft`: one draft with every asset, checked byte for
+  byte. Inspect the draft page. If creation fails partway and leaves a
+  partial draft, `make release-recover-draft` with
+  `RECORDPRIMS_RELEASE_DRAFT_ID` (the draft's release id) and
+  `RECORDPRIMS_RELEASE_DRAFT_ACTION=upload` completes it from the verified
+  set, or `=delete` removes it so `make release-create-draft` can run again.
+  It refuses a release that is not the only one for the tag, not a draft at
+  the anchored commit, or holds an uploaded asset that differs from the set.
+  A failed upload can leave a zero-byte asset in GitHub's `starter` state:
+  `upload` deletes it by its exact asset id and uploads it again with the
+  other missing assets; `delete` removes the whole draft whatever its assets'
+  state. Publish refuses a draft that holds a `starter` asset.
+- [ ] `make release-publish`: publishes only if the draft still holds the
+  verified bytes and body and immutable releases are enabled, then requires
+  GitHub to report the release immutable. A partial draft is refused.
+- [ ] `make release-verify-published`, and the same from a second checkout by
+  someone other than the publisher.
