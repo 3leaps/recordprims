@@ -4,8 +4,10 @@
 
 Answers only the calls the release-page scripts make, from a store directory
 (GH_STUB_STORE): workflow runs and their artifacts, and releases with their
-assets. Publishing marks a release immutable unless GH_STUB_MUTABLE is set.
-Any other call fails loudly, so a script cannot reach an unexpected endpoint.
+assets. An asset is `uploaded`, or `starter` (zero bytes, left by an upload
+that failed). Publishing marks a release immutable unless GH_STUB_MUTABLE is
+set. Any other call fails loudly, so a script cannot reach an unexpected
+endpoint.
 """
 
 import json
@@ -24,11 +26,26 @@ def fail(msg, code=1):
     sys.exit(code)
 
 
+def starters(rdir):
+    path = rdir / "starter.json"
+    return set(json.loads(path.read_text())) if path.exists() else set()
+
+
+def set_starters(rdir, names):
+    (rdir / "starter.json").write_text(json.dumps(sorted(names)))
+
+
 def releases():
     out = []
     for meta in sorted((store / "releases").glob("*/meta.json")):
         rel = json.loads(meta.read_text())
-        rel["assets"] = [{"name": p.name, "size": p.stat().st_size} for p in sorted((meta.parent / "assets").iterdir())]
+        rdir = meta.parent
+        marked = starters(rdir)
+        rel["assets"] = [
+            {"id": rel["id"] * 100 + i, "name": p.name, "size": p.stat().st_size,
+             "state": "starter" if p.name in marked else "uploaded"}
+            for i, p in enumerate(sorted((rdir / "assets").iterdir()))
+        ]
         out.append(rel)
     return out
 
@@ -42,6 +59,10 @@ def save(rel):
 
 def opt(name):
     return args[args.index(name) + 1] if name in args else None
+
+
+def opts(name):
+    return [args[i + 1] for i, a in enumerate(args[:-1]) if a == name]
 
 
 if args[:2] == ["run", "list"]:
@@ -67,12 +88,19 @@ elif args[:2] == ["release", "create"]:
     rel = {"id": rid, "tag_name": tag, "draft": "--draft" in args, "immutable": False,
            "target_commitish": opt("--target"), "body": pathlib.Path(opt("--notes-file")).read_text().rstrip("\n")}
     save(rel)
-    # GH_STUB_FAIL_AFTER=N: the draft exists, then the upload stops after N assets.
+    rdir = store / "releases" / str(rid)
+    # GH_STUB_FAIL_AFTER=N: the draft exists, then the upload stops after N
+    # assets; with GH_STUB_STARTER set, the next asset is left as a zero-byte
+    # starter asset.
     limit = int(os.environ.get("GH_STUB_FAIL_AFTER", len(files)))
     for f in files[:limit]:
-        shutil.copy(f, store / "releases" / str(rid) / "assets" / pathlib.Path(f).name)
+        shutil.copy(f, rdir / "assets" / pathlib.Path(f).name)
     if limit < len(files):
-        fail("upload interrupted")
+        if os.environ.get("GH_STUB_STARTER"):
+            name = pathlib.Path(files[limit]).name
+            (rdir / "assets" / name).write_bytes(b"")
+            set_starters(rdir, {name})
+        fail("upload interrupted (HTTP 502)")
 elif args[:2] == ["release", "upload"]:
     tag = args[2]
     rel = [r for r in releases() if r["tag_name"] == tag]
@@ -88,9 +116,13 @@ elif args[:2] == ["release", "download"]:
     rel = [r for r in releases() if r["tag_name"] == tag]
     if len(rel) != 1:
         fail("release not found")
+    patterns = opts("-p")
+    chosen = [a for a in rel[0]["assets"] if not patterns or a["name"] in patterns]
+    if any(a["state"] != "uploaded" for a in chosen):
+        fail("asset not downloadable (starter)")
     dest.mkdir(parents=True, exist_ok=True)
-    for a in (store / "releases" / str(rel[0]["id"]) / "assets").iterdir():
-        shutil.copy(a, dest / a.name)
+    for a in chosen:
+        shutil.copy(store / "releases" / str(rel[0]["id"]) / "assets" / a["name"], dest / a["name"])
 elif args and args[0] == "api":
     path = next(a for a in args[1:] if a.startswith("repos/"))
     rest = path.split("/", 3)[3]
@@ -104,6 +136,16 @@ elif args and args[0] == "api":
         if not rel:
             fail("HTTP 404", 1)
         print(json.dumps(rel[0]))
+    elif rest.startswith("releases/assets/") and "DELETE" in args:
+        aid = int(rest.split("/")[2])
+        for rel in releases():
+            for a in rel["assets"]:
+                if a["id"] == aid:
+                    rdir = store / "releases" / str(rel["id"])
+                    (rdir / "assets" / a["name"]).unlink()
+                    set_starters(rdir, starters(rdir) - {a["name"]})
+                    sys.exit(0)
+        fail("HTTP 404", 1)
     elif rest.startswith("releases/"):
         rid = rest.split("/")[1]
         rel = [r for r in releases() if str(r["id"]) == rid]

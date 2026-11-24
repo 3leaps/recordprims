@@ -173,11 +173,20 @@ commit's blobs and the staged files, and can run offline. Assets stage in
   tagged commit.
 - [ ] `make release-checksums`, then inspect `SHA256SUMS` and `SHA512SUMS`.
 - [ ] `make release-sign` with `RECORDPRIMS_MINISIGN_KEY`,
-  `RECORDPRIMS_PGP_KEY_ID` and `RECORDPRIMS_GPG_HOMEDIR`. It checks the
-  unsigned set first (a stale manifest is refused before any signature),
-  signs a private copy, and moves the four signatures into place only after
-  they all verify; an interrupted run leaves the set unsigned, so run it
-  again. It ends with `make release-verify`.
+  `RECORDPRIMS_PGP_KEY_ID` and `RECORDPRIMS_GPG_HOMEDIR`. It copies the set
+  to a sibling (`<dir>.signing.*`), runs every unsigned check on that copy (a
+  stale manifest is refused before any signature), signs and verifies the
+  copy, then swaps it in as a set: `<dir>` is renamed to `<dir>.unsigned`, the
+  signed copy to `<dir>`, and `<dir>.unsigned` is removed. The release
+  directory is therefore either unsigned or completely signed; a failure
+  before the swap leaves it unsigned, so run the step again. It ends with
+  `make release-verify`. If a run stops between the two renames, the next run
+  refuses and says which state it found:
+  - `<dir>` missing and `<dir>.unsigned` present: rename `<dir>.unsigned` back
+    to `<dir>` and run `make release-sign` again.
+  - both present: the swap completed. Run `make release-verify`; if it passes,
+    remove `<dir>.unsigned`. If it fails, remove `<dir>`, rename
+    `<dir>.unsigned` to `<dir>` and sign again.
 - [ ] `make release-create-draft`: one draft with every asset, checked byte for
   byte. Inspect the draft page. If creation fails partway and leaves a
   partial draft, `make release-recover-draft` with
@@ -185,7 +194,11 @@ commit's blobs and the staged files, and can run offline. Assets stage in
   `RECORDPRIMS_RELEASE_DRAFT_ACTION=upload` completes it from the verified
   set, or `=delete` removes it so `make release-create-draft` can run again.
   It refuses a release that is not the only one for the tag, not a draft at
-  the anchored commit, or holds any asset that differs from the set.
+  the anchored commit, or holds an uploaded asset that differs from the set.
+  A failed upload can leave a zero-byte asset in GitHub's `starter` state:
+  `upload` deletes it by its exact asset id and uploads it again with the
+  other missing assets; `delete` removes the whole draft whatever its assets'
+  state. Publish refuses a draft that holds a `starter` asset.
 - [ ] `make release-publish`: publishes only if the draft still holds the
   verified bytes and body and immutable releases are enabled, then requires
   GitHub to report the release immutable. A partial draft is refused.

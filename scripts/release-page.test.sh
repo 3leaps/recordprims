@@ -99,7 +99,7 @@ grep -q '  recordprims-0.1.0-src.tar.gz$' "$dist/SHA256SUMS"
 # check first; a stale manifest is refused before any signature is written.
 no_signatures() {
 	! find "$dist" -name '*.minisig' -o -name '*.asc' | grep -v -q release-signing-keys &&
-		[[ -z "$(find "$(dirname "$dist")" -maxdepth 1 -name '.release-sign.*')" ]]
+		[[ -z "$(find "$(dirname "$dist")" -maxdepth 1 -name "$(basename "$dist").*")" ]]
 }
 expect_fail_with 'committed signing subkey followed by !' sign v0.1.0 "$dist" "$other_subkey"
 cp "$dist/SHA256SUMS" "$fixture_dir/saved"
@@ -118,7 +118,32 @@ chmod +x "$fixture_dir/failbin/gpg"
 sign_interrupted() { PATH="$fixture_dir/failbin:$PATH" sign v0.1.0 "$dist"; }
 expect_fail sign_interrupted
 no_signatures
+# Promotion replaces the set with two renames. A failure at the first leaves
+# the unsigned set in place; a failure at the second leaves it in
+# DIR.unsigned, which the next run detects and names the recovery for.
+real_mv="$(command -v mv)"
+mvstub() {
+	mkdir -p "$fixture_dir/mvbin"
+	# shellcheck disable=SC2016 # The single-quoted text is the stub's own script.
+	printf '#!/bin/sh\ncase "$1" in %s) exit 1 ;; esac\nexec "%s" "$@"\n' "$1" "$real_mv" >"$fixture_dir/mvbin/mv"
+	chmod +x "$fixture_dir/mvbin/mv"
+}
+sign_mv_fails() { PATH="$fixture_dir/mvbin:$PATH" sign v0.1.0 "$dist"; }
+mvstub "'$dist'"
+expect_fail sign_mv_fails
+[[ -d "$dist" && ! -e "$dist.unsigned" ]]
+no_signatures
+mvstub '*.signing.*'
+expect_fail sign_mv_fails
+[[ ! -e "$dist" && -d "$dist.unsigned" ]]
+expect_fail_with "rename $dist.unsigned to $dist" sign v0.1.0 "$dist"
+mv "$dist.unsigned" "$dist"
+no_signatures
+mkdir "$dist.unsigned"
+expect_fail_with 'run make release-verify on' sign v0.1.0 "$dist"
+rmdir "$dist.unsigned"
 sign v0.1.0 "$dist" >/dev/null 2>&1
+[[ -z "$(find "$(dirname "$dist")" -maxdepth 1 -name "$(basename "$dist").*")" ]]
 verify v0.1.0 "$dist" >/dev/null
 expect_fail_with 'does not hold exactly the release assets' sign v0.1.0 "$dist"
 run v0.1.0 env RECORDPRIMS_GPG_SIGNING_FINGERPRINT="$primary" ./scripts/release-verify-assets.sh "$dist" >/dev/null
@@ -224,12 +249,27 @@ stage v0.2.0 checksums "$dist2" >/dev/null
 sign v0.2.0 "$dist2" >/dev/null 2>&1
 
 # A release that GitHub does not report immutable after publishing is refused.
-# A partial draft can instead be deleted, after which draft runs cleanly.
-expect_fail_with 'creating the draft failed' page v0.2.0 env GH_STUB_FAIL_AFTER=3 ./scripts/release-page.sh draft "$dist2"
-partial="$(basename "$(dirname "$(grep -l '"v0.2.0"' "$store"/releases/*/meta.json)")")"
-page v0.2.0 env RECORDPRIMS_RELEASE_DRAFT_ID="$partial" RECORDPRIMS_RELEASE_DRAFT_ACTION=delete \
-	./scripts/release-page.sh recover-draft "$dist2" >/dev/null
+# A failed upload can also leave a zero-byte `starter` asset (HTTP 502).
+# Publish refuses such a draft; recover-draft deletes the whole draft, or
+# deletes the starter asset by its id and uploads the missing assets.
+partial_id() { basename "$(dirname "$(grep -l '"v0.2.0"' "$store"/releases/*/meta.json)")"; }
+recover2() {
+	page v0.2.0 env RECORDPRIMS_RELEASE_DRAFT_ID="$(partial_id)" RECORDPRIMS_RELEASE_DRAFT_ACTION="$1" \
+		./scripts/release-page.sh recover-draft "$dist2"
+}
+expect_fail_with 'creating the draft failed' page v0.2.0 env GH_STUB_FAIL_AFTER=3 GH_STUB_STARTER=1 ./scripts/release-page.sh draft "$dist2"
+grep -q '\[' "$store/releases/$(partial_id)/starter.json"
+expect_fail_with 'incomplete \(starter\) asset' page v0.2.0 ./scripts/release-page.sh publish "$dist2"
+partial="$(partial_id)"
+recover2 delete >/dev/null
 [[ ! -e "$store/releases/$partial" ]]
+expect_fail_with 'creating the draft failed' page v0.2.0 env GH_STUB_FAIL_AFTER=3 GH_STUB_STARTER=1 ./scripts/release-page.sh draft "$dist2"
+recover2 upload >/dev/null
+grep -q 'releases/assets/' "$store/calls.log"
+[[ "$(cat "$store/releases/$(partial_id)/starter.json")" == '[]' ]]
+# The completed draft is still the one to publish; start again from a clean
+# draft for the immutability control below.
+recover2 delete >/dev/null
 page v0.2.0 ./scripts/release-page.sh draft "$dist2" >/dev/null
 expect_fail_with 'not reported immutable' page v0.2.0 env GH_STUB_MUTABLE=1 ./scripts/release-page.sh publish "$dist2"
 expect_fail_with 'not published and immutable' page v0.2.0 ./scripts/release-page.sh verify-published
