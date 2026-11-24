@@ -147,9 +147,9 @@ it with `ReversalsOf`.
 
 ## Reads and holds
 
-`Lookup`, `Render` and the search view read through the store's serving path
-(`Release` with purpose `serve`). `Lookup` and `Render` select the one
-requested pin, so nothing else is delivered. A held revision, or a retired
+`Lookup`, `Render` and the search view read through the store's serving path.
+The search view uses `Release` with purpose `serve`. `Lookup` and `Render` use
+`ReadServed`, which evaluates and delivers only the requested pin. A held revision, or a retired
 record, is not served, so it does not appear in any of them. Every pin that is
 not served gives the same outcome, `not_served`, whether it is held, retired,
 never written, has the wrong digest or names another stream; the caller is not

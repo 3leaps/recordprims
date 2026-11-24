@@ -88,6 +88,8 @@ type stepInput struct {
 	Request             json.RawMessage   `json:"request,omitempty"`
 	RetireWithEmptyKey  bool              `json:"retire_with_empty_key,omitempty"`
 	Selection           []recordprims.Pin `json:"selection,omitempty"`
+	Pin                 *recordprims.Pin  `json:"pin,omitempty"`
+	NoSink              bool              `json:"no_sink,omitempty"`
 }
 
 type stepOutput struct {
@@ -479,7 +481,7 @@ func runScenario(sc scenarioInput) (scenarioOutput, error) {
 			cleanErr := fmt.Errorf("recordprims: discarding staged body after %w: %w", recordprims.ErrSchema, &recordprims.IOError{Op: "unlink", Class: "permission"})
 			results = append(results, classifyErr(st.Op, cleanErr))
 
-		case "open_stream", "append", "retire", "protect", "head", "revisions", "reconcile", "release":
+		case "open_stream", "append", "retire", "protect", "head", "revisions", "reconcile", "release", "read_served":
 			he, ok := handles[hname]
 			if !ok {
 				return scenarioOutput{}, fmt.Errorf("unknown handle %q", hname)
@@ -681,6 +683,41 @@ func runStreamOp(ctx context.Context, he *handleEntry, st stepInput) (any, error
 		}
 		if res.RefusalReason != "" {
 			out["refusal_reason"] = res.RefusalReason
+		}
+		return out, nil
+	case "read_served":
+		var pin recordprims.Pin
+		if st.Pin != nil {
+			pin = *st.Pin
+		}
+		sink := &collectSink{}
+		var rs recordprims.ReleaseSink = sink
+		if st.NoSink {
+			rs = nil
+		}
+		res, err := s.ReadServed(ctx, pin, recordprims.UseClosure(st.Closure), rs)
+		if err != nil {
+			return nil, err
+		}
+		frames := sink.frames
+		if frames == nil {
+			frames = []map[string]any{}
+		}
+		out := map[string]any{
+			"outcome": string(res.Outcome), "frame_count": res.Frames,
+			"frames_completed": res.FramesCompleted, "frames": frames,
+		}
+		if res.Reason != "" {
+			out["reason"] = res.Reason
+		}
+		if res.Cut != nil {
+			out["cut"] = *res.Cut
+		}
+		if res.Delivery != "" {
+			out["delivery"] = string(res.Delivery)
+		}
+		if res.FrameInFlight != nil {
+			out["frame_in_flight"] = *res.FrameInFlight
 		}
 		return out, nil
 	}

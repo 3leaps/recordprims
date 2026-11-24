@@ -339,6 +339,14 @@ with tempfile.TemporaryDirectory(prefix="recordprims-crosscheck-") as work_dir:
             {"op": "release", "stream": S, "purpose": "serve", "closure": "full_content"},
             {"op": "release", "stream": S, "purpose": "export", "closure": "metadata_only"},
             {"op": "release", "stream": Q, "purpose": "reuse", "closure": "full_content"},
+            # A served read delivers exactly the pinned revision; an absent
+            # pin is not_served.
+            {"op": "read_served", "stream": S, "closure": "full_content", "pin": {"stream": S, "record_id": "cpu-0", "revision": 1, "digest": digest(a1)}},
+            {"op": "read_served", "stream": S, "closure": "full_content", "pin": {"stream": S, "record_id": "cpu-1", "revision": 1, "digest": digest(b1)}},
+            {"op": "read_served", "stream": S, "closure": "metadata_only", "pin": {"stream": S, "record_id": "cpu-1", "revision": 1, "digest": digest(b1)}},
+            {"op": "read_served", "stream": S, "closure": "full_content", "no_sink": True, "pin": {"stream": S, "record_id": "cpu-1", "revision": 1, "digest": digest(b1)}},
+            {"op": "read_served", "stream": S, "closure": "full_content", "pin": {"stream": S, "record_id": "cpu-0", "revision": 1, "digest": digest(a2)}},
+            {"op": "read_served", "stream": S, "closure": "full_content", "pin": {"stream": S, "record_id": "cpu-0", "revision": 0, "digest": digest(a1)}},
         ] + protect_retire_steps(S, Q, a1, a2, t) + [
             t(4, 0), {"op": "append", "stream": S, "record": rec(S, "late", 1, {}), "key": "k-late"},
             {"op": "head", "stream": "never.opened", "record_id": "x"},
@@ -370,6 +378,9 @@ with tempfile.TemporaryDirectory(prefix="recordprims-crosscheck-") as work_dir:
             {"op": "release", "stream": S, "purpose": "export", "closure": "metadata_only", "selection": [pin2]},
             {"op": "release", "stream": S, "purpose": "serve", "closure": "full_content", "selection": [pin2]},
             {"op": "release", "stream": S, "purpose": "reuse", "closure": "metadata_only", "selection": [pin2]},
+            # A held revision and an absent pin read the same.
+            {"op": "read_served", "stream": S, "closure": "full_content", "pin": pin2},
+            {"op": "read_served", "stream": S, "closure": "full_content", "pin": ghost},
             t(6, 2), {"op": "protect", "stream": S, "request": prot(S, "k-rest", "restore", pin2, at(6, 2), reason="hold_released", restores=7)},
             t(6, 3), {"op": "retire", "stream": S, "record_id": "cpu-1", "reason": "withdrawn"},
             t(6, 4), {"op": "retire", "stream": S, "record_id": "cpu-1", "reason": "operator"},
@@ -398,6 +409,7 @@ with tempfile.TemporaryDirectory(prefix="recordprims-crosscheck-") as work_dir:
             # released for export and reuse.
             {"op": "release", "stream": S, "purpose": "serve", "closure": "metadata_only", "selection": [pin2]},
             {"op": "release", "stream": S, "purpose": "export", "closure": "metadata_only", "selection": [pin2]},
+            {"op": "read_served", "stream": S, "closure": "metadata_only", "pin": pin2},
             {"op": "release", "stream": S, "purpose": "reuse", "closure": "full_content", "selection": [pin2]},
         ]
 
@@ -449,6 +461,18 @@ with tempfile.TemporaryDirectory(prefix="recordprims-crosscheck-") as work_dir:
         raise SystemExit("crosscheck: stream scenario did not append to a retired record")
     if not any(f["kind"] == "body" for r in stream_rows if r.get("op") == "release" for f in r["data"]["frames"]):
         raise SystemExit("crosscheck: stream scenario released no body frame")
+    rs_rows = [r for r in stream_rows if r.get("op") == "read_served"]
+    rs_outcomes = {r["data"]["outcome"] for r in rs_rows if r.get("ok")}
+    for want in ("served", "not_served"):
+        if want not in rs_outcomes:
+            raise SystemExit(f"crosscheck: stream scenario did not exercise read_served outcome {want!r}")
+    if not any(r.get("ok") and any(f["kind"] == "body" for f in r["data"]["frames"]) for r in rs_rows):
+        raise SystemExit("crosscheck: read_served delivered no body frame")
+    if not any(not r.get("ok") and r.get("error_code") == "schema" for r in rs_rows):
+        raise SystemExit("crosscheck: read_served did not reject a malformed pin")
+    denied = [json.dumps(r["data"], sort_keys=True) for r in rs_rows if r.get("ok") and r["data"]["outcome"] == "not_served"]
+    if len(denied) < 4:
+        raise SystemExit("crosscheck: read_served exercised too few denials")
 
     # keys.idx carries a MAC under each store's own diagnostic key, so its
     # key ids and the content digest over them differ between two stores.
