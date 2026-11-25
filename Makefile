@@ -10,7 +10,7 @@ export PYTHON
 .DEFAULT_GOAL := help
 .PHONY: all help check check-platform precommit fmt fmt-check lint test test-go test-rust \
         example-check example-schemas lint-yaml fmt-yaml \
-        test-faultpoints faultpoint-exclusion contract-check contract-check-test contract-oracle conformance crosscheck unsafe-check unsafe-check-test deps-check api-scan api-scan-test deny go-standalone surface-scan content-check \
+        test-faultpoints faultpoint-exclusion contract-check contract-check-test crate-package crate-copies-check-test contract-oracle conformance crosscheck unsafe-check unsafe-check-test deps-check api-scan api-scan-test deny go-standalone surface-scan content-check \
         surface-tests prepush pr-final workflow-pin release-tooling-test checklist-targets doctor doctor-test \
         release-ceremony-test release-export-pin release-validate-pin release-insert-anchors \
         release-github-preflight release-preflight release-prepare-tag-message release-tag release-push-tag release-verify-tag \
@@ -24,7 +24,7 @@ all: check
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*## "} /^[a-z][a-z0-9-]*:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-check-platform: fmt-check lint test example-check test-faultpoints faultpoint-exclusion contract-check contract-check-test conformance crosscheck unsafe-check unsafe-check-test deps-check api-scan api-scan-test content-check surface-tests checklist-targets version-check license-check license-check-test ## Platform-native subset of check (no goneat, cargo-deny, or PyYAML required)
+check-platform: fmt-check lint test example-check test-faultpoints faultpoint-exclusion contract-check contract-check-test crate-package crate-copies-check-test conformance crosscheck unsafe-check unsafe-check-test deps-check api-scan api-scan-test content-check surface-tests checklist-targets version-check license-check license-check-test ## Platform-native subset of check (no goneat, cargo-deny, or PyYAML required)
 
 check: check-platform contract-oracle workflow-pin release-tooling-test deny lint-yaml ## Everything CI runs on one host
 
@@ -252,6 +252,14 @@ test-rust: ## Rust tests
 
 contract-check: ## Vendored contract matches contract/PIN.md
 	$(PYTHON) -I -B scripts/contract-check.py
+
+crate-package: ## The Rust crate packages from its own directory and the package builds
+	$(PYTHON) -I -B scripts/crate-copies-check.py
+	cargo package --locked --allow-dirty -p recordprims --quiet
+	@echo "[ok] crate-package"
+
+crate-copies-check-test: ## crate-copies-check refuses planted drift
+	PYTHON=$(PYTHON) bash scripts/crate-copies-check.test.sh
 
 contract-check-test: ## contract-check refuses malformed pins, uncovered files and byte drift
 	@PYTHON=$(PYTHON) scripts/contract-check.test.sh

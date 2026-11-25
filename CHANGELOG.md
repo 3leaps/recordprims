@@ -31,6 +31,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Rust returns the new `Error::StoreInvalidAfterProgress` (code
   `store_invalid`). Go and Rust tests cover a refused journal and stream
   directory on open, release and append
+- Rust crate: packages from its own directory. The shape schemas and license
+  texts are copied into `crates/recordprims`, a check keeps each copy equal to
+  its source, and `make crate-package` builds the packaged crate
 
 ## [0.1.0] - 2026-11-23
 

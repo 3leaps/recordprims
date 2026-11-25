@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract:durable-record/v1/body-state-request.schema.json",
+  "title": "Durable Record Body State Request",
+  "description": "Experimental durable-record/v1 logical decision input, not a public API. present is a trusted observation at the designated stream's current cut: true is bytes verified against digest and length, false is observed absence. An unknown or failed observation has no form here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "body",
+    "present"
+  ],
+  "properties": {
+    "body": {
+      "$ref": "#/$defs/lifecycleBody"
+    },
+    "present": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "lifecycleBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "length"
+      ],
+      "description": "Body lifecycle identity: digest and byte length only. No media type, encryption or retrieval hint.",
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}
