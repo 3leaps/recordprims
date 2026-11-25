@@ -392,6 +392,12 @@ func createStreamJournal(root *fsroot.Root, fso fsroot.Options, app *jfile.Appen
 }
 
 func mapJFileErr(err error) error {
+	// The appender returns a refusal unwrapped only from its verified open,
+	// before any byte is written; a refusal after a write is wrapped as
+	// poisoned and stays indeterminate below.
+	if r := refusalReason(err); r != "" {
+		return &refusedError{reason: r}
+	}
 	switch {
 	case errors.Is(err, jfile.ErrAborted):
 		return &IOError{Op: "write", Class: "no_space", indeterminate: false}
@@ -642,6 +648,18 @@ func mapOpenErr(err error) error {
 	return ioErr("open", err, false)
 }
 
+// refusedError is ErrStoreInvalid for a store entry the confined root refused
+// during an operation. It keeps the operation's outcome marker: a refusal met
+// after a durable step leaves the outcome indeterminate.
+type refusedError struct {
+	reason        string
+	indeterminate bool
+}
+
+func (e *refusedError) Error() string { return ErrStoreInvalid.Error() + ": " + e.reason }
+
+func (e *refusedError) Unwrap() error { return ErrStoreInvalid }
+
 // refusalReason names the confined-root refusal in err, or returns "" when err
 // is not a refusal.
 func refusalReason(err error) string {
@@ -669,7 +687,7 @@ func refusalReason(err error) string {
 // structural fact about the store, not a failed I/O call.
 func ioErr(op string, err error, indeterminate bool) error {
 	if r := refusalReason(err); r != "" {
-		return fmt.Errorf("%w: %s", ErrStoreInvalid, r)
+		return &refusedError{reason: r, indeterminate: indeterminate}
 	}
 	class := "other"
 	switch {

@@ -4,9 +4,13 @@ package recordprims
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/3leaps/recordprims/internal/fsroot"
+	"github.com/3leaps/recordprims/internal/jfile"
 )
 
 // makePermissive grants the group read access to path.
@@ -83,5 +87,41 @@ func TestStreamPathRefusalsAreStoreInvalid(t *testing.T) {
 				t.Fatalf("Append: want ErrStoreInvalid, got %v", err)
 			}
 		})
+	}
+}
+
+// The journal appender's own verified open refuses before any byte is
+// written, so the refusal is determinate ErrStoreInvalid. A refusal wrapped
+// after a write stays indeterminate.
+func TestJournalAppendRefusalIsDeterminateStoreInvalid(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := fsroot.Open(dir, testFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := os.WriteFile(filepath.Join(dir, "j.ndjson"), nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dir, "j.ndjson"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	aerr := jfile.New(root, testFS).Append("j.ndjson", 0, []byte("{}\n"), false)
+	if !errors.Is(aerr, fsroot.ErrMode) {
+		t.Fatalf("appender: want a mode refusal, got %v", aerr)
+	}
+	if fi, _ := os.Stat(filepath.Join(dir, "j.ndjson")); fi.Size() != 0 {
+		t.Fatal("refused append wrote bytes")
+	}
+	got := mapJFileErr(aerr)
+	if !errors.Is(got, ErrStoreInvalid) || IsIndeterminate(got) {
+		t.Fatalf("mapJFileErr: want determinate ErrStoreInvalid, got %v (indeterminate %v)", got, IsIndeterminate(got))
+	}
+	after := mapJFileErr(fmt.Errorf("%w: open for truncate: %v", jfile.ErrPoisoned, fsroot.ErrSymlink))
+	if errors.Is(after, ErrStoreInvalid) || !IsIndeterminate(after) {
+		t.Fatalf("refusal after a write: want indeterminate I/O error, got %v", after)
 	}
 }

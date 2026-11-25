@@ -332,6 +332,39 @@ fn test_open_refuses_permissive_key_and_hardlinked_file() {
     assert_eq!(err.code(), ErrorCode::StoreInvalid);
 }
 
+/// A refusal is `store_invalid` and keeps the caller's outcome marker; an
+/// ordinary I/O failure stays an `Io` error with its marker. Matches the Go
+/// twin's `ioErr`.
+#[test]
+fn refusal_mapping_keeps_outcome_marker() {
+    for ind in [false, true] {
+        for refusal in [
+            FsRootError::NotDir,
+            FsRootError::NotRegular,
+            FsRootError::MultipleLink,
+            FsRootError::Symlink,
+            FsRootError::Owner,
+            FsRootError::Perm,
+            FsRootError::FsType,
+            FsRootError::Path,
+        ] {
+            let err = refusal.into_store_error("open", ind);
+            assert_eq!(err.code(), ErrorCode::StoreInvalid, "{err}");
+            assert_eq!(is_indeterminate(&err), ind, "{err}");
+            assert!(err.io_error().is_none(), "{err}");
+            assert!(
+                err.to_string().starts_with("recordprims: invalid store: "),
+                "{err}"
+            );
+        }
+        let err = FsRootError::Io("read", io::Error::from(io::ErrorKind::PermissionDenied))
+            .into_store_error("open", ind);
+        assert_ne!(err.code(), ErrorCode::StoreInvalid);
+        assert!(err.io_error().is_some());
+        assert_eq!(is_indeterminate(&err), ind);
+    }
+}
+
 #[test]
 fn test_errors_carry_no_path() {
     let td = TempStoreDir::new();

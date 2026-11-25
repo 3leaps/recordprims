@@ -38,16 +38,26 @@ pub(crate) enum FsRootError {
 }
 
 impl FsRootError {
+    /// Maps to the public error. A refusal keeps the outcome marker: met after
+    /// a durable step (`indeterminate`), it is `store_invalid` with an
+    /// indeterminate outcome.
     pub(crate) fn into_store_error(self, default_op: &'static str, indeterminate: bool) -> Error {
+        let refused = |detail: &str| {
+            if indeterminate {
+                Error::StoreInvalidAfterProgress(detail.to_owned())
+            } else {
+                Error::store_invalid(detail)
+            }
+        };
         match self {
-            Self::NotDir => Error::store_invalid("not a directory"),
-            Self::NotRegular => Error::store_invalid("store entry is not a regular file"),
-            Self::MultipleLink => Error::store_invalid("hardlinked file refused"),
-            Self::Symlink => Error::store_invalid("symlink"),
-            Self::Owner => Error::store_invalid("wrong owner"),
-            Self::Perm => Error::store_invalid("group or other permissions"),
-            Self::FsType => Error::store_invalid("filesystem type not allowed"),
-            Self::Path => Error::store_invalid("path is outside the store root"),
+            Self::NotDir => refused("not a directory"),
+            Self::NotRegular => refused("store entry is not a regular file"),
+            Self::MultipleLink => refused("hardlinked file refused"),
+            Self::Symlink => refused("symlink"),
+            Self::Owner => refused("wrong owner"),
+            Self::Perm => refused("group or other permissions"),
+            Self::FsType => refused("filesystem type not allowed"),
+            Self::Path => refused("path is outside the store root"),
             Self::Io(op, e) => Error::io(
                 if op.is_empty() { default_op } else { op },
                 &e,
