@@ -1662,6 +1662,65 @@ mod streams {
             Err(Error::Schema(_))
         ));
     }
+
+    /// A store entry the root refuses (symlink, group or other permission
+    /// bits) is `store_invalid` wherever it is met, matching the Go twin.
+    #[cfg(unix)]
+    #[test]
+    fn stream_path_refusals_are_store_invalid() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        type Tamper = fn(&Path);
+        let cases: [(&str, Tamper); 4] = [
+            ("journal mode 0640", |root| {
+                let j = root.join(stream_dir("obs.t")).join("journal.ndjson");
+                std::fs::set_permissions(&j, std::fs::Permissions::from_mode(0o640)).unwrap();
+            }),
+            ("stream dir symlink", |root| {
+                let sdir = root.join(stream_dir("obs.t"));
+                let real = sdir.with_extension("real");
+                std::fs::rename(&sdir, &real).unwrap();
+                symlink(real.file_name().unwrap(), &sdir).unwrap();
+            }),
+            ("streams dir symlink", |root| {
+                let sd = root.join("streams");
+                let real = root.with_extension("streams-real");
+                std::fs::rename(&sd, &real).unwrap();
+                symlink(&real, &sd).unwrap();
+            }),
+            ("journal symlink", |root| {
+                let j = root.join(stream_dir("obs.t")).join("journal.ndjson");
+                let real = j.with_extension("real");
+                std::fs::rename(&j, &real).unwrap();
+                symlink(real.file_name().unwrap(), &j).unwrap();
+            }),
+        ];
+        for (name, tamper) in cases {
+            let (s, td, clk) = store_with_record();
+            let st = s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
+            tamper(&td.path);
+            let code = |r: Result<(), Error>| r.err().map(|e| e.code());
+            assert_eq!(
+                code(s.open_stream("obs.t", Mode::Revisioned, None).map(|_| ())),
+                Some(ErrorCode::StoreInvalid),
+                "{name}: open_stream"
+            );
+            assert_eq!(
+                code(st.release(&serve(), None).map(|_| ())),
+                Some(ErrorCode::StoreInvalid),
+                "{name}: release"
+            );
+            clk.advance(Duration::from_secs(1));
+            assert_eq!(
+                code(st.append(&write("obs.t", "b", "k2")).map(|_| ())),
+                Some(ErrorCode::StoreInvalid),
+                "{name}: append"
+            );
+            let real = td.path.with_extension("streams-real");
+            if real.exists() {
+                std::fs::remove_dir_all(&real).unwrap();
+            }
+        }
+    }
 }
 
 mod producer_instant {
