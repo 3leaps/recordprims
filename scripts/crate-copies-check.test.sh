@@ -10,7 +10,7 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 base="$scratch/base"
 mkdir "$base"
-git -C "$root" ls-files -z -- internal/shape/schemas crates/recordprims/schemas crates/recordprims/LICENSE-MIT crates/recordprims/LICENSE-APACHE LICENSE-MIT LICENSE-APACHE scripts/crate-copies-check.py |
+git -C "$root" ls-files -z -- internal/shape/schemas crates/recordprims/schemas crates/recordprims/LICENSE-MIT crates/recordprims/LICENSE-APACHE crates/recordprims/NOTICE LICENSE-MIT LICENSE-APACHE NOTICE scripts/crate-copies-check.py |
 	tar -C "$root" --null -T - -cf - | tar -xf - -C "$base"
 
 check() { (cd "$repo" && "$PYTHON_BIN" -I -B scripts/crate-copies-check.py) >"$scratch/out" 2>&1; }
@@ -49,4 +49,7 @@ refused 'changed license copy' 'copy differs from source: crates/recordprims/LIC
 fresh; rm "$copy/LICENSE-APACHE"
 refused 'removed license copy' 'missing copy: crates/recordprims/LICENSE-APACHE'
 
-echo "[ok] crate-copies-check controls: changed copy, changed source, removed copy, extra file, removed directory, changed and removed license"
+fresh; printf 'x\n' >>"$repo/NOTICE"
+refused 'changed notice source' 'copy differs from source: crates/recordprims/NOTICE'
+
+echo "[ok] crate-copies-check controls: changed copy, changed source, removed copy, extra file, removed directory, changed and removed license, changed notice"

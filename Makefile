@@ -247,16 +247,15 @@ example-check: example-schemas ## Build, vet and test the example module (its ow
 	cd $(EXAMPLE_DIR) && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test -count=1 ./...
 	@echo "[ok] example-check"
 
-test-rust: ## Rust tests
-	cargo test --locked
+test-rust: ## Rust tests (the checkout's shared fixtures are required)
+	RECORDPRIMS_CHECKOUT_TESTS=1 cargo test --locked
 
 contract-check: ## Vendored contract matches contract/PIN.md
 	$(PYTHON) -I -B scripts/contract-check.py
 
-crate-package: ## The Rust crate packages from its own directory and the package builds
+crate-package: ## The Rust crate packages from its own directory, and its tests pass from the archive
 	$(PYTHON) -I -B scripts/crate-copies-check.py
-	cargo package --locked --allow-dirty -p recordprims --quiet
-	@echo "[ok] crate-package"
+	PYTHON=$(PYTHON) bash scripts/crate-package-test.sh
 
 crate-copies-check-test: ## crate-copies-check refuses planted drift
 	PYTHON=$(PYTHON) bash scripts/crate-copies-check.test.sh

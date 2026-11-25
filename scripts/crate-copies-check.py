@@ -3,7 +3,7 @@
 """Verify the files copied into crates/recordprims so the packaged crate is
 self-contained.
 
-The crate embeds the shape schemas and ships the license texts, and a crate
+The crate embeds the shape schemas and ships the license texts and notice, and a crate
 package can only carry files under its own directory. Each copy must match
 its source byte for byte, and the copied schema set must equal the source
 set: a missing, extra or changed file fails. Standard library only.
@@ -21,6 +21,7 @@ COPIES = [
     (ROOT / "internal" / "shape" / "schemas", CRATE / "schemas"),
     (ROOT / "LICENSE-MIT", CRATE / "LICENSE-MIT"),
     (ROOT / "LICENSE-APACHE", CRATE / "LICENSE-APACHE"),
+    (ROOT / "NOTICE", CRATE / "NOTICE"),
 ]
 
 

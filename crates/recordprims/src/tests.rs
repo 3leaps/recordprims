@@ -1764,15 +1764,15 @@ mod producer_instant {
     use std::time::UNIX_EPOCH;
 
     /// testdata/producer-instant.json, shared with the Go tests.
-    fn vectors() -> Node {
-        let path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/producer-instant.json");
+    /// `None` outside a repository checkout; see `checkout_root`.
+    fn vectors() -> Option<Node> {
+        let path = crate::conformance::checkout_root()?.join("testdata/producer-instant.json");
         let raw = fs::read(&path).unwrap();
         let v = wire::parse_json(&raw).unwrap();
         for list in ["spellings", "native", "record_digests"] {
             assert!(!v.get(list).unwrap().elems.is_empty(), "{list} is empty");
         }
-        v
+        Some(v)
     }
 
     fn text<'a>(n: &'a Node, k: &str) -> &'a str {
@@ -1786,7 +1786,7 @@ mod producer_instant {
 
     #[test]
     fn spellings_match_the_shared_vectors() {
-        let v = vectors();
+        let Some(v) = vectors() else { return };
         for c in &v.get("spellings").unwrap().elems {
             let (name, input) = (text(c, "name"), text(c, "input"));
             let got = normalize_producer_instant(input);
@@ -1808,7 +1808,7 @@ mod producer_instant {
 
     #[test]
     fn native_values_match_the_shared_vectors() {
-        let v = vectors();
+        let Some(v) = vectors() else { return };
         let mut unrepresentable = Vec::new();
         for c in &v.get("native").unwrap().elems {
             let name = text(c, "name");
@@ -1885,7 +1885,7 @@ mod producer_instant {
 
     #[test]
     fn record_digest_does_not_depend_on_the_input_spelling() {
-        let v = vectors();
+        let Some(v) = vectors() else { return };
         for c in &v.get("record_digests").unwrap().elems {
             let (s, _td, clk) = open_body_store();
             let st = s

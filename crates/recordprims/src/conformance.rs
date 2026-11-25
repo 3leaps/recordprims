@@ -25,8 +25,22 @@ const STATUS_PASS: &str = "pass";
 const STATUS_PENDING: &str = "pending:semantics";
 const STATUS_PASS_PARTIAL: &str = "pass:partial";
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
+/// The repository checkout, when the tests run from one. A packaged crate has
+/// no checkout, so the tests that read its shared fixtures skip there. With
+/// `RECORDPRIMS_CHECKOUT_TESTS` set, which `make` sets, a missing checkout
+/// fails instead, so the workspace suite can never skip them.
+pub(crate) fn checkout_root() -> Option<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    if root.join("contract").join("PIN.md").is_file() {
+        return Some(root);
+    }
+    assert!(
+        std::env::var_os("RECORDPRIMS_CHECKOUT_TESTS").is_none(),
+        "RECORDPRIMS_CHECKOUT_TESTS is set but there is no checkout at {}",
+        root.display()
+    );
+    eprintln!("skipped: needs the repository checkout's shared fixtures");
+    None
 }
 
 fn first_reject(raw: &str, kind: &str) -> Option<&'static str> {
@@ -436,7 +450,7 @@ fn write_ledger(path: &Path, got: &BTreeMap<String, String>) {
 
 #[test]
 fn v1_vectors() {
-    let root = repo_root();
+    let Some(root) = checkout_root() else { return };
     let dir = root.join("contract/crucible/schemas/durable-record/v1/vectors");
     let mut files: Vec<PathBuf> = fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("no vectors at {}: {e}", dir.display()))
@@ -552,7 +566,8 @@ fn v1_vectors() {
 /// escaped member name must not hide quarantined designated streams.
 #[test]
 fn quarantined_detection_ignores_member_spelling() {
-    let path = repo_root()
+    let Some(root) = checkout_root() else { return };
+    let path = root
         .join("contract/crucible/schemas/durable-record/v1/vectors/body-content-stream-with-designation.json");
     let raw = fs::read(&path).expect("fixture vector");
     let base = wire::parse_json(&raw).expect("fixture parses");
