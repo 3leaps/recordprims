@@ -1,0 +1,8 @@
+{
+  "capability": "contract: record-collection/v0",
+  "entry_schema": "collection-document.schema.json",
+  "object_schemas": {
+    "record_collection": "record-collection.schema.json"
+  },
+  "status": "proposed"
+}

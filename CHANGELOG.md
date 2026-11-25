@@ -18,6 +18,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   nil sink evaluates only. A malformed pin is a schema error. Go and Rust tests
   and the differential check cover it
 - Example: `Lookup` and `Render` use `ReadServed`
+- Contract pin moved to `3leaps/crucible` `v0.2.14` (`38e40aa`). The vendored
+  `durable-record/v1` files are unchanged from `v0.2.10`. `record-collection/v0`
+  (proposed, experimental) is vendored as a separately pinned family;
+  `make contract-check` verifies every family and `make contract-oracle` also
+  runs its reference controls. No implementation uses it yet
 
 ## [0.1.0] - 2026-11-23
 

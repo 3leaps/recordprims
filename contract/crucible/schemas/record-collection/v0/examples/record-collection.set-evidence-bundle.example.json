@@ -1,0 +1,23 @@
+{
+  "kind": "set",
+  "members": [
+    {
+      "pin": {
+        "stream": "evidence.run",
+        "record_id": "ev-summary",
+        "revision": 1,
+        "digest": "sha256:595dda556b88c6a4c5d8da4caba2cd29968548695d91d2f021201bc052b0d17f"
+      }
+    },
+    {
+      "pin": {
+        "stream": "evidence.run",
+        "record_id": "ev-metrics",
+        "revision": 1,
+        "digest": "sha256:727df7df2128ea457a1fe5a22926d0b29882e1497c055ce0244d7b05210f4404"
+      }
+    }
+  ],
+  "member_count": 2,
+  "closure_claim": "complete_at_write"
+}

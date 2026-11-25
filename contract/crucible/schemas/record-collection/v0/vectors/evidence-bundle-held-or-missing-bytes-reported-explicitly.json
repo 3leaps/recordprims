@@ -1,0 +1,105 @@
+{
+  "id": "evidence-bundle-held-or-missing-bytes-reported-explicitly",
+  "description": "Missing or held body bytes on pinned body-backed records produce explicit outcomes.",
+  "mode": "verify_collection",
+  "collection": {
+    "kind": "set",
+    "members": [
+      {
+        "pin": {
+          "stream": "evidence.run",
+          "record_id": "ev-summary",
+          "revision": 1,
+          "digest": "sha256:595dda556b88c6a4c5d8da4caba2cd29968548695d91d2f021201bc052b0d17f"
+        }
+      },
+      {
+        "pin": {
+          "stream": "evidence.run",
+          "record_id": "ev-metrics",
+          "revision": 1,
+          "digest": "sha256:727df7df2128ea457a1fe5a22926d0b29882e1497c055ce0244d7b05210f4404"
+        }
+      }
+    ],
+    "member_count": 2,
+    "closure_claim": "complete_at_write"
+  },
+  "store": {
+    "records": [
+      {
+        "record": {
+          "v": 1,
+          "stream": "evidence.run",
+          "record_id": "ev-summary",
+          "revision": 1,
+          "payload_contract": "contract: example/v0",
+          "produced_at": {
+            "instant": "2026-11-23T12:00:00.000000Z",
+            "source": "producer_clock"
+          },
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "fixture-writer"
+          },
+          "classification": {
+            "retention": "standard",
+            "sensitivity": "0-public"
+          },
+          "body": {
+            "digest": "sha256:6de6fa8f0fc65343d186f6d316cf57076e85805491b0ff3cb4b5facea21574bb",
+            "length": 38,
+            "media_type": "text/plain",
+            "artifact_id": "artifact:qual-summary-001"
+          }
+        }
+      },
+      {
+        "record": {
+          "v": 1,
+          "stream": "evidence.run",
+          "record_id": "ev-metrics",
+          "revision": 1,
+          "payload_contract": "contract: example/v0",
+          "produced_at": {
+            "instant": "2026-11-23T12:00:00.000000Z",
+            "source": "producer_clock"
+          },
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "fixture-writer"
+          },
+          "classification": {
+            "retention": "standard",
+            "sensitivity": "0-public"
+          },
+          "body": {
+            "digest": "sha256:e4fb032c076b05db5f0f6ac682eae87f0a6042b5ea8634ba4d1234d822884274",
+            "length": 41,
+            "media_type": "application/json"
+          }
+        }
+      }
+    ],
+    "bodies": [
+      {
+        "declared_digest": "sha256:6de6fa8f0fc65343d186f6d316cf57076e85805491b0ff3cb4b5facea21574bb",
+        "status": "held"
+      },
+      {
+        "declared_digest": "sha256:e4fb032c076b05db5f0f6ac682eae87f0a6042b5ea8634ba4d1234d822884274",
+        "status": "missing"
+      }
+    ],
+    "snapshot_scope": "current_read"
+  },
+  "expected": {
+    "outcome": "refuse",
+    "reason": "body_held",
+    "member_outcomes": [
+      "body_held",
+      "body_missing"
+    ],
+    "closure_outcome": "closure_unproven"
+  }
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Verify the vendored durable-record contract against contract/PIN.md.
+"""Verify the vendored crucible contracts against contract/PIN.md.
 
 Recomputes the Git object id of every pinned file (blob) and directory (tree)
 from the bytes on disk, without calling git, and checks contract/INVENTORY.sha256.
@@ -47,15 +47,23 @@ def tree_id(path: Path) -> str:
 
 
 def pinned_rows() -> list[tuple[str, str, bool]]:
-    """(path, object id, is_tree) rows from the 'Vendored set' table."""
+    """(path, object id, is_tree) rows from every 'Vendored set' table."""
     rows = []
-    section = PIN.read_text(encoding="utf-8").split("## Vendored set", 1)[1].split("##", 1)[0]
-    for line in section.splitlines():
-        m = re.match(r"\|\s*`([^`]+)`\s*\|\s*(tree\s+)?`([0-9a-f]{40})`", line)
-        if m:
-            rows.append((m.group(1).rstrip("/"), m.group(3), bool(m.group(2))))
-    if not rows:
-        raise SystemExit("contract-check: no pinned rows found in contract/PIN.md")
+    sections = PIN.read_text(encoding="utf-8").split("\n## Vendored set")[1:]
+    if not sections:
+        raise SystemExit("contract-check: no vendored-set section in contract/PIN.md")
+    for section in sections:
+        found = 0
+        for line in section.split("\n## ", 1)[0].splitlines():
+            m = re.match(r"\|\s*`([^`]+)`\s*\|\s*(tree\s+)?`([0-9a-f]{40})`", line)
+            if m:
+                rows.append((m.group(1).rstrip("/"), m.group(3), bool(m.group(2))))
+                found += 1
+        if not found:
+            raise SystemExit("contract-check: a vendored-set section in contract/PIN.md has no pinned rows")
+    paths = [r[0] for r in rows]
+    if len(paths) != len(set(paths)):
+        raise SystemExit("contract-check: a path is pinned twice in contract/PIN.md")
     return rows
 
 

@@ -253,8 +253,9 @@ test-rust: ## Rust tests
 contract-check: ## Vendored contract matches contract/PIN.md
 	$(PYTHON) -I -B scripts/contract-check.py
 
-contract-oracle: ## Vendored durable-record/v1 interpreter passes its own vectors
+contract-oracle: ## Vendored durable-record/v1 interpreter and record-collection/v0 controls pass their own vectors
 	cd contract/crucible && $(PYTHON) -I -B scripts/test-durable-record-v1-controls.py > /dev/null
+	cd contract/crucible && $(PYTHON) -I -B scripts/test-record-collection-controls.py > /dev/null
 	@echo "[ok] contract-oracle"
 
 test-faultpoints: ## Failure-injection tests (builds tagged recordprims_faultpoints)

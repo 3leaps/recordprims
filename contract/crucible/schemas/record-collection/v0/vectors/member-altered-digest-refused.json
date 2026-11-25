@@ -1,0 +1,54 @@
+{
+  "id": "member-altered-digest-refused",
+  "description": "A member whose stored record digest differs from the pinned digest is refused.",
+  "mode": "verify_collection",
+  "collection": {
+    "kind": "list",
+    "members": [
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-001",
+          "revision": 1,
+          "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      }
+    ],
+    "member_count": 1
+  },
+  "store": {
+    "records": [
+      {
+        "record": {
+          "v": 1,
+          "stream": "decisions.main",
+          "record_id": "dec-001",
+          "revision": 1,
+          "payload_contract": "contract: example/v0",
+          "produced_at": {
+            "instant": "2026-11-23T12:00:00.000000Z",
+            "source": "producer_clock"
+          },
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "fixture-writer"
+          },
+          "classification": {
+            "retention": "standard",
+            "sensitivity": "0-public"
+          },
+          "payload": {
+            "title": "first"
+          }
+        }
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "refuse",
+    "reason": "member_digest_mismatch",
+    "member_outcomes": [
+      "member_digest_mismatch"
+    ]
+  }
+}

@@ -44,7 +44,7 @@ Not claimed: use of one store from more than one host, network or cloud
 storage, or survival of power loss.
 
 The Go module implements the `durable-record/v1` store (`recordprims-fs/v2`),
-passing all 400 vectors of the pinned `3leaps/crucible` `v0.2.10` contract: a
+passing all 400 vectors of the pinned `3leaps/crucible` `v0.2.14` contract: a
 verified, confined store root, the store lock, content-addressed bodies with
 designated-stream lifecycle and removal eligibility, streams (`OpenStream`,
 `Append`, `Retire`, `Protect`, `Reconcile`, `Head`, `Revisions`, `Release`),

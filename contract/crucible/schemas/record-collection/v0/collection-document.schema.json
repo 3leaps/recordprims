@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract:record-collection/v0/collection-document.schema.json",
+  "title": "Record Collection Document",
+  "description": "Standalone entry document carrying the contract: record-collection/v0 capability and a record collection payload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "capabilities",
+    "collection"
+  ],
+  "properties": {
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      },
+      "contains": {
+        "const": "contract: record-collection/v0"
+      }
+    },
+    "collection": {
+      "$ref": "#/$defs/recordCollection"
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stream",
+        "record_id",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "stream": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+        },
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pin"
+      ],
+      "properties": {
+        "pin": {
+          "$ref": "#/$defs/pin"
+        }
+      }
+    },
+    "recordCollection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "members",
+        "member_count"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "set",
+            "list"
+          ],
+          "description": "Collection semantics: 'set' has canonical ascending pin order and rejects repeats; 'list' preserves stored array order."
+        },
+        "members": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/member"
+          },
+          "description": "Bounded array of exact durable-record/v1 revision pins."
+        },
+        "member_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "Declared count of entries in members; must equal the exact length of members."
+        },
+        "append_only": {
+          "type": "boolean",
+          "description": "When true, every superseding revision must keep append_only true and strictly extend its predecessor (strict superset for set, strict prefix extension for list)."
+        },
+        "allow_repeats": {
+          "type": "boolean",
+          "description": "Optional list-only flag permitting duplicate pins. Forbidden (must not be true) when kind is 'set'."
+        },
+        "closure_claim": {
+          "type": "string",
+          "enum": [
+            "none",
+            "complete_at_write"
+          ],
+          "description": "Writer claim regarding member resolution at write time; verified independently by readers."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "set"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "allow_repeats": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,17 +1,22 @@
-# Contract pin: durable-record/v1
+# Contract pin: durable-record/v1 and record-collection/v0
 
-recordprims implements `contract: durable-record/v1`. The contract is pinned by
-immutable identity, never by branch.
+recordprims implements `contract: durable-record/v1`. It also vendors
+`contract: record-collection/v0` as a separately pinned family. Both are
+pinned by immutable identity, never by branch.
 
 | Field | Value |
 | --- | --- |
 | Repository | `3leaps/crucible` (public) |
-| Commit | `24c8920dfafdd8a977c8873597562e4ed20e3204` (tag `v0.2.10`) |
+| Commit | `38e40aa02bbf4954662142adfb02d0420f0c4caf` (tag `v0.2.14`) |
 | Family tree `schemas/durable-record/v1` | `64dd038bcc1aa596fdf0c9faed32c6ed6f0f8504` |
 | Family tree `schemas/durable-record/v0` | `5c4c03d3502fa500436f551d2d2d2018989be19f` (v1 reuses the v0 record envelope and helpers) |
-| Status | proposed / experimental (crucible ADR-0019) |
+| Family tree `schemas/record-collection/v0` | `47bd13abbc630616ba105e7b927e5b1cb0002c3c` |
+| Status | proposed / experimental (crucible ADR-0019); `record-collection/v0` proposed / experimental |
 
-## Vendored set
+Every durable-record path below has the same Git object id at `v0.2.14` as at
+the previous pin, `v0.2.10` (`24c8920`).
+
+## Vendored set: durable-record/v1
 
 `contract/crucible/` holds these paths verbatim from the pinned commit, in
 crucible's own relative layout, so the reference interpreter runs unmodified:
@@ -29,10 +34,27 @@ crucible's own relative layout, so the reference interpreter runs unmodified:
 | `scripts/rfc3339-instant.py` | `1fbb9f09a9ed505c958888f91bc67cafad827a94` |
 
 Archive identity, produced by
-`git archive 24c8920 <the paths above, in table order> | shasum -a 256`:
+`git archive 38e40aa <the paths above, in table order> | shasum -a 256`:
 
 ```text
-04e8129ec61514d750ba5ef120654701cb63d83f0f1a452ee157eea5b4de24b6
+b3059cd1537b81f6aadfe2316e48d32bc3c39258759386d98d3153b2ac717d2e
+```
+
+## Vendored set: record-collection/v0
+
+The collection reference script also reads the durable-record v1 record schema
+and `scripts/rfc8785-canonicalize.py` from the set above.
+
+| Path | Git blob or tree |
+| --- | --- |
+| `schemas/record-collection/v0/` | tree `47bd13abbc630616ba105e7b927e5b1cb0002c3c` |
+| `scripts/test-record-collection-controls.py` | `d3b56849c459cb6f8062de56d958aa55941068b5` |
+
+Archive identity, produced by
+`git archive 38e40aa <the paths above, in table order> | shasum -a 256`:
+
+```text
+9411528632beed8c718bf5b5eb8d6294e0f767c2d5c94a67a82ab43a527ddc43
 ```
 
 `INVENTORY.sha256` lists the SHA-256 of every vendored file.
@@ -40,10 +62,11 @@ Archive identity, produced by
 ## Checks
 
 `make contract-check` recomputes the Git object id of every vendored file and
-tree from the bytes on disk, compares them with this table, and checks the
-inventory. Any drift fails. `make contract-oracle` runs the vendored v1
-interpreter (`scripts/test-durable-record-v1-controls.py`) against its own
-vectors.
+tree from the bytes on disk, compares them with every vendored-set table, and
+checks the inventory. Any drift fails. `make contract-oracle` runs the vendored v1
+interpreter (`scripts/test-durable-record-v1-controls.py`) and the vendored
+collection controls (`scripts/test-record-collection-controls.py`) against
+their own vectors.
 
 ## Changing the pin
 

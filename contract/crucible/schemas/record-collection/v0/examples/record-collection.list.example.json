@@ -1,0 +1,23 @@
+{
+  "kind": "list",
+  "members": [
+    {
+      "pin": {
+        "stream": "decisions.main",
+        "record_id": "dec-002",
+        "revision": 1,
+        "digest": "sha256:f1f56abcbeb363fe36ec4bff21c81cc85d839adb72569348709d95b1b9bac6b5"
+      }
+    },
+    {
+      "pin": {
+        "stream": "decisions.main",
+        "record_id": "dec-001",
+        "revision": 1,
+        "digest": "sha256:7e7c3d4c583cae40f20066a4adbf79976e97e5168ed0eefc1c921a2d3bb71d00"
+      }
+    }
+  ],
+  "member_count": 2,
+  "closure_claim": "none"
+}

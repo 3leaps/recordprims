@@ -1,0 +1,66 @@
+{
+  "id": "evidence-bundle-altered-file-bytes-refused",
+  "description": "Altering the underlying file bytes while keeping the matching record envelope fails body byte verification.",
+  "mode": "verify_collection",
+  "collection": {
+    "kind": "set",
+    "members": [
+      {
+        "pin": {
+          "stream": "evidence.run",
+          "record_id": "ev-summary",
+          "revision": 1,
+          "digest": "sha256:595dda556b88c6a4c5d8da4caba2cd29968548695d91d2f021201bc052b0d17f"
+        }
+      }
+    ],
+    "member_count": 1,
+    "closure_claim": "complete_at_write"
+  },
+  "store": {
+    "records": [
+      {
+        "record": {
+          "v": 1,
+          "stream": "evidence.run",
+          "record_id": "ev-summary",
+          "revision": 1,
+          "payload_contract": "contract: example/v0",
+          "produced_at": {
+            "instant": "2026-11-23T12:00:00.000000Z",
+            "source": "producer_clock"
+          },
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "fixture-writer"
+          },
+          "classification": {
+            "retention": "standard",
+            "sensitivity": "0-public"
+          },
+          "body": {
+            "digest": "sha256:6de6fa8f0fc65343d186f6d316cf57076e85805491b0ff3cb4b5facea21574bb",
+            "length": 38,
+            "media_type": "text/plain",
+            "artifact_id": "artifact:qual-summary-001"
+          }
+        }
+      }
+    ],
+    "bodies": [
+      {
+        "declared_digest": "sha256:6de6fa8f0fc65343d186f6d316cf57076e85805491b0ff3cb4b5facea21574bb",
+        "content_utf8": "qualification-summary: TAMPERED\ncases: 42\n"
+      }
+    ],
+    "snapshot_scope": "current_read"
+  },
+  "expected": {
+    "outcome": "refuse",
+    "reason": "body_digest_mismatch",
+    "member_outcomes": [
+      "body_digest_mismatch"
+    ],
+    "closure_outcome": "closure_unproven"
+  }
+}
