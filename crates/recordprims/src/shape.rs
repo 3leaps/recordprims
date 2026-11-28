@@ -18,63 +18,63 @@ const MAX_STEPS: usize = 1 << 20;
 const EMBEDDED_SCHEMAS: &[(&str, &str)] = &[
     (
         "v0/journal-entry.schema.json",
-        include_str!("../../../internal/shape/schemas/v0/journal-entry.schema.json"),
+        include_str!("../schemas/v0/journal-entry.schema.json"),
     ),
     (
         "v0/record.schema.json",
-        include_str!("../../../internal/shape/schemas/v0/record.schema.json"),
+        include_str!("../schemas/v0/record.schema.json"),
     ),
     (
         "v0/stratum-profile.schema.json",
-        include_str!("../../../internal/shape/schemas/v0/stratum-profile.schema.json"),
+        include_str!("../schemas/v0/stratum-profile.schema.json"),
     ),
     (
         "v0/write-receipt.schema.json",
-        include_str!("../../../internal/shape/schemas/v0/write-receipt.schema.json"),
+        include_str!("../schemas/v0/write-receipt.schema.json"),
     ),
     (
         "v1/body-state-request.schema.json",
-        include_str!("../../../internal/shape/schemas/v1/body-state-request.schema.json"),
+        include_str!("../schemas/v1/body-state-request.schema.json"),
     ),
     (
         "v1/export-request.schema.json",
-        include_str!("../../../internal/shape/schemas/v1/export-request.schema.json"),
+        include_str!("../schemas/v1/export-request.schema.json"),
     ),
     (
         "v1/export-result.schema.json",
-        include_str!("../../../internal/shape/schemas/v1/export-result.schema.json"),
+        include_str!("../schemas/v1/export-result.schema.json"),
     ),
     (
         "v1/journal-entry.schema.json",
-        include_str!("../../../internal/shape/schemas/v1/journal-entry.schema.json"),
+        include_str!("../schemas/v1/journal-entry.schema.json"),
     ),
     (
         "v1/protection-receipt.schema.json",
-        include_str!("../../../internal/shape/schemas/v1/protection-receipt.schema.json"),
+        include_str!("../schemas/v1/protection-receipt.schema.json"),
     ),
     (
         "v1/protection-request.schema.json",
-        include_str!("../../../internal/shape/schemas/v1/protection-request.schema.json"),
+        include_str!("../schemas/v1/protection-request.schema.json"),
     ),
     (
         "v1/record.schema.json",
-        include_str!("../../../internal/shape/schemas/v1/record.schema.json"),
+        include_str!("../schemas/v1/record.schema.json"),
     ),
     (
         "v1/removal-eligibility-request.schema.json",
-        include_str!("../../../internal/shape/schemas/v1/removal-eligibility-request.schema.json"),
+        include_str!("../schemas/v1/removal-eligibility-request.schema.json"),
     ),
     (
         "v1/stratum-profile.schema.json",
-        include_str!("../../../internal/shape/schemas/v1/stratum-profile.schema.json"),
+        include_str!("../schemas/v1/stratum-profile.schema.json"),
     ),
     (
         "v1/stream-seal.schema.json",
-        include_str!("../../../internal/shape/schemas/v1/stream-seal.schema.json"),
+        include_str!("../schemas/v1/stream-seal.schema.json"),
     ),
     (
         "v1/write-receipt.schema.json",
-        include_str!("../../../internal/shape/schemas/v1/write-receipt.schema.json"),
+        include_str!("../schemas/v1/write-receipt.schema.json"),
     ),
 ];
 

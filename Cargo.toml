@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/3leaps/recordprims"
 homepage = "https://github.com/3leaps/recordprims"
 authors = ["3leaps Architecture Council"]
-publish = false
+publish = true
 
 [workspace.dependencies]
 canonprims-core = "=0.1.4"

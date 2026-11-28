@@ -9,6 +9,10 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 publish.workspace = true
+readme = "README.md"
+keywords = ["journal", "durable", "record", "append-only", "storage"]
+categories = ["database-implementations", "filesystem"]
+include = ["/Cargo.toml", "/src/**", "/schemas/**", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE", "/NOTICE"]
 
 [dependencies]
 canonprims-core.workspace = true
