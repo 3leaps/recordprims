@@ -1,0 +1,68 @@
+{
+  "id": "append-only-list-valid-extension",
+  "description": "An append-only list strictly extending its predecessor prefix passes.",
+  "mode": "verify_collection",
+  "predecessor": {
+    "kind": "list",
+    "members": [
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-001",
+          "revision": 1,
+          "digest": "sha256:7e7c3d4c583cae40f20066a4adbf79976e97e5168ed0eefc1c921a2d3bb71d00"
+        }
+      },
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-002",
+          "revision": 1,
+          "digest": "sha256:f1f56abcbeb363fe36ec4bff21c81cc85d839adb72569348709d95b1b9bac6b5"
+        }
+      }
+    ],
+    "member_count": 2,
+    "append_only": true
+  },
+  "collection": {
+    "kind": "list",
+    "members": [
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-001",
+          "revision": 1,
+          "digest": "sha256:7e7c3d4c583cae40f20066a4adbf79976e97e5168ed0eefc1c921a2d3bb71d00"
+        }
+      },
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-002",
+          "revision": 1,
+          "digest": "sha256:f1f56abcbeb363fe36ec4bff21c81cc85d839adb72569348709d95b1b9bac6b5"
+        }
+      },
+      {
+        "pin": {
+          "stream": "notes.audit",
+          "record_id": "note-010",
+          "revision": 1,
+          "digest": "sha256:9208426955acbf6c349bc15553f0bdf3aec8e9b3fbbb90c94c481b8e503c8ebc"
+        }
+      }
+    ],
+    "member_count": 3,
+    "append_only": true
+  },
+  "expected": {
+    "outcome": "ok",
+    "reason": null,
+    "ordered_record_ids": [
+      "dec-001",
+      "dec-002",
+      "note-010"
+    ]
+  }
+}

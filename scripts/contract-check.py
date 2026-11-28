@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Verify the vendored durable-record contract against contract/PIN.md.
+"""Verify the vendored crucible contracts against contract/PIN.md.
 
 Recomputes the Git object id of every pinned file (blob) and directory (tree)
 from the bytes on disk, without calling git, and checks contract/INVENTORY.sha256.
@@ -46,22 +46,62 @@ def tree_id(path: Path) -> str:
     return hashlib.sha1(b"tree %d\0" % len(body) + body).hexdigest()
 
 
+HEADING = re.compile(r"^(#{1,6})\s")
+ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*(tree\s+)?`([0-9a-f]{40})`\s*\|$")
+# The header and separator rows of a vendored-set table.
+TABLE_FRAME = re.compile(r"^\|\s*(Path\s*\|\s*Git blob or tree|-+\s*\|\s*-+)\s*\|$")
+
+
 def pinned_rows() -> list[tuple[str, str, bool]]:
-    """(path, object id, is_tree) rows from the 'Vendored set' table."""
+    """(path, object id, is_tree) rows from every 'Vendored set' table.
+
+    A heading starts a section only at column 0; an indented line that reads
+    as a heading is refused rather than guessed at. In a vendored-set
+    section every table line must be the header, the separator or a pinned
+    row, so a malformed row fails instead of being skipped.
+    """
     rows = []
-    section = PIN.read_text(encoding="utf-8").split("## Vendored set", 1)[1].split("##", 1)[0]
-    for line in section.splitlines():
-        m = re.match(r"\|\s*`([^`]+)`\s*\|\s*(tree\s+)?`([0-9a-f]{40})`", line)
-        if m:
-            rows.append((m.group(1).rstrip("/"), m.group(3), bool(m.group(2))))
-    if not rows:
-        raise SystemExit("contract-check: no pinned rows found in contract/PIN.md")
+    sections = 0
+    in_set = False
+    found = 0
+    for n, line in enumerate(PIN.read_text(encoding="utf-8").splitlines(), 1):
+        if line != line.lstrip() and HEADING.match(line.lstrip()):
+            raise SystemExit(f"contract-check: contract/PIN.md:{n}: indented heading")
+        if HEADING.match(line):
+            if in_set and not found:
+                raise SystemExit("contract-check: a vendored-set section in contract/PIN.md has no pinned rows")
+            in_set = line.startswith("## Vendored set")
+            sections += in_set
+            found = 0
+            continue
+        if not in_set or not line.lstrip().startswith("|"):
+            continue
+        if TABLE_FRAME.match(line.strip()):
+            continue
+        m = ROW.match(line.strip())
+        if not m:
+            raise SystemExit(f"contract-check: contract/PIN.md:{n}: malformed vendored-set row")
+        rows.append((m.group(1).rstrip("/"), m.group(3), bool(m.group(2))))
+        found += 1
+    if in_set and not found:
+        raise SystemExit("contract-check: a vendored-set section in contract/PIN.md has no pinned rows")
+    if not sections:
+        raise SystemExit("contract-check: no vendored-set section in contract/PIN.md")
+    paths = [r[0] for r in rows]
+    if len(paths) != len(set(paths)):
+        raise SystemExit("contract-check: a path is pinned twice in contract/PIN.md")
     return rows
+
+
+def covered(rel: str, rows: list[tuple[str, str, bool]]) -> bool:
+    """Whether a vendored file is a pinned blob or lies under a pinned tree."""
+    return any(rel == p if not t else rel.startswith(p + "/") for p, _, t in rows)
 
 
 def main() -> int:
     failures = []
-    for rel, want, is_tree in pinned_rows():
+    rows = pinned_rows()
+    for rel, want, is_tree in rows:
         target = VENDOR / rel
         if not target.exists():
             failures.append(f"missing: {rel}")
@@ -85,12 +125,15 @@ def main() -> int:
     for rel in sorted(expected.keys() & actual.keys()):
         if expected[rel] != actual[rel]:
             failures.append(f"sha256 mismatch: {rel}")
+    for rel in sorted(actual):
+        if not covered(rel, rows):
+            failures.append(f"vendored file not under a pinned path: {rel}")
 
     for f in failures:
         print(f"contract-check: {f}", file=sys.stderr)
     if failures:
         return 1
-    print(f"[ok] contract-check: {len(pinned_rows())} pinned objects, {len(actual)} files")
+    print(f"[ok] contract-check: {len(rows)} pinned objects, {len(actual)} files")
     return 0
 
 

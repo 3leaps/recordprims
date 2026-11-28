@@ -1,0 +1,65 @@
+{
+  "id": "set-identical-membership-identical-digest",
+  "description": "Two writers inserting identical set members in different orders yield the exact same canonical digest.",
+  "mode": "canonical_set_equivalence",
+  "input_a_members": [
+    {
+      "pin": {
+        "stream": "decisions.main",
+        "record_id": "dec-001",
+        "revision": 1,
+        "digest": "sha256:7e7c3d4c583cae40f20066a4adbf79976e97e5168ed0eefc1c921a2d3bb71d00"
+      }
+    },
+    {
+      "pin": {
+        "stream": "decisions.main",
+        "record_id": "dec-002",
+        "revision": 1,
+        "digest": "sha256:f1f56abcbeb363fe36ec4bff21c81cc85d839adb72569348709d95b1b9bac6b5"
+      }
+    },
+    {
+      "pin": {
+        "stream": "notes.audit",
+        "record_id": "note-010",
+        "revision": 1,
+        "digest": "sha256:9208426955acbf6c349bc15553f0bdf3aec8e9b3fbbb90c94c481b8e503c8ebc"
+      }
+    }
+  ],
+  "input_b_members": [
+    {
+      "pin": {
+        "stream": "notes.audit",
+        "record_id": "note-010",
+        "revision": 1,
+        "digest": "sha256:9208426955acbf6c349bc15553f0bdf3aec8e9b3fbbb90c94c481b8e503c8ebc"
+      }
+    },
+    {
+      "pin": {
+        "stream": "decisions.main",
+        "record_id": "dec-001",
+        "revision": 1,
+        "digest": "sha256:7e7c3d4c583cae40f20066a4adbf79976e97e5168ed0eefc1c921a2d3bb71d00"
+      }
+    },
+    {
+      "pin": {
+        "stream": "decisions.main",
+        "record_id": "dec-002",
+        "revision": 1,
+        "digest": "sha256:f1f56abcbeb363fe36ec4bff21c81cc85d839adb72569348709d95b1b9bac6b5"
+      }
+    }
+  ],
+  "extra_fields": {
+    "closure_claim": "complete_at_write"
+  },
+  "expected": {
+    "outcome": "ok",
+    "reason": null,
+    "canonical_digest": "sha256:6800b6da6c4576c9d807995dc58a409d8b3d055147ec6a899f1b122a0f529ec4"
+  }
+}

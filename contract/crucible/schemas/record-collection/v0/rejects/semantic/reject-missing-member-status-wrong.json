@@ -1,0 +1,63 @@
+{
+  "id": "sem-reject-missing-member-status-wrong",
+  "mode": "verify_collection",
+  "collection": {
+    "kind": "list",
+    "members": [
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-001",
+          "revision": 1,
+          "digest": "sha256:7e7c3d4c583cae40f20066a4adbf79976e97e5168ed0eefc1c921a2d3bb71d00"
+        }
+      },
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-002",
+          "revision": 1,
+          "digest": "sha256:f1f56abcbeb363fe36ec4bff21c81cc85d839adb72569348709d95b1b9bac6b5"
+        }
+      }
+    ],
+    "member_count": 2,
+    "closure_claim": "complete_at_write"
+  },
+  "store": {
+    "records": [
+      {
+        "record": {
+          "v": 1,
+          "stream": "decisions.main",
+          "record_id": "dec-001",
+          "revision": 1,
+          "payload_contract": "contract: example/v0",
+          "produced_at": {
+            "instant": "2026-11-23T12:00:00.000000Z",
+            "source": "producer_clock"
+          },
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "fixture-writer"
+          },
+          "classification": {
+            "retention": "standard",
+            "sensitivity": "0-public"
+          },
+          "payload": {
+            "title": "first"
+          }
+        }
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "refuse",
+    "reason": "member_held",
+    "member_outcomes": [
+      "verified",
+      "member_held"
+    ]
+  }
+}

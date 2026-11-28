@@ -1,0 +1,86 @@
+{
+  "id": "sem-reject-missing-order-expected",
+  "mode": "verify_collection",
+  "collection": {
+    "kind": "list",
+    "members": [
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-same-b",
+          "revision": 1,
+          "digest": "sha256:f3c925880ebd769b085bc6cfe889523e0f3b43e9aee4c4d059a02e301b6c5487"
+        }
+      },
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-same-a",
+          "revision": 1,
+          "digest": "sha256:fe4615ab6054ce2abf99e6c6ee2091652f07b12949e6b76045976676150da66e"
+        }
+      }
+    ],
+    "member_count": 2
+  },
+  "store": {
+    "records": [
+      {
+        "record": {
+          "v": 1,
+          "stream": "decisions.main",
+          "record_id": "dec-same-a",
+          "revision": 1,
+          "payload_contract": "contract: example/v0",
+          "produced_at": {
+            "instant": "2026-11-23T15:00:00.000000Z",
+            "source": "producer_clock"
+          },
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "fixture-writer"
+          },
+          "classification": {
+            "retention": "standard",
+            "sensitivity": "0-public"
+          },
+          "payload": {
+            "seq": "first-written"
+          }
+        }
+      },
+      {
+        "record": {
+          "v": 1,
+          "stream": "decisions.main",
+          "record_id": "dec-same-b",
+          "revision": 1,
+          "payload_contract": "contract: example/v0",
+          "produced_at": {
+            "instant": "2026-11-23T15:00:00.000000Z",
+            "source": "producer_clock"
+          },
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "fixture-writer"
+          },
+          "classification": {
+            "retention": "standard",
+            "sensitivity": "0-public"
+          },
+          "payload": {
+            "seq": "second-written"
+          }
+        }
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "ok",
+    "reason": null,
+    "member_outcomes": [
+      "verified",
+      "verified"
+    ]
+  }
+}

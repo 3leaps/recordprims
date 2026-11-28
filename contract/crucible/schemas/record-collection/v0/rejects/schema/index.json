@@ -1,0 +1,88 @@
+{
+  "cases": [
+    {
+      "id": "collection-unknown-kind",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-unknown-kind.json",
+      "reject": "reject-collection-unknown-kind.json"
+    },
+    {
+      "id": "collection-extra-field",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-extra-field.json",
+      "reject": "reject-collection-extra-field.json"
+    },
+    {
+      "id": "collection-missing-member-count",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-missing-member-count.json",
+      "reject": "reject-collection-missing-member-count.json"
+    },
+    {
+      "id": "collection-negative-member-count",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-negative-member-count.json",
+      "reject": "reject-collection-negative-member-count.json"
+    },
+    {
+      "id": "collection-member-count-above-bound",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-member-count-above-bound.json",
+      "reject": "reject-collection-member-count-above-bound.json"
+    },
+    {
+      "id": "collection-set-allow-repeats-true",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-set-allow-repeats-true.json",
+      "reject": "reject-collection-set-allow-repeats-true.json"
+    },
+    {
+      "id": "collection-unknown-closure-claim",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-unknown-closure-claim.json",
+      "reject": "reject-collection-unknown-closure-claim.json"
+    },
+    {
+      "id": "collection-append-only-non-boolean",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-append-only-non-boolean.json",
+      "reject": "reject-collection-append-only-non-boolean.json"
+    },
+    {
+      "id": "collection-pin-missing-digest",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-pin-missing-digest.json",
+      "reject": "reject-collection-pin-missing-digest.json"
+    },
+    {
+      "id": "collection-pin-bad-digest",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-pin-bad-digest.json",
+      "reject": "reject-collection-pin-bad-digest.json"
+    },
+    {
+      "id": "collection-pin-zero-revision",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-pin-zero-revision.json",
+      "reject": "reject-collection-pin-zero-revision.json"
+    },
+    {
+      "id": "collection-pin-bad-stream",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-pin-bad-stream.json",
+      "reject": "reject-collection-pin-bad-stream.json"
+    },
+    {
+      "id": "collection-member-extra-field",
+      "schema": "record-collection.schema.json",
+      "baseline": "baseline-collection-member-extra-field.json",
+      "reject": "reject-collection-member-extra-field.json"
+    },
+    {
+      "id": "document-missing-capability",
+      "schema": "collection-document.schema.json",
+      "baseline": "baseline-document-missing-capability.json",
+      "reject": "reject-document-missing-capability.json"
+    }
+  ]
+}

@@ -1,0 +1,141 @@
+{
+  "capability": "contract: record-collection/v0",
+  "count": 27,
+  "vectors": [
+    {
+      "id": "set-identical-membership-identical-digest",
+      "mode": "canonical_set_equivalence",
+      "expected_outcome": "ok"
+    },
+    {
+      "id": "set-noncanonical-order-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "list-same-instant-keeps-stored-order",
+      "mode": "verify_collection",
+      "expected_outcome": "ok"
+    },
+    {
+      "id": "list-correction-by-appended-pin-keeps-earlier-resolvable",
+      "mode": "verify_collection",
+      "expected_outcome": "ok"
+    },
+    {
+      "id": "member-altered-digest-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "append-only-list-valid-extension",
+      "mode": "verify_collection",
+      "expected_outcome": "ok"
+    },
+    {
+      "id": "append-only-list-reordered-prefix-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "append-only-list-non-extending-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "append-only-set-valid-superset",
+      "mode": "verify_collection",
+      "expected_outcome": "ok"
+    },
+    {
+      "id": "append-only-set-non-superset-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "append-only-removed-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "append-only-kind-changed-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "member-count-mismatch-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "set-duplicate-member-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "list-duplicate-member-default-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "list-duplicate-member-allow-repeats-accepted",
+      "mode": "verify_collection",
+      "expected_outcome": "ok"
+    },
+    {
+      "id": "member-unresolved-reported-explicitly",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "member-held-reported-explicitly",
+      "mode": "verify_collection",
+      "expected_outcome": "partial"
+    },
+    {
+      "id": "selected-members-omitted-journal-event-not-complete-coverage",
+      "mode": "verify_collection",
+      "expected_outcome": "ok"
+    },
+    {
+      "id": "evidence-bundle-body-backed-verified",
+      "mode": "verify_collection",
+      "expected_outcome": "ok"
+    },
+    {
+      "id": "evidence-bundle-altered-file-bytes-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "evidence-bundle-held-or-missing-bytes-reported-explicitly",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "selected-members-all-supplied-refs-still-not-complete-coverage",
+      "mode": "verify_collection",
+      "expected_outcome": "ok"
+    },
+    {
+      "id": "mixed-unresolved-then-digest-mismatch-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "mixed-digest-mismatch-then-unresolved-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "complete-at-write-absent-evidence-refused",
+      "mode": "verify_collection",
+      "expected_outcome": "refuse"
+    },
+    {
+      "id": "complete-at-write-current-read-leaves-historical-closure-unproven",
+      "mode": "verify_collection",
+      "expected_outcome": "ok"
+    }
+  ]
+}

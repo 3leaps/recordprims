@@ -1,0 +1,155 @@
+{
+  "id": "list-correction-by-appended-pin-keeps-earlier-resolvable",
+  "description": "Appending a superseding revision pin in a new collection revision leaves the earlier revision resolvable.",
+  "mode": "verify_collection",
+  "predecessor": {
+    "kind": "list",
+    "members": [
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-001",
+          "revision": 1,
+          "digest": "sha256:7e7c3d4c583cae40f20066a4adbf79976e97e5168ed0eefc1c921a2d3bb71d00"
+        }
+      },
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-002",
+          "revision": 1,
+          "digest": "sha256:f1f56abcbeb363fe36ec4bff21c81cc85d839adb72569348709d95b1b9bac6b5"
+        }
+      }
+    ],
+    "member_count": 2,
+    "append_only": true
+  },
+  "collection": {
+    "kind": "list",
+    "members": [
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-001",
+          "revision": 1,
+          "digest": "sha256:7e7c3d4c583cae40f20066a4adbf79976e97e5168ed0eefc1c921a2d3bb71d00"
+        }
+      },
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-002",
+          "revision": 1,
+          "digest": "sha256:f1f56abcbeb363fe36ec4bff21c81cc85d839adb72569348709d95b1b9bac6b5"
+        }
+      },
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-002",
+          "revision": 2,
+          "digest": "sha256:25987c35391c45fe4bf650d5e9e8691d88014577efe20ebc7fbdbaf2f1a94c10"
+        }
+      }
+    ],
+    "member_count": 3,
+    "append_only": true
+  },
+  "verify_predecessor_resolvable": true,
+  "store": {
+    "records": [
+      {
+        "record": {
+          "v": 1,
+          "stream": "decisions.main",
+          "record_id": "dec-001",
+          "revision": 1,
+          "payload_contract": "contract: example/v0",
+          "produced_at": {
+            "instant": "2026-11-23T12:00:00.000000Z",
+            "source": "producer_clock"
+          },
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "fixture-writer"
+          },
+          "classification": {
+            "retention": "standard",
+            "sensitivity": "0-public"
+          },
+          "payload": {
+            "title": "first"
+          }
+        }
+      },
+      {
+        "record": {
+          "v": 1,
+          "stream": "decisions.main",
+          "record_id": "dec-002",
+          "revision": 1,
+          "payload_contract": "contract: example/v0",
+          "produced_at": {
+            "instant": "2026-11-23T12:00:00.000000Z",
+            "source": "producer_clock"
+          },
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "fixture-writer"
+          },
+          "classification": {
+            "retention": "standard",
+            "sensitivity": "0-public"
+          },
+          "payload": {
+            "title": "second"
+          }
+        }
+      },
+      {
+        "record": {
+          "v": 1,
+          "stream": "decisions.main",
+          "record_id": "dec-002",
+          "revision": 2,
+          "payload_contract": "contract: example/v0",
+          "produced_at": {
+            "instant": "2026-11-23T12:00:00.000000Z",
+            "source": "producer_clock"
+          },
+          "provenance": {
+            "actor_kind": "process",
+            "actor": "fixture-writer"
+          },
+          "classification": {
+            "retention": "standard",
+            "sensitivity": "0-public"
+          },
+          "supersedes": {
+            "revision": 1,
+            "digest": "sha256:f1f56abcbeb363fe36ec4bff21c81cc85d839adb72569348709d95b1b9bac6b5"
+          },
+          "payload": {
+            "title": "second-corrected"
+          }
+        }
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "ok",
+    "reason": null,
+    "member_outcomes": [
+      "verified",
+      "verified",
+      "verified"
+    ],
+    "predecessor_resolvable": true,
+    "ordered_record_ids": [
+      "dec-001",
+      "dec-002",
+      "dec-002"
+    ]
+  }
+}

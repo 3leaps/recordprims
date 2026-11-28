@@ -1,0 +1,22 @@
+{
+  "id": "sem-reject-refusal-expected-but-accepted",
+  "mode": "verify_collection",
+  "collection": {
+    "kind": "list",
+    "members": [
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-001",
+          "revision": 1,
+          "digest": "sha256:7e7c3d4c583cae40f20066a4adbf79976e97e5168ed0eefc1c921a2d3bb71d00"
+        }
+      }
+    ],
+    "member_count": 1
+  },
+  "expected": {
+    "outcome": "refuse",
+    "reason": "member_count_mismatch"
+  }
+}

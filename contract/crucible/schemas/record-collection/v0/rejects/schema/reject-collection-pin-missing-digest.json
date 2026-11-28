@@ -1,0 +1,22 @@
+{
+  "kind": "set",
+  "members": [
+    {
+      "pin": {
+        "stream": "decisions.main",
+        "record_id": "dec-001",
+        "revision": 1
+      }
+    },
+    {
+      "pin": {
+        "stream": "notes.audit",
+        "record_id": "note-010",
+        "revision": 1,
+        "digest": "sha256:9208426955acbf6c349bc15553f0bdf3aec8e9b3fbbb90c94c481b8e503c8ebc"
+      }
+    }
+  ],
+  "member_count": 2,
+  "closure_claim": "complete_at_write"
+}

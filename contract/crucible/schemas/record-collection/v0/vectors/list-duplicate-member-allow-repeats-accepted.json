@@ -1,0 +1,36 @@
+{
+  "id": "list-duplicate-member-allow-repeats-accepted",
+  "description": "A duplicate pin in a list with allow_repeats true is accepted.",
+  "mode": "verify_collection",
+  "collection": {
+    "kind": "list",
+    "members": [
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-001",
+          "revision": 1,
+          "digest": "sha256:7e7c3d4c583cae40f20066a4adbf79976e97e5168ed0eefc1c921a2d3bb71d00"
+        }
+      },
+      {
+        "pin": {
+          "stream": "decisions.main",
+          "record_id": "dec-001",
+          "revision": 1,
+          "digest": "sha256:7e7c3d4c583cae40f20066a4adbf79976e97e5168ed0eefc1c921a2d3bb71d00"
+        }
+      }
+    ],
+    "member_count": 2,
+    "allow_repeats": true
+  },
+  "expected": {
+    "outcome": "ok",
+    "reason": null,
+    "ordered_record_ids": [
+      "dec-001",
+      "dec-001"
+    ]
+  }
+}
