@@ -23,6 +23,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (proposed, experimental) is vendored as a separately pinned family;
   `make contract-check` verifies every family and `make contract-oracle` also
   runs its reference controls. No implementation uses it yet
+- Go: a store entry the confined root refuses (symlink, group or other
+  permission bits, wrong owner, hardlink, special file, filesystem type) is
+  `ErrStoreInvalid` wherever it is met, as in Rust. It was
+  `io_error{class=other}` on stream paths. A refusal met after a durable step
+  keeps an indeterminate outcome in both: Go `IsIndeterminate` reports it, and
+  Rust returns the new `Error::StoreInvalidAfterProgress` (code
+  `store_invalid`). Go and Rust tests cover a refused journal and stream
+  directory on open, release and append
 
 ## [0.1.0] - 2026-11-23
 

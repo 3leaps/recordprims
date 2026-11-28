@@ -392,6 +392,12 @@ func createStreamJournal(root *fsroot.Root, fso fsroot.Options, app *jfile.Appen
 }
 
 func mapJFileErr(err error) error {
+	// The appender returns a refusal unwrapped only from its verified open,
+	// before any byte is written; a refusal after a write is wrapped as
+	// poisoned and stays indeterminate below.
+	if r := refusalReason(err); r != "" {
+		return &refusedError{reason: r}
+	}
 	switch {
 	case errors.Is(err, jfile.ErrAborted):
 		return &IOError{Op: "write", Class: "no_space", indeterminate: false}
@@ -633,25 +639,56 @@ func isEmptyDir(dir string) (bool, error) {
 // mapOpenErr maps root verification failures to ErrStoreInvalid, keeping the
 // reason as a class without the path.
 func mapOpenErr(err error) error {
-	switch {
-	case errors.Is(err, fsroot.ErrSymlink):
-		return fmt.Errorf("%w: symlink", ErrStoreInvalid)
-	case errors.Is(err, fsroot.ErrSpecialFile):
+	if errors.Is(err, fsroot.ErrSpecialFile) {
 		return fmt.Errorf("%w: not a directory", ErrStoreInvalid)
-	case errors.Is(err, fsroot.ErrOwner):
-		return fmt.Errorf("%w: wrong owner", ErrStoreInvalid)
-	case errors.Is(err, fsroot.ErrMode):
-		return fmt.Errorf("%w: group or other permissions", ErrStoreInvalid)
-	case errors.Is(err, fsroot.ErrFSType):
-		return fmt.Errorf("%w: filesystem type not allowed", ErrStoreInvalid)
-	case errors.Is(err, fs.ErrNotExist):
+	}
+	if errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("%w: not found", ErrStoreInvalid)
 	}
 	return ioErr("open", err, false)
 }
 
-// ioErr wraps a filesystem error as a path-free IOError.
+// refusedError is ErrStoreInvalid for a store entry the confined root refused
+// during an operation. It keeps the operation's outcome marker: a refusal met
+// after a durable step leaves the outcome indeterminate.
+type refusedError struct {
+	reason        string
+	indeterminate bool
+}
+
+func (e *refusedError) Error() string { return ErrStoreInvalid.Error() + ": " + e.reason }
+
+func (e *refusedError) Unwrap() error { return ErrStoreInvalid }
+
+// refusalReason names the confined-root refusal in err, or returns "" when err
+// is not a refusal.
+func refusalReason(err error) string {
+	switch {
+	case errors.Is(err, fsroot.ErrSymlink):
+		return "symlink"
+	case errors.Is(err, fsroot.ErrSpecialFile):
+		return "store entry is not a regular file"
+	case errors.Is(err, fsroot.ErrMultipleLink):
+		return "hardlinked file refused"
+	case errors.Is(err, fsroot.ErrOwner):
+		return "wrong owner"
+	case errors.Is(err, fsroot.ErrMode):
+		return "group or other permissions"
+	case errors.Is(err, fsroot.ErrFSType):
+		return "filesystem type not allowed"
+	case errors.Is(err, fsroot.ErrBadName):
+		return "path is outside the store root"
+	}
+	return ""
+}
+
+// ioErr wraps a filesystem error as a path-free IOError. A store entry the
+// confined root refuses is ErrStoreInvalid wherever it is met: a refusal is a
+// structural fact about the store, not a failed I/O call.
 func ioErr(op string, err error, indeterminate bool) error {
+	if r := refusalReason(err); r != "" {
+		return &refusedError{reason: r, indeterminate: indeterminate}
+	}
 	class := "other"
 	switch {
 	case errors.Is(err, fs.ErrNotExist):

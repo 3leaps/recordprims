@@ -332,6 +332,39 @@ fn test_open_refuses_permissive_key_and_hardlinked_file() {
     assert_eq!(err.code(), ErrorCode::StoreInvalid);
 }
 
+/// A refusal is `store_invalid` and keeps the caller's outcome marker; an
+/// ordinary I/O failure stays an `Io` error with its marker. Matches the Go
+/// twin's `ioErr`.
+#[test]
+fn refusal_mapping_keeps_outcome_marker() {
+    for ind in [false, true] {
+        for refusal in [
+            FsRootError::NotDir,
+            FsRootError::NotRegular,
+            FsRootError::MultipleLink,
+            FsRootError::Symlink,
+            FsRootError::Owner,
+            FsRootError::Perm,
+            FsRootError::FsType,
+            FsRootError::Path,
+        ] {
+            let err = refusal.into_store_error("open", ind);
+            assert_eq!(err.code(), ErrorCode::StoreInvalid, "{err}");
+            assert_eq!(is_indeterminate(&err), ind, "{err}");
+            assert!(err.io_error().is_none(), "{err}");
+            assert!(
+                err.to_string().starts_with("recordprims: invalid store: "),
+                "{err}"
+            );
+        }
+        let err = FsRootError::Io("read", io::Error::from(io::ErrorKind::PermissionDenied))
+            .into_store_error("open", ind);
+        assert_ne!(err.code(), ErrorCode::StoreInvalid);
+        assert!(err.io_error().is_some());
+        assert_eq!(is_indeterminate(&err), ind);
+    }
+}
+
 #[test]
 fn test_errors_carry_no_path() {
     let td = TempStoreDir::new();
@@ -1661,6 +1694,65 @@ mod streams {
             s.open_stream("obs.t", Mode::SingleRevision, None),
             Err(Error::Schema(_))
         ));
+    }
+
+    /// A store entry the root refuses (symlink, group or other permission
+    /// bits) is `store_invalid` wherever it is met, matching the Go twin.
+    #[cfg(unix)]
+    #[test]
+    fn stream_path_refusals_are_store_invalid() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        type Tamper = fn(&Path);
+        let cases: [(&str, Tamper); 4] = [
+            ("journal mode 0640", |root| {
+                let j = root.join(stream_dir("obs.t")).join("journal.ndjson");
+                std::fs::set_permissions(&j, std::fs::Permissions::from_mode(0o640)).unwrap();
+            }),
+            ("stream dir symlink", |root| {
+                let sdir = root.join(stream_dir("obs.t"));
+                let real = sdir.with_extension("real");
+                std::fs::rename(&sdir, &real).unwrap();
+                symlink(real.file_name().unwrap(), &sdir).unwrap();
+            }),
+            ("streams dir symlink", |root| {
+                let sd = root.join("streams");
+                let real = root.with_extension("streams-real");
+                std::fs::rename(&sd, &real).unwrap();
+                symlink(&real, &sd).unwrap();
+            }),
+            ("journal symlink", |root| {
+                let j = root.join(stream_dir("obs.t")).join("journal.ndjson");
+                let real = j.with_extension("real");
+                std::fs::rename(&j, &real).unwrap();
+                symlink(real.file_name().unwrap(), &j).unwrap();
+            }),
+        ];
+        for (name, tamper) in cases {
+            let (s, td, clk) = store_with_record();
+            let st = s.open_stream("obs.t", Mode::Revisioned, None).unwrap();
+            tamper(&td.path);
+            let code = |r: Result<(), Error>| r.err().map(|e| e.code());
+            assert_eq!(
+                code(s.open_stream("obs.t", Mode::Revisioned, None).map(|_| ())),
+                Some(ErrorCode::StoreInvalid),
+                "{name}: open_stream"
+            );
+            assert_eq!(
+                code(st.release(&serve(), None).map(|_| ())),
+                Some(ErrorCode::StoreInvalid),
+                "{name}: release"
+            );
+            clk.advance(Duration::from_secs(1));
+            assert_eq!(
+                code(st.append(&write("obs.t", "b", "k2")).map(|_| ())),
+                Some(ErrorCode::StoreInvalid),
+                "{name}: append"
+            );
+            let real = td.path.with_extension("streams-real");
+            if real.exists() {
+                std::fs::remove_dir_all(&real).unwrap();
+            }
+        }
     }
 }
 

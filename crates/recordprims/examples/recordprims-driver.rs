@@ -138,7 +138,9 @@ fn classify_err(op: &str, err: &Error) -> Node {
         cur = primary;
     }
     let (code, reason, state) = match cur {
-        Error::StoreInvalid(_) => ("store_invalid", None, None),
+        Error::StoreInvalid(_) | Error::StoreInvalidAfterProgress(_) => {
+            ("store_invalid", None, None)
+        }
         Error::Locked => ("locked", None, None),
         Error::Schema(_) => ("schema", None, None),
         Error::Unauthorized => ("unauthorized", None, None),

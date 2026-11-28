@@ -53,7 +53,11 @@ var (
 	ErrClosed = errors.New("recordprims: closed")
 
 	// ErrStoreInvalid: the store root failed validation on open (ownership,
-	// permissions, object type, filesystem type, or format). Never repaired.
+	// permissions, object type, filesystem type, or format), or an operation
+	// met a store entry the confined root refuses (a symlink, special file or
+	// hardlink, wrong owner, group or other permissions, filesystem type).
+	// Never repaired. IsIndeterminate reports whether the operation made a
+	// durable step before the refusal.
 	ErrStoreInvalid = errors.New("recordprims: invalid store")
 
 	// ErrContinuationUnsupported: the continuation source uses an unsupported
@@ -155,6 +159,10 @@ func IsIndeterminate(err error) bool {
 	var io *IOError
 	if errors.As(err, &io) {
 		return io.indeterminate
+	}
+	var re *refusedError
+	if errors.As(err, &re) {
+		return re.indeterminate
 	}
 	var bi *ErrBodyIncomplete
 	return errors.As(err, &bi)

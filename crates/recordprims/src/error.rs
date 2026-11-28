@@ -155,6 +155,10 @@ impl fmt::Display for DamagedTailKind {
 pub enum Error {
     /// Store root or metadata is missing, malformed, or fails ownership/mode/filesystem checks.
     StoreInvalid(String),
+    /// `store_invalid` met after the operation made a durable step: a store
+    /// entry the root refuses, found mid-operation. The outcome is
+    /// indeterminate; reconcile or re-observe before retrying.
+    StoreInvalidAfterProgress(String),
     /// Another process or handle holds the store lock.
     Locked,
     /// Caller input failed contract schema or domain validation.
@@ -259,7 +263,7 @@ impl Error {
     /// Closed `ErrorCode` of this error.
     pub fn code(&self) -> ErrorCode {
         match self {
-            Self::StoreInvalid(_) => ErrorCode::StoreInvalid,
+            Self::StoreInvalid(_) | Self::StoreInvalidAfterProgress(_) => ErrorCode::StoreInvalid,
             Self::Locked => ErrorCode::Locked,
             Self::Schema(_) => ErrorCode::Schema,
             Self::Unauthorized => ErrorCode::Unauthorized,
@@ -286,7 +290,7 @@ impl Error {
     pub fn is_indeterminate(&self) -> bool {
         match self {
             Self::Io { indeterminate, .. } => *indeterminate,
-            Self::BodyIncomplete { .. } => true,
+            Self::BodyIncomplete { .. } | Self::StoreInvalidAfterProgress(_) => true,
             Self::WithCleanupIo { primary, .. } => primary.is_indeterminate(),
             _ => false,
         }
@@ -320,7 +324,7 @@ pub fn is_indeterminate(err: &Error) -> bool {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::StoreInvalid(detail) => {
+            Self::StoreInvalid(detail) | Self::StoreInvalidAfterProgress(detail) => {
                 if detail.is_empty() {
                     write!(f, "recordprims: invalid store")
                 } else {
